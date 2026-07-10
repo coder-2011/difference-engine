@@ -1,23 +1,72 @@
 import { NextResponse } from "next/server";
+import {
+  getOpenAIAccess,
+  isSameOrigin,
+  openAISessionCookie,
+  openAISessionCookieName,
+  sealOpenAISession,
+} from "@/lib/openai-auth";
+
+export const runtime = "nodejs";
 
 const MAX_SELECTION_LENGTH = 12_000;
-const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 
-/** Gives a useful local answer when the configured model is unavailable. */
-function fallbackAnswer(selection: string): string {
-  const assignment = selection.match(/\b(?:const|let|var)\s+(\w+)\s*=\s*([^;\n]+)/);
+type JsonRecord = Record<string, unknown>;
 
-  if (assignment) {
-    return `The variable \`${assignment[1]}\` is assigned \`${assignment[2].trim()}\`.`;
-  }
-
-  const lineCount = selection.split("\n").length;
-  return `This selection contains ${lineCount} line${lineCount === 1 ? "" : "s"} of code. Its exact behavior depends on the surrounding code.`;
+/** Returns true only for non-array objects. */
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Answers a question about selected code through Vercel AI Gateway. */
+/** Extracts completed output text from a Responses API response object. */
+function completedOutputText(response: unknown): string {
+  if (!isRecord(response) || !Array.isArray(response.output)) return "";
+
+  return response.output.flatMap((item) => {
+    if (!isRecord(item) || !Array.isArray(item.content)) return [];
+    return item.content.flatMap((content) => {
+      if (!isRecord(content) || content.type !== "output_text" || typeof content.text !== "string") return [];
+      return [content.text];
+    });
+  }).join("");
+}
+
+/** Collects text deltas or the final response from OpenAI's SSE stream. */
+async function readAnswer(response: Response): Promise<string> {
+  const stream = await response.text();
+  let answer = "";
+  let completedResponse: unknown;
+
+  for (const block of stream.split(/\r?\n\r?\n/)) {
+    const data = block.split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") continue;
+
+    try {
+      const event: unknown = JSON.parse(data);
+      if (!isRecord(event)) continue;
+      if (event.type === "response.output_text.delta" && typeof event.delta === "string") answer += event.delta;
+      if (event.type === "response.completed") completedResponse = event.response;
+      if (event.type === "error") throw new Error("OpenAI could not answer this question.");
+    } catch (error) {
+      if (error instanceof SyntaxError) continue;
+      throw error;
+    }
+  }
+
+  return answer.trim() || completedOutputText(completedResponse).trim();
+}
+
+/** Answers a selected-code question only for a connected OpenAI session. */
 export async function POST(request: Request): Promise<Response> {
-  const body = (await request.json()) as { question?: unknown; selection?: unknown };
+  if (!isSameOrigin(request)) {
+    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  }
+
+  const body = await request.json() as { question?: unknown; selection?: unknown };
   const question = typeof body.question === "string" ? body.question.trim().slice(0, 1_000) : "";
   const selection = typeof body.selection === "string" ? body.selection.slice(0, MAX_SELECTION_LENGTH) : "";
 
@@ -25,40 +74,64 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Select code and enter a question." }, { status: 400 });
   }
 
-  const token = process.env.AI_GATEWAY_API_KEY ?? process.env.VERCEL_OIDC_TOKEN;
-
-  if (!token) {
-    return NextResponse.json({ answer: fallbackAnswer(selection) });
-  }
+  let access;
 
   try {
-    const response = await fetch(GATEWAY_URL, {
+    access = await getOpenAIAccess();
+  } catch {
+    return NextResponse.json({ error: "OpenAI is temporarily unavailable. Try again." }, { status: 502 });
+  }
+
+  if (!access) {
+    const response = NextResponse.json({ error: "Connect OpenAI before asking about code." }, { status: 401 });
+    response.cookies.delete(openAISessionCookieName());
+    return response;
+  }
+
+  let upstream: Response;
+
+  try {
+    upstream = await fetch(CODEX_RESPONSES_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${access.accessToken}`,
+        "chatgpt-account-id": access.session.accountId,
         "Content-Type": "application/json",
+        "OpenAI-Beta": "responses=experimental",
       },
       body: JSON.stringify({
-        model: process.env.AI_MODEL ?? "openai/gpt-5.4-mini",
-        messages: [
-          {
-            role: "system",
-            content: "Answer the question about the selected code clearly and concisely. Use Markdown when it improves readability.",
-          },
-          {
-            role: "user",
-            content: `Question: ${question}\n\nSelected code:\n\`\`\`\n${selection}\n\`\`\``,
-          },
-        ],
+        model: process.env.OPENAI_OAUTH_MODEL ?? "gpt-5.4",
+        instructions: "Answer the question about the selected code clearly and concisely. Use Markdown only when it improves readability.",
+        input: [{
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: `Question: ${question}\n\nSelected code:\n\`\`\`\n${selection}\n\`\`\``,
+          }],
+        }],
+        store: false,
+        stream: true,
       }),
+      cache: "no-store",
     });
-    const result = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const answer = result.choices?.[0]?.message?.content?.trim();
-
-    return NextResponse.json({ answer: answer || fallbackAnswer(selection) });
   } catch {
-    return NextResponse.json({ answer: fallbackAnswer(selection) });
+    return NextResponse.json({ error: "OpenAI is temporarily unavailable. Try again." }, { status: 502 });
   }
+
+  if (upstream.status === 401 || upstream.status === 403) {
+    const response = NextResponse.json({ error: "Your OpenAI session expired. Connect again." }, { status: 401 });
+    response.cookies.delete(openAISessionCookieName());
+    return response;
+  }
+
+  if (!upstream.ok) {
+    return NextResponse.json({ error: `OpenAI could not answer this question (${upstream.status}).` }, { status: 502 });
+  }
+
+  const answer = await readAnswer(upstream);
+  if (!answer) return NextResponse.json({ error: "OpenAI returned an empty answer." }, { status: 502 });
+
+  const response = NextResponse.json({ answer });
+  response.cookies.set(openAISessionCookie(await sealOpenAISession(access.session)));
+  return response;
 }
