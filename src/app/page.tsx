@@ -51,12 +51,6 @@ export default async function Home({ searchParams }: HomeProps) {
       </nav>
 
       <section className="hero">
-        <div className="eyebrow"># a calmer code review — read the change, understand the intent</div>
-        <h1>read the change.<br /><span>understand the intent.</span></h1>
-        <p className="hero-copy">
-          A fast, legible diff viewer for GitHub pull requests, comparisons, and commits. Paste a link and it resolves in place.
-        </p>
-
         <form className="url-form" action={openSource}>
           <span className="url-prompt" aria-hidden="true">›</span>
           <input
@@ -71,8 +65,8 @@ export default async function Home({ searchParams }: HomeProps) {
         {params.error && <p className="form-error">{params.error}</p>}
 
         <div className="replace-hint" aria-label="Replace github.com with diffs.naman.world">
-          <code className="removed"><span className="line-number">1</span><b>−</b><span className="path">github.com/<strong>org/repo/pull/123</strong></span></code>
-          <code className="added"><span className="line-number">2</span><b>+</b><span className="path">diffs.naman.world/<strong>org/repo/pull/123</strong></span></code>
+          <code className="removed"><b>−</b><span className="path">github.com/<strong>org/repo/pull/123</strong></span></code>
+          <code className="added"><b>+</b><span className="path">diffs.naman.world/<strong>org/repo/pull/123</strong></span></code>
         </div>
       </section>
 
@@ -114,9 +108,6 @@ export default async function Home({ searchParams }: HomeProps) {
         </section>
       )}
 
-      <footer className="home-footer">
-        Built with <a href="https://diffs.com">Diffs</a> and <a href="https://trees.software">Trees</a> by Pierre.
-      </footer>
     </main>
   );
 }

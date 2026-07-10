@@ -26,6 +26,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [shortcutCopiesCode, setShortcutCopiesCode] = useState(false);
 
   useEffect(() => {
     if (!device || status !== "waiting") return;
@@ -71,11 +72,33 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
     };
   }, [device, router, status]);
 
+  useEffect(() => {
+    if (!device || status !== "waiting") return;
+    const activeDevice = device;
+
+    /** Copies the authorization link first, then the device code on later C presses. */
+    async function copyLoginValue(event: KeyboardEvent): Promise<void> {
+      const target = event.target;
+      const isEditing = target instanceof HTMLElement
+        && (target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement);
+      if (event.key.toLowerCase() !== "c" || event.metaKey || event.ctrlKey || event.altKey || isEditing) return;
+
+      event.preventDefault();
+      await navigator.clipboard.writeText(shortcutCopiesCode ? activeDevice.userCode : activeDevice.verificationUrl);
+      if (shortcutCopiesCode) setCopied(true);
+      else setShortcutCopiesCode(true);
+    }
+
+    document.addEventListener("keydown", copyLoginValue);
+    return () => document.removeEventListener("keydown", copyLoginValue);
+  }, [device, shortcutCopiesCode, status]);
+
   /** Opens the connection dialog and requests a fresh one-time code. */
   async function startConnection(): Promise<void> {
     setDevice(null);
     setError("");
     setCopied(false);
+    setShortcutCopiesCode(false);
     setStatus("starting");
 
     try {
@@ -147,9 +170,14 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
                   <span>1</span>
                   <div><strong>Open OpenAI</strong><small>Use the official authorization page.</small></div>
                 </div>
-                <a className="openai-continue" href={device.verificationUrl} target="_blank" rel="noreferrer">
-                  Continue to OpenAI <ExternalLink size={14} />
-                </a>
+                <div className="openai-continue-row">
+                  <a className="openai-continue" href={device.verificationUrl} target="_blank" rel="noreferrer">
+                    Continue to OpenAI <ExternalLink size={14} />
+                  </a>
+                  <span className="openai-copy-shortcut" aria-live="polite">
+                    <kbd>C</kbd> {shortcutCopiesCode ? (copied ? "Code copied" : "Copy code") : "Copy link"}
+                  </span>
+                </div>
 
                 <div className="openai-step">
                   <span>2</span>
