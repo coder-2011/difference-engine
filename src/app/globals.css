@@ -1259,9 +1259,13 @@ button {
   bottom: 16px;
   display: flex;
   max-height: min(640px, calc(100vh - 32px));
+  max-width: calc(100vw - 16px);
   width: min(380px, calc(100vw - 32px));
+  min-width: 300px;
+  min-height: 220px;
   flex-direction: column;
   overflow: hidden;
+  resize: both;
   border: 1px solid #343438;
   border-radius: 11px;
   background: #141415;
@@ -1335,8 +1339,8 @@ button {
 
 .conversation {
   display: flex;
+  flex: 1;
   min-height: 0;
-  max-height: 330px;
   flex-direction: column;
   gap: 12px;
   padding: 11px 12px;
@@ -1416,50 +1420,10 @@ button {
   text-underline-offset: 2px;
 }
 
-.pending-turn p {
+.chat-turn > p {
   margin: 0;
   color: #94919a;
   font-size: 11px;
-}
-
-.followup-suggestions {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 11px;
-  border-top: 1px solid var(--line);
-  background: #101011;
-}
-
-.followup-suggestions > span {
-  margin-bottom: 1px;
-  color: #67656d;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.followup-suggestions button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #9f9ba7;
-  cursor: pointer;
-  font-size: 10px;
-  line-height: 1.4;
-  text-align: left;
-}
-
-.followup-suggestions button::before {
-  margin-right: 6px;
-  color: #6f5d9e;
-  content: "›";
-}
-
-.followup-suggestions button:hover {
-  color: #e5ddf5;
 }
 
 .question-panel form {
@@ -1470,34 +1434,6 @@ button {
   padding: 11px;
   border-top: 1px solid var(--line);
   background: #141415;
-}
-
-.question-panel form .prompt-shortcut {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #68656f;
-  font-size: 9px;
-  font-weight: 500;
-}
-
-.prompt-shortcut kbd {
-  padding: 2px 5px;
-  border: 1px solid #343239;
-  border-radius: 4px;
-  background: #1c1b1e;
-  color: #9b96a3;
-  font-family: var(--font-mono);
-  font-size: 8px;
-}
-
-.question-panel form .prompt-shortcut:hover {
-  color: #aaa5b2;
 }
 
 .question-panel textarea {
