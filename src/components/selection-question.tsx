@@ -9,6 +9,7 @@ const DEFAULT_QUESTION = "What does this code do?";
 type ChatTurn = {
   answer: string;
   question: string;
+  selection: string;
 };
 
 type Point = {
@@ -28,10 +29,11 @@ type SelectionQuestionProps = {
 /** Detects code selections and presents a movable, multi-turn code conversation. */
 export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestion, setSuggestion] = useState("");
   const loading = Boolean(pendingQuestion);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -42,8 +44,6 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
     function captureSelection(pointer?: Point): void {
-      if (selection?.open) return;
-
       const browserSelection = window.getSelection();
       const text = browserSelection?.toString().trim() ?? "";
       const anchor = browserSelection?.anchorNode;
@@ -54,7 +54,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
 
       if (!text || !insideDiff || !browserSelection?.rangeCount) {
-        setSelection(null);
+        if (selection?.open) setPendingSelection(null);
+        else setSelection(null);
         return;
       }
 
@@ -67,7 +68,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      setSelection({ open: false, text, x, y });
+      const nextSelection = { open: false, text, x, y };
+      if (selection?.open) setPendingSelection(nextSelection);
+      else setSelection(nextSelection);
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -95,9 +98,13 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     if (conversation) conversation.scrollTop = conversation.scrollHeight;
   }, [loading, turns]);
 
-  /** Opens a fresh conversation while preserving the selected code. */
+  /** Opens the chat with the newest selection without clearing prior turns. */
   function openPanel(): void {
-    setSelection((current) => current && { ...current, open: true });
+    setSelection((current) => {
+      const nextSelection = pendingSelection ?? current;
+      return nextSelection && { ...nextSelection, open: true };
+    });
+    setPendingSelection(null);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -107,10 +114,11 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     requestRef.current?.abort();
     requestRef.current = null;
     setSelection(null);
+    setPendingSelection(null);
     setQuestion("");
     setTurns([]);
     setPendingQuestion("");
-    setSuggestions([]);
+    setSuggestion("");
   }
 
   /** Starts moving the panel from its current rendered position. */
@@ -157,7 +165,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     requestRef.current = controller;
     setPendingQuestion(submittedQuestion);
     setQuestion("");
-    setSuggestions([]);
+    setSuggestion("");
+    setTurns((current) => [...current, { answer: "", question: submittedQuestion, selection: selection.text }]);
 
     try {
       const response = await fetch("/api/ask", {
@@ -171,17 +180,42 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           source,
         }),
       });
-      const body = (await response.json()) as { answer?: string; error?: string; followups?: string[] };
-      if (controller.signal.aborted) return;
-      const answer = body.answer ?? body.error ?? "No answer was returned.";
-      setTurns((current) => [...current, { answer, question: submittedQuestion }]);
-      setSuggestions(body.followups ?? []);
+      if (!response.ok || !response.body) {
+        const body = (await response.json()) as { error?: string };
+        throw new Error(body.error ?? "No answer was returned.");
+      }
+
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += value ?? "";
+        if (done) buffer += "\n";
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line) continue;
+          const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
+          if (event.type === "delta" && event.text) {
+            setTurns((current) => current.map((turn, index) => (
+              index === current.length - 1 ? { ...turn, answer: turn.answer + event.text } : turn
+            )));
+          }
+          if (event.type === "suggestion" && event.text) setSuggestion(event.text);
+          if (event.type === "error") throw new Error(event.message);
+        }
+
+        if (done) break;
+      }
     } catch {
       if (!controller.signal.aborted) {
-        setTurns((current) => [...current, {
-          answer: "The question could not be answered. Please try again.",
-          question: submittedQuestion,
-        }]);
+        setTurns((current) => current.map((turn, index) => (
+          index === current.length - 1
+            ? { ...turn, answer: turn.answer || "The question could not be answered. Please try again." }
+            : turn
+        )));
       }
     } finally {
       if (requestRef.current === controller) {
@@ -197,21 +231,26 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     void submitQuestion(question);
   }
 
-  /** Fills the example question and leaves the cursor ready to edit it. */
-  function fillDefaultQuestion(): void {
-    setQuestion(DEFAULT_QUESTION);
+  /** Fills the visible placeholder and leaves the cursor ready to edit it. */
+  function fillPlaceholder(): void {
+    const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
+    if (!placeholder) return;
+    setQuestion(placeholder);
     window.setTimeout(() => {
       inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(DEFAULT_QUESTION.length, DEFAULT_QUESTION.length);
+      inputRef.current?.setSelectionRange(placeholder.length, placeholder.length);
     }, 0);
   }
 
+  const triggerSelection = selection?.open ? pendingSelection : selection;
+  const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
+
   return (
     <>
-      {selection && !selection.open && (
+      {triggerSelection && (
         <button
           className="selection-trigger"
-          style={{ left: selection.x, top: selection.y }}
+          style={{ left: triggerSelection.x, top: triggerSelection.y }}
           onMouseDown={(event) => event.preventDefault()}
           onClick={openPanel}
         >
@@ -243,33 +282,15 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
               {turns.map((turn, index) => (
                 <article className="chat-turn" key={`${turn.question}-${index}`}>
                   <span className="asked-question">{turn.question}</span>
-                  <div className="chat-markdown"><ReactMarkdown skipHtml>{turn.answer}</ReactMarkdown></div>
+                  {turn.answer
+                    ? <div className="chat-markdown"><ReactMarkdown skipHtml>{turn.answer}</ReactMarkdown></div>
+                    : <p>Reading the codebase…</p>}
                 </article>
-              ))}
-              {loading && (
-                <article className="chat-turn pending-turn">
-                  <span className="asked-question">{pendingQuestion}</span>
-                  <p>Reading the codebase…</p>
-                </article>
-              )}
-            </div>
-          )}
-
-          {!loading && suggestions.length > 0 && (
-            <div className="followup-suggestions">
-              <span>Ask next</span>
-              {suggestions.map((suggestion) => (
-                <button aria-label={suggestion} key={suggestion} type="button" onClick={() => void submitQuestion(suggestion)}>{suggestion}</button>
               ))}
             </div>
           )}
 
           <form onSubmit={askQuestion}>
-            {!question && (
-              <button className="prompt-shortcut" type="button" onClick={fillDefaultQuestion}>
-                <kbd>Tab</kbd> {DEFAULT_QUESTION}
-              </button>
-            )}
             <textarea
               ref={inputRef}
               value={question}
@@ -277,13 +298,13 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
               onKeyDown={(event) => {
                 if (event.key === "Tab" && !question.trim()) {
                   event.preventDefault();
-                  fillDefaultQuestion();
+                  fillPlaceholder();
                 } else if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              placeholder={turns.length ? "Ask a follow-up…" : "Ask about the selected code…"}
+              placeholder={placeholder}
               rows={2}
             />
             <button className="ask-submit" disabled={loading || !question.trim()}>
