@@ -1,9 +1,11 @@
 import Image from "next/image";
-import Link from "next/link";
 import { ArrowRight, Github, GitPullRequest, LockKeyhole, Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { Brand } from "@/components/brand";
+import { OpenAIConnection } from "@/components/openai-connection";
+import { PullRequestList } from "@/components/pull-request-list";
 import { listOpenPullRequests } from "@/lib/github";
+import { getOpenAIConnection } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 import { login, logout, openSource } from "./actions";
 
@@ -11,19 +13,14 @@ type HomeProps = {
   searchParams: Promise<{ error?: string }>;
 };
 
-/** Formats GitHub timestamps into a short relative label for PR cards. */
-function relativeDate(value: string): string {
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
-
-  if (days < 1) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days}d ago`;
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
-}
-
 /** Renders the URL launcher and, when authenticated, the user's open PR inbox. */
 export default async function Home({ searchParams }: HomeProps) {
-  const [session, params, accessToken] = await Promise.all([auth(), searchParams, getGitHubAccessToken()]);
+  const [session, params, accessToken, openAIConnection] = await Promise.all([
+    auth(),
+    searchParams,
+    getGitHubAccessToken(),
+    getOpenAIConnection(),
+  ]);
   const pullRequests = accessToken
     ? await listOpenPullRequests(accessToken).catch(() => [])
     : [];
@@ -32,19 +29,22 @@ export default async function Home({ searchParams }: HomeProps) {
     <main className="home-shell">
       <nav className="home-nav">
         <Brand />
-        {session?.user ? (
-          <div className="account-cluster">
-            {session.user.image && (
-              <Image className="avatar" src={session.user.image} alt="" width={26} height={26} />
-            )}
-            <span className="account-name">{session.user.name}</span>
-            <form action={logout}><button className="quiet-button">Sign out</button></form>
-          </div>
-        ) : (
-          <form action={login}>
-            <button className="github-button"><Github size={15} /> Sign in with GitHub</button>
-          </form>
-        )}
+        <div className="nav-auth-actions">
+          <OpenAIConnection initialConnection={openAIConnection} />
+          {session?.user ? (
+            <div className="account-cluster">
+              {session.user.image && (
+                <Image className="avatar" src={session.user.image} alt="" width={26} height={26} />
+              )}
+              <span className="account-name">{session.user.name}</span>
+              <form action={logout}><button className="quiet-button">Sign out</button></form>
+            </div>
+          ) : (
+            <form action={login}>
+              <button className="github-button"><Github size={15} /> Sign in with GitHub</button>
+            </form>
+          )}
+        </div>
       </nav>
 
       <section className="hero">
@@ -85,25 +85,7 @@ export default async function Home({ searchParams }: HomeProps) {
           </div>
 
           {pullRequests.length ? (
-            <div className="pull-grid">
-              {pullRequests.map((pullRequest) => (
-                <Link className="pull-card" href={pullRequest.viewerPath} key={`${pullRequest.repository}#${pullRequest.number}`}>
-                  <div className="pull-card-top">
-                    <span className="repo-name">{pullRequest.repository}</span>
-                    <span className="pull-number">#{pullRequest.number}</span>
-                  </div>
-                  <h3>{pullRequest.title}</h3>
-                  <div className="pull-card-meta">
-                    <Image className="avatar" src={pullRequest.avatarUrl} alt="" width={20} height={20} />
-                    <span>{pullRequest.author}</span>
-                    <span className="meta-dot">·</span>
-                    <span>{relativeDate(pullRequest.updatedAt)}</span>
-                    {pullRequest.draft && <span className="draft-pill">Draft</span>}
-                  </div>
-                  <ArrowRight className="card-arrow" size={16} />
-                </Link>
-              ))}
-            </div>
+            <PullRequestList pullRequests={pullRequests} />
           ) : (
             <div className="empty-state">
               <GitPullRequest size={22} />

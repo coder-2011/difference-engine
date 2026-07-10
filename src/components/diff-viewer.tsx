@@ -12,6 +12,7 @@ type DiffViewerProps = {
   additions?: number;
   changedFiles?: number;
   deletions?: number;
+  openAIConnected: boolean;
   source: string[];
 };
 
@@ -24,7 +25,7 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatus {
 }
 
 /** Fetches, parses, navigates, and renders the full GitHub patch. */
-export function DiffViewer({ additions, changedFiles, deletions, source }: DiffViewerProps) {
+export function DiffViewer({ additions, changedFiles, deletions, openAIConnected, source }: DiffViewerProps) {
   const [files, setFiles] = useState<FileDiffMetadata[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -32,6 +33,7 @@ export function DiffViewer({ additions, changedFiles, deletions, source }: DiffV
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
@@ -88,6 +90,22 @@ export function DiffViewer({ additions, changedFiles, deletions, source }: DiffV
     if (paths[0]) model.getItem(paths[0])?.select();
   }, [gitStatus, model, paths]);
 
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    /** Hands downward wheel movement to the page until the review header is above the diff. */
+    function revealWorkspace(event: WheelEvent): void {
+      const element = event.currentTarget as HTMLElement;
+      if (event.deltaY <= 0 || element.getBoundingClientRect().top <= 51) return;
+      event.preventDefault();
+      window.scrollBy({ top: event.deltaY, behavior: "auto" });
+    }
+
+    workspace.addEventListener("wheel", revealWorkspace, { capture: true, passive: false });
+    return () => workspace.removeEventListener("wheel", revealWorkspace, { capture: true });
+  }, []);
+
   const items = useMemo<CodeViewDiffItem[]>(
     () => files.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
     [collapsed, files],
@@ -103,7 +121,7 @@ export function DiffViewer({ additions, changedFiles, deletions, source }: DiffV
   }
 
   return (
-    <section className="diff-workspace">
+    <section className="diff-workspace" ref={workspaceRef}>
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
@@ -147,7 +165,7 @@ export function DiffViewer({ additions, changedFiles, deletions, source }: DiffV
               themeType: "dark",
             }}
           />
-          <SelectionQuestion />
+          {openAIConnected && <SelectionQuestion />}
         </div>
       </div>
     </section>

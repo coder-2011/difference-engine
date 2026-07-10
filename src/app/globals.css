@@ -92,6 +92,13 @@ button {
   font-size: 13px;
 }
 
+.nav-auth-actions,
+.diff-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
 .avatar {
   flex: none;
   border-radius: 50%;
@@ -128,6 +135,250 @@ button {
   border-color: #3b3b3e;
   background: #181819;
   color: var(--text);
+}
+
+.openai-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #eeeeef;
+  color: #101011;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.openai-button:hover {
+  background: white;
+}
+
+.openai-button.connected {
+  border-color: #274132;
+  background: #111914;
+  color: #b9d9c4;
+}
+
+.openai-button.compact {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #67d68c;
+  box-shadow: 0 0 0 3px rgb(103 214 140 / 0.1);
+}
+
+.openai-overlay {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(4 4 5 / 0.76);
+  backdrop-filter: blur(10px);
+}
+
+.openai-dialog {
+  position: relative;
+  width: min(430px, 100%);
+  padding: 31px;
+  overflow: hidden;
+  border: 1px solid #343139;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 12% 0%, rgb(167 139 250 / 0.1), transparent 36%),
+    #111112;
+  box-shadow: 0 28px 100px rgb(0 0 0 / 0.66);
+}
+
+.openai-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.openai-dialog-close:hover {
+  background: #222124;
+  color: white;
+}
+
+.openai-dialog-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 20px;
+  place-items: center;
+  border: 1px solid #453e52;
+  border-radius: 10px;
+  background: #211d27;
+  color: #cbb9f9;
+}
+
+.openai-dialog-kicker {
+  color: #9589ab;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.openai-dialog h2 {
+  margin: 7px 0 10px;
+  font-size: 24px;
+  font-weight: 580;
+  letter-spacing: -0.035em;
+}
+
+.openai-dialog > p {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.openai-device-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.openai-step {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.openai-step > span {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #aaa4b3;
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+}
+
+.openai-step div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.openai-step strong {
+  color: #d8d8dc;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.openai-step small {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.openai-continue {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9px;
+  background: #ededee;
+  color: #111112;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.openai-continue:hover {
+  background: white;
+}
+
+.device-code {
+  display: grid;
+  grid-template-columns: 1fr 38px;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid #37333e;
+  border-radius: 9px;
+  background: #0b0b0c;
+}
+
+.device-code code {
+  display: grid;
+  place-items: center;
+  color: #e6dcff;
+  font-family: var(--font-mono), monospace;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.device-code button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid #28242d;
+  background: transparent;
+  color: #8e879b;
+  cursor: pointer;
+}
+
+.device-code button:hover {
+  background: #19171c;
+  color: white;
+}
+
+.openai-waiting {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #85818b;
+  font-size: 11px;
+}
+
+.openai-error {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgb(251 113 133 / 0.25);
+  border-radius: 9px;
+  background: rgb(251 113 133 / 0.05);
+  color: #dca0aa;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.openai-error button {
+  height: 32px;
+  border: 1px solid #49353a;
+  border-radius: 7px;
+  background: #201619;
+  color: #e8c3ca;
+  cursor: pointer;
+  font-size: 11px;
 }
 
 .hero {
@@ -293,6 +544,77 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.pull-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pull-filter {
+  display: flex;
+  width: min(100%, 390px);
+  height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0e0e0f;
+  color: var(--faint);
+}
+
+.pull-filter:focus-within {
+  border-color: #3b3b3f;
+}
+
+.pull-filter input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.pull-filter input::placeholder {
+  color: #5f5f65;
+}
+
+.pull-filter span {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+}
+
+.pull-more {
+  display: inline-flex;
+  height: 34px;
+  align-self: center;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #0e0e0f;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.pull-more:hover {
+  border-color: #39393d;
+  color: var(--text);
+}
+
+.pull-filter-empty {
+  padding: 36px 18px;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+  color: var(--faint);
+  text-align: center;
+  font-size: 12px;
 }
 
 .pull-card {
@@ -899,6 +1221,23 @@ button {
     display: none;
   }
 
+  .nav-auth-actions {
+    gap: 6px;
+  }
+
+  .github-button,
+  .openai-button {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .openai-button span:not(.connection-dot),
+  .openai-button.connected svg {
+    display: none;
+  }
+
   .hero {
     padding: 74px 0 68px;
   }
@@ -929,6 +1268,10 @@ button {
 
   .source-link {
     font-size: 0;
+  }
+
+  .openai-dialog {
+    padding: 26px 22px;
   }
 
   .viewer-body {

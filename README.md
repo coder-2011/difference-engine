@@ -18,7 +18,7 @@ Try it at [diffs.naman.world](https://diffs.naman.world).
 - Uses GitHub sign-in for private repositories and a personal list of open pull requests that you authored, were assigned, or were asked to review.
 - Renders large patches with a navigable file tree and split or unified views.
 - Shows the pull request description beside the code it explains.
-- Lets you select code and ask a question without leaving the diff.
+- Lets you connect OpenAI separately, then select code and ask a question without leaving the diff.
 
 The diff and tree views are built with [`@pierre/diffs`](https://www.npmjs.com/package/@pierre/diffs) and [`@pierre/trees`](https://www.npmjs.com/package/@pierre/trees).
 
@@ -30,11 +30,13 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Create a GitHub OAuth app, fill in `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, and `AUTH_SECRET`, then add an `AI_GATEWAY_API_KEY` if you want code questions to return live answers. The default callback URL is:
+Create a GitHub OAuth app, then fill in `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, and `AUTH_SECRET`. The default callback URL is:
 
 ```text
 http://localhost:3000/api/auth/callback/github
 ```
+
+Code questions use a separate OpenAI device authorization. The user completes the authorization on OpenAI, while Diffs stores only encrypted, HttpOnly session material. Without that connection, question controls and the question API remain unavailable.
 
 Use `npm run typecheck`, `npm run lint`, and `npm run build` before deploying.
 

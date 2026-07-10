@@ -6,7 +6,9 @@ import ReactMarkdown from "react-markdown";
 import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
+import { OpenAIConnection } from "@/components/openai-connection";
 import { getDiffDocument, GitHubError } from "@/lib/github";
+import { getOpenAIConnection } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 type DiffPageProps = {
@@ -27,7 +29,11 @@ export async function generateMetadata({ params }: DiffPageProps): Promise<Metad
 
 /** Renders GitHub metadata above the virtualized, interactive diff workspace. */
 export default async function DiffPage({ params }: DiffPageProps) {
-  const [{ source }, accessToken] = await Promise.all([params, getGitHubAccessToken()]);
+  const [{ source }, accessToken, openAIConnection] = await Promise.all([
+    params,
+    getGitHubAccessToken(),
+    getOpenAIConnection(),
+  ]);
 
   let document;
 
@@ -46,9 +52,12 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <span className="nav-separator" />
           <Link className="back-link" href="/"><ArrowLeft size={14} /> Pull requests</Link>
         </div>
-        <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
-          Open on GitHub <ArrowUpRight size={14} />
-        </a>
+        <div className="diff-nav-actions">
+          <OpenAIConnection compact initialConnection={openAIConnection} />
+          <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
+            Open on GitHub <ArrowUpRight size={14} />
+          </a>
+        </div>
       </header>
 
       <section className="pr-header">
@@ -74,6 +83,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         additions={document.additions}
         changedFiles={document.changedFiles}
         deletions={document.deletions}
+        openAIConnected={openAIConnection.connected}
         source={source}
       />
     </main>
