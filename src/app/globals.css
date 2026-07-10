@@ -763,6 +763,14 @@ button {
   opacity: 1;
 }
 
+.pull-card.closed::before {
+  background: #a66e63;
+}
+
+.pull-card.merged::before {
+  background: #82aaa2;
+}
+
 .pull-card-top,
 .pull-card-meta {
   display: flex;

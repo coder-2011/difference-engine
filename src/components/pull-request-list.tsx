@@ -74,7 +74,7 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
       {visiblePullRequests.length ? (
         <div className="pull-grid">
           {visiblePullRequests.map((pullRequest) => (
-            <Link className="pull-card" href={pullRequest.viewerPath} key={`${pullRequest.repository}#${pullRequest.number}`}>
+            <Link className={`pull-card ${pullRequest.status}`} href={pullRequest.viewerPath} key={`${pullRequest.repository}#${pullRequest.number}`}>
               <div className="pull-card-top">
                 <span className="repo-name">{pullRequest.repository}</span>
                 <span className="pull-number">#{pullRequest.number}</span>
