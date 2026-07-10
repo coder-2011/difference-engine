@@ -10,6 +10,7 @@ const INITIAL_COUNT = 6;
 
 type PullRequestListProps = {
   pullRequests: PullRequestSummary[];
+  variant?: "open" | "resolved";
 };
 
 /** Formats a GitHub timestamp into the compact date used on pull request cards. */
@@ -23,7 +24,7 @@ function relativeDate(value: string): string {
 }
 
 /** Filters the signed-in user's pull requests and reveals more than the initial six on demand. */
-export function PullRequestList({ pullRequests }: PullRequestListProps) {
+export function PullRequestList({ pullRequests, variant = "open" }: PullRequestListProps) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
 
@@ -61,18 +62,20 @@ export function PullRequestList({ pullRequests }: PullRequestListProps) {
   }
 
   return (
-    <div className="pull-list">
-      <label className="pull-filter">
-        <Search size={14} aria-hidden="true" />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => handleQueryChange(event.target.value)}
-          placeholder="Filter by repository, title, author, or #"
-          aria-label="Filter open pull requests"
-        />
-        {query && <span>{filteredPullRequests.length}</span>}
-      </label>
+    <div className={`pull-list ${variant === "resolved" ? "resolved-list" : ""}`}>
+      {variant === "open" && (
+        <label className="pull-filter">
+          <Search size={13} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => handleQueryChange(event.target.value)}
+            placeholder="filter repos + titles..."
+            aria-label="Filter open pull requests"
+          />
+          {query && <span>{filteredPullRequests.length}</span>}
+        </label>
+      )}
 
       {visiblePullRequests.length ? (
         <div className="pull-grid">
@@ -81,6 +84,9 @@ export function PullRequestList({ pullRequests }: PullRequestListProps) {
               <div className="pull-card-top">
                 <span className="repo-name">{pullRequest.repository}</span>
                 <span className="pull-number">#{pullRequest.number}</span>
+                {variant === "resolved" && (
+                  <span className={`pr-status ${pullRequest.status}`}>{pullRequest.status}</span>
+                )}
               </div>
               <h3>{pullRequest.title}</h3>
               <div className="pull-card-meta">
@@ -100,8 +106,8 @@ export function PullRequestList({ pullRequests }: PullRequestListProps) {
 
       {filteredPullRequests.length > INITIAL_COUNT && (
         <button className="pull-more" type="button" onClick={toggleExpanded}>
+          {expanded ? "show less" : `load next ${hiddenCount}`}
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          {expanded ? "Show less" : `Show ${hiddenCount} more`}
         </button>
       )}
     </div>

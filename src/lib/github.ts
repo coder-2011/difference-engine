@@ -8,6 +8,7 @@ type GitHubUser = {
 };
 
 type SearchPullRequest = {
+  closed_at: string | null;
   draft?: boolean;
   number: number;
   repository_url: string;
@@ -15,6 +16,8 @@ type SearchPullRequest = {
   updated_at: string;
   user: GitHubUser;
 };
+
+type PullRequestStatus = PullRequestSummary["status"];
 
 type PullRequest = {
   additions: number;
@@ -121,20 +124,42 @@ export async function listOpenPullRequests(token: string): Promise<PullRequestSu
     if (items.length >= response.total_count || response.items.length < 100) break;
   }
 
-  return items.map((pullRequest) => {
-    const repository = pullRequest.repository_url.split("/repos/")[1];
+  return items.map((pullRequest) => summarizePullRequest(pullRequest, "open"));
+}
 
-    return {
-      author: pullRequest.user.login,
-      avatarUrl: pullRequest.user.avatar_url,
-      draft: Boolean(pullRequest.draft),
-      number: pullRequest.number,
-      repository,
-      title: pullRequest.title,
-      updatedAt: pullRequest.updated_at,
-      viewerPath: `/${repository}/pull/${pullRequest.number}`,
-    };
-  });
+/** Returns a small, newest-first history of merged and unmerged closed pull requests involving the user. */
+export async function listRecentPullRequests(token: string): Promise<PullRequestSummary[]> {
+  const queries: Array<[PullRequestStatus, string]> = [
+    ["merged", "is:pr is:merged involves:@me"],
+    ["closed", "is:pr is:closed is:unmerged involves:@me"],
+  ];
+  const results = await Promise.all(queries.map(async ([status, query]) => {
+    const path = `/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=12`;
+    const response = await githubRequest<{ items: SearchPullRequest[] }>(path, token);
+    return response.items.map((pullRequest) => summarizePullRequest(pullRequest, status));
+  }));
+
+  return results
+    .flat()
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    .slice(0, 12);
+}
+
+/** Converts one GitHub search result into the compact shape shared by homepage lists. */
+function summarizePullRequest(pullRequest: SearchPullRequest, status: PullRequestStatus): PullRequestSummary {
+  const repository = pullRequest.repository_url.split("/repos/")[1];
+
+  return {
+    author: pullRequest.user.login,
+    avatarUrl: pullRequest.user.avatar_url,
+    draft: Boolean(pullRequest.draft),
+    number: pullRequest.number,
+    repository,
+    status,
+    title: pullRequest.title,
+    updatedAt: pullRequest.closed_at ?? pullRequest.updated_at,
+    viewerPath: `/${repository}/pull/${pullRequest.number}`,
+  };
 }
 
 /** Validates and encodes a GitHub-style viewer path for API requests. */

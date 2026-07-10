@@ -1,10 +1,10 @@
 import Image from "next/image";
-import { ArrowRight, Github, GitPullRequest, LockKeyhole, Sparkles } from "lucide-react";
+import { CornerDownLeft, Github, GitPullRequest, LockKeyhole } from "lucide-react";
 import { auth } from "@/auth";
 import { Brand } from "@/components/brand";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestList } from "@/components/pull-request-list";
-import { listOpenPullRequests } from "@/lib/github";
+import { listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
 import { getOpenAIConnection } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 import { login, logout, openSource } from "./actions";
@@ -13,7 +13,7 @@ type HomeProps = {
   searchParams: Promise<{ error?: string }>;
 };
 
-/** Renders the URL launcher and, when authenticated, the user's open PR inbox. */
+/** Renders the URL launcher and, when authenticated, the user's active and recent PR inbox. */
 export default async function Home({ searchParams }: HomeProps) {
   const [session, params, accessToken, openAIConnection] = await Promise.all([
     auth(),
@@ -21,9 +21,12 @@ export default async function Home({ searchParams }: HomeProps) {
     getGitHubAccessToken(),
     getOpenAIConnection(),
   ]);
-  const pullRequests = accessToken
-    ? await listOpenPullRequests(accessToken).catch(() => [])
-    : [];
+  const [pullRequests, recentPullRequests] = accessToken
+    ? await Promise.all([
+        listOpenPullRequests(accessToken).catch(() => []),
+        listRecentPullRequests(accessToken).catch(() => []),
+      ])
+    : [[], []];
 
   return (
     <main className="home-shell">
@@ -48,57 +51,65 @@ export default async function Home({ searchParams }: HomeProps) {
       </nav>
 
       <section className="hero">
-        <div className="eyebrow"><Sparkles size={13} /> A calmer code review</div>
-        <h1>Read the change.<br /><span>Understand the intent.</span></h1>
+        <div className="eyebrow"># a calmer code review — read the change, understand the intent</div>
+        <h1>read the change.<br /><span>understand the intent.</span></h1>
         <p className="hero-copy">
-          A fast, beautiful diff viewer for GitHub pull requests, comparisons, and commits.
+          A fast, legible diff viewer for GitHub pull requests, comparisons, and commits. Paste a link and it resolves in place.
         </p>
 
         <form className="url-form" action={openSource}>
-          <Github size={17} aria-hidden="true" />
+          <span className="url-prompt" aria-hidden="true">›</span>
           <input
             name="url"
             type="url"
             required
             aria-label="GitHub URL"
-            placeholder="https://github.com/org/repo/pull/123"
+            placeholder="paste a github url — github.com/org/repo/pull/123"
           />
-          <button aria-label="Open diff"><ArrowRight size={18} /></button>
+          <button aria-label="Open diff"><CornerDownLeft size={13} /><span>to open</span></button>
         </form>
         {params.error && <p className="form-error">{params.error}</p>}
 
-        <div className="replace-hint">
-          <code><span>github</span>.com/org/repo/pull/123</code>
-          <ArrowRight size={13} />
-          <code><strong>diffs.naman.world</strong>/org/repo/pull/123</code>
+        <div className="replace-hint" aria-label="Replace github.com with diffs.naman.world">
+          <code className="removed"><span className="line-number">1</span><b>−</b><span className="path">github.com/<strong>org/repo/pull/123</strong></span></code>
+          <code className="added"><span className="line-number">2</span><b>+</b><span className="path">diffs.naman.world/<strong>org/repo/pull/123</strong></span></code>
         </div>
       </section>
 
       {session?.user ? (
-        <section className="pull-section">
-          <div className="section-heading">
-            <div>
-              <span className="section-kicker">Your work</span>
+        <>
+          <section className="pull-section">
+            <div className="section-heading">
               <h2>Open pull requests</h2>
+              <span className="count-pill">{pullRequests.length}</span>
             </div>
-            <span className="count-pill">{pullRequests.length}</span>
-          </div>
 
-          {pullRequests.length ? (
-            <PullRequestList pullRequests={pullRequests} />
-          ) : (
-            <div className="empty-state">
-              <GitPullRequest size={22} />
-              <div><strong>No open pull requests</strong><span>Your authored PRs will appear here.</span></div>
-            </div>
+            {pullRequests.length ? (
+              <PullRequestList pullRequests={pullRequests} />
+            ) : (
+              <div className="empty-state">
+                <GitPullRequest size={22} />
+                <div><strong>No open pull requests</strong><span>Your authored and referenced PRs will appear here.</span></div>
+              </div>
+            )}
+          </section>
+
+          {recentPullRequests.length > 0 && (
+            <section className="pull-section resolved-section">
+              <div className="section-heading">
+                <h2>Recently merged / closed</h2>
+                <span className="count-pill">{recentPullRequests.length}</span>
+              </div>
+              <PullRequestList pullRequests={recentPullRequests} variant="resolved" />
+            </section>
           )}
-        </section>
+        </>
       ) : (
         <section className="login-note">
           <LockKeyhole size={18} />
           <div>
             <strong>Your public and private pull requests, in one place.</strong>
-            <span>Sign in to see every open PR you authored. Diffs uses your GitHub access only for reads.</span>
+            <span>Sign in to see open and recent PRs that involve you. Diffs uses your GitHub access only for reads.</span>
           </div>
         </section>
       )}

@@ -4,6 +4,7 @@ export type PullRequestSummary = {
   draft: boolean;
   number: number;
   repository: string;
+  status: "closed" | "merged" | "open";
   title: string;
   updatedAt: string;
   viewerPath: string;
