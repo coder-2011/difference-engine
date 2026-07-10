@@ -80,8 +80,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       window.requestAnimationFrame(() => captureSelection(pointer));
     }
 
-    /** Captures keyboard-created selections without inventing pointer coordinates. */
-    function captureAfterKeyUp(): void {
+    /** Captures keyboard-created code selections while ignoring typing inside the chat. */
+    function captureAfterKeyUp(event: KeyboardEvent): void {
+      if (event.target instanceof Element && event.target.closest(".question-panel")) return;
       captureSelection();
     }
 
@@ -167,6 +168,25 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     setQuestion("");
     setSuggestion("");
     setTurns((current) => [...current, { answer: "", question: submittedQuestion, selection: selection.text }]);
+    let pendingDelta = "";
+    let frame = 0;
+
+    /** Commits streamed text at most once per paint instead of rerendering for every token. */
+    function flushDelta(): void {
+      frame = 0;
+      if (!pendingDelta) return;
+      const text = pendingDelta;
+      pendingDelta = "";
+      setTurns((current) => current.map((turn, index) => (
+        index === current.length - 1 ? { ...turn, answer: turn.answer + text } : turn
+      )));
+    }
+
+    /** Coalesces model deltas until the browser is ready to paint them. */
+    function queueDelta(text: string): void {
+      pendingDelta += text;
+      if (!frame) frame = window.requestAnimationFrame(flushDelta);
+    }
 
     try {
       const response = await fetch("/api/ask", {
@@ -198,18 +218,18 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         for (const line of lines) {
           if (!line) continue;
           const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
-          if (event.type === "delta" && event.text) {
-            setTurns((current) => current.map((turn, index) => (
-              index === current.length - 1 ? { ...turn, answer: turn.answer + event.text } : turn
-            )));
-          }
+          if (event.type === "delta" && event.text) queueDelta(event.text);
           if (event.type === "suggestion" && event.text) setSuggestion(event.text);
           if (event.type === "error") throw new Error(event.message);
         }
 
         if (done) break;
       }
+      if (frame) window.cancelAnimationFrame(frame);
+      flushDelta();
     } catch {
+      if (frame) window.cancelAnimationFrame(frame);
+      flushDelta();
       if (!controller.signal.aborted) {
         setTurns((current) => current.map((turn, index) => (
           index === current.length - 1

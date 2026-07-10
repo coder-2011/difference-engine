@@ -220,8 +220,15 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
     githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodedRevision}?recursive=1`, token),
     getDiffResponse(source, token).then((response) => response.text()),
   ]);
-  const blobs = tree.tree.filter((entry) => entry.type === "blob");
-  const blobByPath = new Map(blobs.map((entry) => [entry.path, entry]));
+  const blobByPath = new Map<string, GitTreeEntry>();
+  let treeText = "";
+
+  // Build the lookup once, but stop materializing path text at the model's fixed budget.
+  for (const entry of tree.tree) {
+    if (entry.type !== "blob") continue;
+    blobByPath.set(entry.path, entry);
+    if (treeText.length < CONTEXT_TREE_LIMIT) treeText += `${treeText ? "\n" : ""}${entry.path}`;
+  }
   const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
   const preferredPaths = [...changedPathsFromDiff(diff), ...rootFiles];
   const entries = [...new Set(preferredPaths)]
@@ -242,7 +249,7 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
     fileContext += `\n### ${file.path}\n${file.text.slice(0, remaining)}\n`;
   }
 
-  const treeText = blobs.map((entry) => entry.path).join("\n").slice(0, CONTEXT_TREE_LIMIT);
+  treeText = treeText.slice(0, CONTEXT_TREE_LIMIT);
   const truncation = tree.truncated ? "\n(GitHub truncated this unusually large tree.)" : "";
   return [
     `Repository: ${parsed.repository}`,

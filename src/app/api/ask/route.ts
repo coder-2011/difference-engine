@@ -81,6 +81,8 @@ async function readAnswer(response: Response, onDelta?: (delta: string) => void)
     if (done) buffer += "\n\n";
     const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() ?? "";
+    let delta = "";
+    let failed = false;
 
     for (const block of blocks) {
       const data = block.split(/\r?\n/).find((line) => line.startsWith("data:"))?.slice(5).trimStart();
@@ -89,12 +91,21 @@ async function readAnswer(response: Response, onDelta?: (delta: string) => void)
       const event: unknown = JSON.parse(data);
       if (!isRecord(event)) continue;
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        answer += event.delta;
-        onDelta?.(event.delta);
+        delta += event.delta;
       }
       if (event.type === "response.completed") completedResponse = event.response;
-      if (event.type === "error") throw new Error("OpenAI could not answer this question.");
+      if (event.type === "error") {
+        failed = true;
+        break;
+      }
     }
+
+    // Preserve immediate streaming while emitting at most one downstream event per upstream read.
+    if (delta) {
+      answer += delta;
+      onDelta?.(delta);
+    }
+    if (failed) throw new Error("OpenAI could not answer this question.");
 
     if (done) break;
   }
@@ -225,9 +236,9 @@ export async function POST(request: Request): Promise<Response> {
     /** Relays answer tokens immediately, followed by one Instant suggestion. */
     async start(controller) {
       try {
-        let streamedAnswer = "";
+        let streamedAnswer = false;
         const answer = await readAnswer(upstream, (text) => {
-          streamedAnswer += text;
+          streamedAnswer = true;
           controller.enqueue(encodeEvent({ text, type: "delta" }));
         });
         if (!answer) throw new Error("OpenAI returned an empty answer.");

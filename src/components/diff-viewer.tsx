@@ -5,8 +5,14 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { CodeView } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronDown, ChevronRight, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SelectionQuestion } from "./selection-question";
+
+// Keep the Markdown chat bundle out of reviews that have no OpenAI session.
+const SelectionQuestion = dynamic(
+  () => import("./selection-question").then((module) => module.SelectionQuestion),
+  { ssr: false },
+);
 
 type DiffViewerProps = {
   additions?: number;
