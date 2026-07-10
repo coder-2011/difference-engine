@@ -77,10 +77,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       window.requestAnimationFrame(captureSelection);
     }
 
-    document.addEventListener("selectionchange", captureSelection);
+    document.addEventListener("keyup", captureSelection);
     document.addEventListener("mouseup", captureAfterMouseUp);
     return () => {
-      document.removeEventListener("selectionchange", captureSelection);
+      document.removeEventListener("keyup", captureSelection);
       document.removeEventListener("mouseup", captureAfterMouseUp);
     };
   }, [selection?.open]);
