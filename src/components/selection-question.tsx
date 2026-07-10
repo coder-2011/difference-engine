@@ -40,10 +40,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const requestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    let pointer: Point | null = null;
-
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
-    function captureSelection(): void {
+    function captureSelection(pointer?: Point): void {
       if (selection?.open) return;
 
       const browserSelection = window.getSelection();
@@ -51,8 +49,6 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const anchor = browserSelection?.anchorNode;
       const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
       const root = anchor?.getRootNode();
-      const selectionPointer = pointer;
-      pointer = null;
       // Diffs can render code in either ordinary DOM or an open shadow tree.
       const selectionElement = root instanceof ShadowRoot ? root.host : anchorElement;
       const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
@@ -63,25 +59,34 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       }
 
       const rect = browserSelection.getRangeAt(0).getBoundingClientRect();
-      const anchorX = selectionPointer?.x ?? rect.right;
-      const anchorY = selectionPointer?.y ?? rect.top;
-      const x = Math.min(Math.max(anchorX + 10, 8), window.innerWidth - 154);
-      const y = Math.min(Math.max(selectionPointer ? anchorY + 10 : anchorY - 39, 8), window.innerHeight - 39);
+      const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
+      if (!triggerAnchor) return setSelection(null);
+
+      const maxX = Math.max(window.innerWidth - 154, 8);
+      const maxY = Math.max(window.innerHeight - 39, 8);
+      const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
+      const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
+      const y = Math.min(Math.max(preferredY, 8), maxY);
       setSelection({ open: false, text, x, y });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
       if (event.target instanceof Element && event.target.closest(".selection-trigger, .question-panel")) return;
-      pointer = { x: event.clientX, y: event.clientY };
-      window.requestAnimationFrame(captureSelection);
+      const pointer = { x: event.clientX, y: event.clientY };
+      window.requestAnimationFrame(() => captureSelection(pointer));
     }
 
-    document.addEventListener("keyup", captureSelection);
-    document.addEventListener("mouseup", captureAfterMouseUp);
+    /** Captures keyboard-created selections without inventing pointer coordinates. */
+    function captureAfterKeyUp(): void {
+      captureSelection();
+    }
+
+    document.addEventListener("keyup", captureAfterKeyUp, true);
+    document.addEventListener("mouseup", captureAfterMouseUp, true);
     return () => {
-      document.removeEventListener("keyup", captureSelection);
-      document.removeEventListener("mouseup", captureAfterMouseUp);
+      document.removeEventListener("keyup", captureAfterKeyUp, true);
+      document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
   }, [selection?.open]);
 
