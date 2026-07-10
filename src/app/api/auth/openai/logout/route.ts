@@ -6,8 +6,6 @@ import {
   revokeOpenAISession,
 } from "@/lib/openai-auth";
 
-export const runtime = "nodejs";
-
 /** Clears all OpenAI authorization state for this browser. */
 export async function POST(request: Request): Promise<Response> {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });

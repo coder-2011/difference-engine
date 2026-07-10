@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { isSameOrigin, openAIDeviceCookie, startOpenAIDeviceCode } from "@/lib/openai-auth";
 
-export const runtime = "nodejs";
-
 /** Starts a same-origin OpenAI device authorization request. */
 export async function POST(request: Request): Promise<Response> {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });

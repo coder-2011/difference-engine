@@ -3,23 +3,22 @@
 import { CornerDownLeft, GripHorizontal, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import type { ChatTurn } from "@/types/chat";
 
 const DEFAULT_QUESTION = "What does this code do?";
-
-type ChatTurn = {
-  answer: string;
-  question: string;
-  selection: string;
-};
 
 type Point = {
   x: number;
   y: number;
 };
 
-type SelectionState = Point & {
-  open: boolean;
+type CodeSelection = Point & {
   text: string;
+};
+
+type SelectionState = CodeSelection & {
+  open: boolean;
+  pending?: CodeSelection;
 };
 
 type SelectionQuestionProps = {
@@ -29,12 +28,10 @@ type SelectionQuestionProps = {
 /** Detects code selections and presents a movable, multi-turn code conversation. */
 export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
-  const [pendingSelection, setPendingSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const [pendingQuestion, setPendingQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
   const [suggestion, setSuggestion] = useState("");
-  const loading = Boolean(pendingQuestion);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
@@ -54,8 +51,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
 
       if (!text || !insideDiff || !browserSelection?.rangeCount) {
-        if (selection?.open) setPendingSelection(null);
-        else setSelection(null);
+        setSelection((current) => {
+          if (!current?.open) return null;
+          return current.pending ? { ...current, pending: undefined } : current;
+        });
         return;
       }
 
@@ -68,9 +67,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      const nextSelection = { open: false, text, x, y };
-      if (selection?.open) setPendingSelection(nextSelection);
-      else setSelection(nextSelection);
+      const nextSelection = { text, x, y };
+      setSelection((current) => current?.open
+        ? { ...current, pending: nextSelection }
+        : { ...nextSelection, open: false });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -92,7 +92,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
-  }, [selection?.open]);
+  }, []);
 
   useEffect(() => {
     const conversation = conversationRef.current;
@@ -102,10 +102,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   /** Opens the chat with the newest selection without clearing prior turns. */
   function openPanel(): void {
     setSelection((current) => {
-      const nextSelection = pendingSelection ?? current;
+      const nextSelection = current?.pending ?? current;
       return nextSelection && { ...nextSelection, open: true };
     });
-    setPendingSelection(null);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -115,10 +114,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     requestRef.current?.abort();
     requestRef.current = null;
     setSelection(null);
-    setPendingSelection(null);
     setQuestion("");
     setTurns([]);
-    setPendingQuestion("");
+    setLoading(false);
     setSuggestion("");
   }
 
@@ -164,7 +162,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
     const controller = new AbortController();
     requestRef.current = controller;
-    setPendingQuestion(submittedQuestion);
+    setLoading(true);
     setQuestion("");
     setSuggestion("");
     setTurns((current) => [...current, { answer: "", question: submittedQuestion, selection: selection.text }]);
@@ -173,6 +171,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
     /** Commits streamed text at most once per paint instead of rerendering for every token. */
     function flushDelta(): void {
+      if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
       if (!pendingDelta) return;
       const text = pendingDelta;
@@ -225,10 +224,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
         if (done) break;
       }
-      if (frame) window.cancelAnimationFrame(frame);
       flushDelta();
     } catch {
-      if (frame) window.cancelAnimationFrame(frame);
       flushDelta();
       if (!controller.signal.aborted) {
         setTurns((current) => current.map((turn, index) => (
@@ -240,7 +237,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     } finally {
       if (requestRef.current === controller) {
         requestRef.current = null;
-        setPendingQuestion("");
+        setLoading(false);
       }
     }
   }
@@ -262,7 +259,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     }, 0);
   }
 
-  const triggerSelection = selection?.open ? pendingSelection : selection;
+  const triggerSelection = selection?.open ? selection.pending : selection;
   const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
 
   return (

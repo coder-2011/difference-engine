@@ -6,8 +6,6 @@ import {
   pollOpenAIDeviceCode,
 } from "@/lib/openai-auth";
 
-export const runtime = "nodejs";
-
 /** Polls one device authorization attempt and creates a session after approval. */
 export async function POST(request: Request): Promise<Response> {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -16,7 +14,7 @@ export async function POST(request: Request): Promise<Response> {
     const result = await pollOpenAIDeviceCode();
     if (result.pending) return NextResponse.json({ pending: true }, { status: 202 });
 
-    const response = NextResponse.json(result.connection);
+    const response = NextResponse.json({ connected: true });
     response.cookies.set(openAISessionCookie(result.sealedSession));
     response.cookies.delete(OPENAI_DEVICE_COOKIE);
     return response;

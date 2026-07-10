@@ -8,7 +8,7 @@ import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { getDiffDocument, GitHubError } from "@/lib/github";
-import { getOpenAIConnection } from "@/lib/openai-auth";
+import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 type DiffPageProps = {
@@ -29,10 +29,10 @@ export async function generateMetadata({ params }: DiffPageProps): Promise<Metad
 
 /** Renders GitHub metadata above the virtualized, interactive diff workspace. */
 export default async function DiffPage({ params }: DiffPageProps) {
-  const [{ source }, accessToken, openAIConnection] = await Promise.all([
+  const [{ source }, accessToken, openAIConnected] = await Promise.all([
     params,
     getGitHubAccessToken(),
-    getOpenAIConnection(),
+    isOpenAIConnected(),
   ]);
 
   let document;
@@ -53,7 +53,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <Link className="back-link" href="/"><ArrowLeft size={14} /> Pull requests</Link>
         </div>
         <div className="diff-nav-actions">
-          <OpenAIConnection compact initialConnection={openAIConnection} />
+          <OpenAIConnection compact initiallyConnected={openAIConnected} />
           <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
             Open on GitHub <ArrowUpRight size={14} />
           </a>
@@ -83,7 +83,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         additions={document.additions}
         changedFiles={document.changedFiles}
         deletions={document.deletions}
-        openAIConnected={openAIConnection.connected}
+        openAIConnected={openAIConnected}
         source={source}
       />
     </main>

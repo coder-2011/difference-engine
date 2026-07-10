@@ -5,35 +5,22 @@ import {
   OPENAI_SESSION_COOKIE,
 } from "@/lib/openai-auth";
 import { getRepositoryContext } from "@/lib/github";
+import { isRecord } from "@/lib/json";
 import { getGitHubAccessToken } from "@/lib/session";
-
-export const runtime = "nodejs";
+import type { ChatTurn } from "@/types/chat";
 
 const MAX_SELECTION_LENGTH = 12_000;
 const MAX_HISTORY_TURNS = 6;
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const FALLBACK_FOLLOWUP = "Where is this called from?";
 
-type JsonRecord = Record<string, unknown>;
-
-type HistoryTurn = {
-  answer: string;
-  question: string;
-  selection: string;
-};
-
 type StreamEvent =
   | { text: string; type: "delta" }
   | { message: string; type: "error" }
   | { text: string; type: "suggestion" };
 
-/** Returns true only for non-array objects. */
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Keeps only a small, bounded conversation history supplied by the client. */
-function parseHistory(value: unknown): HistoryTurn[] {
+function parseHistory(value: unknown): ChatTurn[] {
   if (!Array.isArray(value)) return [];
 
   return value
@@ -141,7 +128,6 @@ function requestModel(
       tool_choice: "auto",
       tools: [],
     }),
-    cache: "no-store",
     signal,
   });
 }
