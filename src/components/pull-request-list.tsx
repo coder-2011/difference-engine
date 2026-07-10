@@ -3,10 +3,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ChevronDown, ChevronUp, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { PullRequestSummary } from "@/types/github";
 
 const INITIAL_COUNT = 6;
+const DATE_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
 
 type PullRequestListProps = {
   pullRequests: PullRequestSummary[];
@@ -15,12 +16,13 @@ type PullRequestListProps = {
 
 /** Formats a GitHub timestamp into the compact date used on pull request cards. */
 function relativeDate(value: string): string {
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+  const date = new Date(value);
+  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
 
   if (days < 1) return "today";
   if (days === 1) return "yesterday";
   if (days < 30) return `${days}d ago`;
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
+  return DATE_FORMAT.format(date);
 }
 
 /** Filters the signed-in user's pull requests and reveals more than the initial six on demand. */
@@ -28,22 +30,14 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
 
+  const normalizedQuery = query.trim().toLowerCase();
   // Match the fields visible on each card so filtering stays predictable.
-  const filteredPullRequests = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return pullRequests;
-
-    return pullRequests.filter((pullRequest) => {
-      const searchableText = [
-        pullRequest.repository,
-        pullRequest.title,
-        pullRequest.author,
-        `#${pullRequest.number}`,
-      ].join(" ").toLowerCase();
-
-      return searchableText.includes(normalizedQuery);
-    });
-  }, [pullRequests, query]);
+  const filteredPullRequests = normalizedQuery
+    ? pullRequests.filter((pullRequest) => {
+        const searchableText = `${pullRequest.repository} ${pullRequest.title} ${pullRequest.author} #${pullRequest.number}`;
+        return searchableText.toLowerCase().includes(normalizedQuery);
+      })
+    : pullRequests;
 
   const visiblePullRequests = expanded
     ? filteredPullRequests

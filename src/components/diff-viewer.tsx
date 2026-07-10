@@ -16,6 +16,8 @@ type DiffViewerProps = {
   source: string[];
 };
 
+const EMPTY_FILES: FileDiffMetadata[] = [];
+
 /** Maps Diffs' change vocabulary onto Trees' git-status vocabulary. */
 function gitStatusForFile(file: FileDiffMetadata): GitStatus {
   if (file.type === "new") return "added";
@@ -26,8 +28,7 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatus {
 
 /** Fetches, parses, navigates, and renders the full GitHub patch. */
 export function DiffViewer({ additions, changedFiles, deletions, openAIConnected, source }: DiffViewerProps) {
-  const [files, setFiles] = useState<FileDiffMetadata[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [error, setError] = useState("");
   const [split, setSplit] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -44,8 +45,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
       if (event.data.error) {
         setError(event.data.error);
       } else {
-        setFiles(event.data.files ?? []);
-        setLoaded(true);
+        setParsedFiles(event.data.files ?? []);
       }
     }
 
@@ -61,6 +61,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     return () => worker.terminate();
   }, [source]);
 
+  const files = parsedFiles ?? EMPTY_FILES;
   const paths = useMemo(() => files.map((file) => file.name), [files]);
   const gitStatus = useMemo<GitStatusEntry[]>(
     () => files.map((file) => ({ path: file.name, status: gitStatusForFile(file) })),
@@ -95,12 +96,11 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     if (!workspace) return;
 
     /** Hands downward wheel movement to the page until the review header is above the diff. */
-    function revealWorkspace(event: WheelEvent): void {
-      const element = event.currentTarget as HTMLElement;
-      if (event.deltaY <= 0 || element.getBoundingClientRect().top <= 51) return;
+    const revealWorkspace = (event: WheelEvent): void => {
+      if (event.deltaY <= 0 || workspace.getBoundingClientRect().top <= 51) return;
       event.preventDefault();
       window.scrollBy({ top: event.deltaY, behavior: "auto" });
-    }
+    };
 
     workspace.addEventListener("wheel", revealWorkspace, { capture: true, passive: false });
     return () => workspace.removeEventListener("wheel", revealWorkspace, { capture: true });
@@ -116,7 +116,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     return <div className="diff-error"><strong>Couldn’t load this diff</strong><span>{error}</span></div>;
   }
 
-  if (!loaded) {
+  if (!parsedFiles) {
     return <div className="diff-loading"><LoaderCircle className="spinner" size={20} /><strong>Fetching diff</strong><span>Streaming the patch from GitHub…</span></div>;
   }
 
