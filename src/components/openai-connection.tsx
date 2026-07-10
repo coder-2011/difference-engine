@@ -3,41 +3,37 @@
 import { Check, Copy, ExternalLink, LoaderCircle, LogOut, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { OpenAIConnection as OpenAIConnectionState } from "@/lib/openai-auth";
-
-type DeviceCode = {
-  interval: number;
-  userCode: string;
-  verificationUrl: string;
-};
+import type { OpenAIDeviceCode } from "@/types/openai";
 
 type OpenAIConnectionProps = {
   compact?: boolean;
-  initialConnection: OpenAIConnectionState;
+  initiallyConnected: boolean;
 };
 
-type ConnectionStatus = "idle" | "starting" | "waiting" | "error";
+type DialogState =
+  | { status: "idle" | "starting" }
+  | { status: "waiting"; device: OpenAIDeviceCode; copied: boolean; copiesCode: boolean }
+  | { status: "error"; message: string };
 
 /** Renders OpenAI connection state and the device-code sign-in dialog. */
-export function OpenAIConnection({ compact = false, initialConnection }: OpenAIConnectionProps) {
+export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAIConnectionProps) {
   const router = useRouter();
-  const [connected, setConnected] = useState(initialConnection.connected);
-  const [device, setDevice] = useState<DeviceCode | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>("idle");
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [shortcutCopiesCode, setShortcutCopiesCode] = useState(false);
+  const [connected, setConnected] = useState(initiallyConnected);
+  const [dialog, setDialog] = useState<DialogState>({ status: "idle" });
+  const device = dialog.status === "waiting" ? dialog.device : null;
+  const copied = dialog.status === "waiting" && dialog.copied;
+  const copiesCode = dialog.status === "waiting" && dialog.copiesCode;
 
   useEffect(() => {
-    if (!device || status !== "waiting") return;
-    const activeDevice = device;
+    if (!device) return;
+    const currentDevice = device;
 
     let cancelled = false;
     let timer = 0;
 
     /** Schedules the next server-side approval check at OpenAI's requested interval. */
     function schedulePoll(): void {
-      timer = window.setTimeout(pollForApproval, activeDevice.interval * 1_000);
+      timer = window.setTimeout(pollForApproval, currentDevice.interval * 1_000);
     }
 
     /** Polls once and completes the local session after OpenAI approves the device. */
@@ -51,17 +47,16 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
           return;
         }
 
-        const body = await response.json() as OpenAIConnectionState & { error?: string };
+        const body = await response.json() as { error?: string };
         if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not finish.");
 
-        setConnected(body.connected);
-        setStatus("idle");
-        setDevice(null);
+        setConnected(true);
+        setDialog({ status: "idle" });
         router.refresh();
       } catch (pollError) {
         if (cancelled) return;
-        setError(pollError instanceof Error ? pollError.message : "OpenAI sign-in could not finish.");
-        setStatus("error");
+        const message = pollError instanceof Error ? pollError.message : "OpenAI sign-in could not finish.";
+        setDialog({ status: "error", message });
       }
     }
 
@@ -70,11 +65,11 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [device, router, status]);
+  }, [device, router]);
 
   useEffect(() => {
-    if (!device || status !== "waiting") return;
-    const activeDevice = device;
+    if (!device) return;
+    const currentDevice = device;
 
     /** Copies the authorization link first, then the device code on later C presses. */
     async function copyLoginValue(event: KeyboardEvent): Promise<void> {
@@ -84,32 +79,28 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
       if (event.key.toLowerCase() !== "c" || event.metaKey || event.ctrlKey || event.altKey || isEditing) return;
 
       event.preventDefault();
-      await navigator.clipboard.writeText(shortcutCopiesCode ? activeDevice.userCode : activeDevice.verificationUrl);
-      if (shortcutCopiesCode) setCopied(true);
-      else setShortcutCopiesCode(true);
+      await navigator.clipboard.writeText(copiesCode ? currentDevice.userCode : currentDevice.verificationUrl);
+      setDialog((current) => current.status === "waiting"
+        ? { ...current, copied: copiesCode, copiesCode: true }
+        : current);
     }
 
     document.addEventListener("keydown", copyLoginValue);
     return () => document.removeEventListener("keydown", copyLoginValue);
-  }, [device, shortcutCopiesCode, status]);
+  }, [copiesCode, device]);
 
   /** Opens the connection dialog and requests a fresh one-time code. */
   async function startConnection(): Promise<void> {
-    setDevice(null);
-    setError("");
-    setCopied(false);
-    setShortcutCopiesCode(false);
-    setStatus("starting");
+    setDialog({ status: "starting" });
 
     try {
       const response = await fetch("/api/auth/openai/device", { method: "POST" });
-      const body = await response.json() as DeviceCode & { error?: string };
+      const body = await response.json() as OpenAIDeviceCode & { error?: string };
       if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not start.");
-      setDevice(body);
-      setStatus("waiting");
+      setDialog({ status: "waiting", device: body, copied: false, copiesCode: false });
     } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "OpenAI sign-in could not start.");
-      setStatus("error");
+      const message = startError instanceof Error ? startError.message : "OpenAI sign-in could not start.";
+      setDialog({ status: "error", message });
     }
   }
 
@@ -124,13 +115,12 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
   async function copyCode(): Promise<void> {
     if (!device) return;
     await navigator.clipboard.writeText(device.userCode);
-    setCopied(true);
+    setDialog((current) => current.status === "waiting" ? { ...current, copied: true } : current);
   }
 
   /** Closes the dialog and stops client-side polling. */
   function closeDialog(): void {
-    setDevice(null);
-    setStatus("idle");
+    setDialog({ status: "idle" });
   }
 
   return (
@@ -148,7 +138,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
         </button>
       )}
 
-      {status !== "idle" && (
+      {dialog.status !== "idle" && (
         <div className="openai-overlay">
           <section className="openai-dialog" role="dialog" aria-modal="true" aria-labelledby="openai-dialog-title">
             <button className="openai-dialog-close" type="button" aria-label="Close OpenAI sign-in" onClick={closeDialog}>
@@ -160,11 +150,11 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
             <h2 id="openai-dialog-title">Connect your OpenAI account</h2>
             <p>Authorize directly on OpenAI. Diffs never sees your password, and GitHub access stays separate.</p>
 
-            {status === "starting" && (
+            {dialog.status === "starting" && (
               <div className="openai-waiting"><LoaderCircle className="spinner" size={17} /> Creating a secure code…</div>
             )}
 
-            {device && status === "waiting" && (
+            {device && (
               <div className="openai-device-flow">
                 <div className="openai-step">
                   <span>1</span>
@@ -175,7 +165,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
                     Continue to OpenAI <ExternalLink size={14} />
                   </a>
                   <span className="openai-copy-shortcut" aria-live="polite">
-                    <kbd>C</kbd> {shortcutCopiesCode ? (copied ? "Code copied" : "Copy code") : "Copy link"}
+                    <kbd>C</kbd> {copiesCode ? (copied ? "Code copied" : "Copy code") : "Copy link"}
                   </span>
                 </div>
 
@@ -194,9 +184,9 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
               </div>
             )}
 
-            {status === "error" && (
+            {dialog.status === "error" && (
               <div className="openai-error">
-                <span>{error}</span>
+                <span>{dialog.message}</span>
                 <button type="button" onClick={startConnection}>Try again</button>
               </div>
             )}

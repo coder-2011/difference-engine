@@ -5,7 +5,7 @@ import { Brand } from "@/components/brand";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestList } from "@/components/pull-request-list";
 import { listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
-import { getOpenAIConnection } from "@/lib/openai-auth";
+import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 import { login, logout, openSource } from "./actions";
 
@@ -15,11 +15,11 @@ type HomeProps = {
 
 /** Renders the URL launcher and, when authenticated, the user's active and recent PR inbox. */
 export default async function Home({ searchParams }: HomeProps) {
-  const [session, params, accessToken, openAIConnection] = await Promise.all([
+  const [session, params, accessToken, openAIConnected] = await Promise.all([
     auth(),
     searchParams,
     getGitHubAccessToken(),
-    getOpenAIConnection(),
+    isOpenAIConnected(),
   ]);
   const [pullRequests, recentPullRequests] = accessToken
     ? await Promise.all([
@@ -33,7 +33,7 @@ export default async function Home({ searchParams }: HomeProps) {
       <nav className="home-nav">
         <Brand />
         <div className="nav-auth-actions">
-          <OpenAIConnection initialConnection={openAIConnection} />
+          <OpenAIConnection initiallyConnected={openAIConnected} />
           {session?.user ? (
             <div className="account-cluster">
               {session.user.image && (
