@@ -4,10 +4,16 @@ import { cookies } from "next/headers";
 
 const CLIENT_ID = process.env.OPENAI_OAUTH_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = (process.env.OPENAI_OAUTH_ISSUER ?? "https://auth.openai.com").replace(/\/$/, "");
-const SESSION_COOKIE = "diffs-openai-session";
-const DEVICE_COOKIE = "diffs-openai-device";
+export const OPENAI_SESSION_COOKIE = "diffs-openai-session";
+export const OPENAI_DEVICE_COOKIE = "diffs-openai-device";
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60;
 const DEVICE_MAX_AGE = 15 * 60;
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  path: "/",
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+} as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -39,25 +45,36 @@ export type OpenAIConnection = {
   name?: string;
 };
 
-export type OpenAIAccess = {
+type OpenAIAccess = {
   accessToken: string;
   session: StoredOpenAISession;
 };
 
-export type OpenAIDeviceCode = {
+type OpenAIDeviceCode = {
   interval: number;
   sealedSession: string;
   userCode: string;
   verificationUrl: string;
 };
 
-export type OpenAIDevicePoll =
+type OpenAIDevicePoll =
   | { pending: true }
   | { pending: false; sealedSession: string; connection: OpenAIConnection };
 
 /** Returns true only for non-array objects. */
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Sends JSON to one OpenAI endpoint with the shared request policy. */
+function postJson(path: string, body: JsonRecord, signal?: AbortSignal): Promise<Response> {
+  return fetch(`${ISSUER}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
 }
 
 /** Converts bytes into the URL-safe encoding used by sealed cookies. */
@@ -129,6 +146,13 @@ function getAccountId(claims: JsonRecord): string | undefined {
   return typeof auth.chatgpt_account_id === "string" ? auth.chatgpt_account_id : undefined;
 }
 
+/** Projects a stored credential into the public connection state. */
+function connectionFromSession(session?: StoredOpenAISession): OpenAIConnection {
+  return session
+    ? { connected: true, email: session.email, name: session.name }
+    : { connected: false };
+}
+
 /** Validates the token response and builds the minimal encrypted session. */
 function sessionFromTokens(payload: TokenPayload, fallbackSession?: StoredOpenAISession): OpenAIAccess {
   const accessToken = typeof payload.access_token === "string" ? payload.access_token : "";
@@ -156,8 +180,9 @@ function sessionFromTokens(payload: TokenPayload, fallbackSession?: StoredOpenAI
 }
 
 /** Parses and validates the encrypted long-lived OpenAI session. */
-async function readStoredSession(value: string | undefined): Promise<StoredOpenAISession | undefined> {
-  const session = await unseal(value);
+async function readStoredSession(): Promise<StoredOpenAISession | undefined> {
+  const store = await cookies();
+  const session = await unseal(store.get(OPENAI_SESSION_COOKIE)?.value);
   if (
     session?.version !== 1 ||
     typeof session.accountId !== "string" ||
@@ -174,8 +199,9 @@ async function readStoredSession(value: string | undefined): Promise<StoredOpenA
 }
 
 /** Parses and validates the encrypted short-lived device authorization state. */
-async function readStoredDevice(value: string | undefined): Promise<StoredDeviceSession | undefined> {
-  const session = await unseal(value);
+async function readStoredDevice(): Promise<StoredDeviceSession | undefined> {
+  const store = await cookies();
+  const session = await unseal(store.get(OPENAI_DEVICE_COOKIE)?.value);
   if (
     session?.version !== 1 ||
     typeof session.deviceAuthId !== "string" ||
@@ -196,12 +222,7 @@ async function readStoredDevice(value: string | undefined): Promise<StoredDevice
 
 /** Starts OpenAI's short-lived device authorization flow. */
 export async function startOpenAIDeviceCode(): Promise<OpenAIDeviceCode> {
-  const response = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: CLIENT_ID }),
-    cache: "no-store",
-  });
+  const response = await postJson("/api/accounts/deviceauth/usercode", { client_id: CLIENT_ID });
 
   if (!response.ok) throw new Error(`OpenAI device authorization failed (${response.status}).`);
 
@@ -236,15 +257,13 @@ export async function startOpenAIDeviceCode(): Promise<OpenAIDeviceCode> {
 }
 
 /** Polls once for device approval and exchanges an approved code for tokens. */
-export async function pollOpenAIDeviceCode(cookieValue: string | undefined): Promise<OpenAIDevicePoll> {
-  const device = await readStoredDevice(cookieValue);
+export async function pollOpenAIDeviceCode(): Promise<OpenAIDevicePoll> {
+  const device = await readStoredDevice();
   if (!device) throw new Error("This OpenAI sign-in request expired. Start again.");
 
-  const pollResponse = await fetch(`${ISSUER}/api/accounts/deviceauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device_auth_id: device.deviceAuthId, user_code: device.userCode }),
-    cache: "no-store",
+  const pollResponse = await postJson("/api/accounts/deviceauth/token", {
+    device_auth_id: device.deviceAuthId,
+    user_code: device.userCode,
   });
 
   if (pollResponse.status === 403 || pollResponse.status === 404) return { pending: true };
@@ -278,112 +297,74 @@ export async function pollOpenAIDeviceCode(cookieValue: string | undefined): Pro
   return {
     pending: false,
     sealedSession,
-    connection: {
-      connected: true,
-      email: access.session.email,
-      name: access.session.name,
-    },
+    connection: connectionFromSession(access.session),
   };
 }
 
 /** Returns the public connection status without exposing any credential material. */
 export async function getOpenAIConnection(): Promise<OpenAIConnection> {
-  const store = await cookies();
-  const session = await readStoredSession(store.get(SESSION_COOKIE)?.value);
-  return session
-    ? { connected: true, email: session.email, name: session.name }
-    : { connected: false };
+  const session = await readStoredSession();
+  return connectionFromSession(session);
 }
 
 /** Refreshes the current OpenAI session and returns a short-lived access token. */
 export async function getOpenAIAccess(): Promise<OpenAIAccess | undefined> {
-  const store = await cookies();
-  const session = await readStoredSession(store.get(SESSION_COOKIE)?.value);
+  const session = await readStoredSession();
   if (!session) return undefined;
 
-  const response = await fetch(`${ISSUER}/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      refresh_token: session.refreshToken,
-      client_id: CLIENT_ID,
-      scope: "openid profile email offline_access",
-    }),
-    cache: "no-store",
+  const response = await postJson("/oauth/token", {
+    grant_type: "refresh_token",
+    refresh_token: session.refreshToken,
+    client_id: CLIENT_ID,
+    scope: "openid profile email offline_access",
   });
 
   if (response.status >= 500) throw new Error(`OpenAI token refresh failed (${response.status}).`);
   if (!response.ok) return undefined;
-  return sessionFromTokens(await response.json() as TokenPayload, session);
+  const access = sessionFromTokens(await response.json() as TokenPayload, session);
+  const store = await cookies();
+  // Persist rotation at the refresh boundary so later repository or model failures cannot lose it.
+  store.set(openAISessionCookie(await seal(access.session)));
+  return access;
 }
 
 /** Best-effort revokes the refresh token before local logout. */
 export async function revokeOpenAISession(): Promise<void> {
-  const store = await cookies();
-  const session = await readStoredSession(store.get(SESSION_COOKIE)?.value);
+  const session = await readStoredSession();
   if (!session) return;
 
   try {
-    await fetch(`${ISSUER}/oauth/revoke`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        token: session.refreshToken,
-        token_type_hint: "refresh_token",
-        client_id: CLIENT_ID,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-    });
+    await postJson("/oauth/revoke", {
+      token: session.refreshToken,
+      token_type_hint: "refresh_token",
+      client_id: CLIENT_ID,
+    }, AbortSignal.timeout(5_000));
   } catch {
     // Local logout must still succeed when OpenAI is temporarily unreachable.
   }
 }
 
-/** Encrypts a refreshed session for the response cookie. */
-export async function sealOpenAISession(session: StoredOpenAISession): Promise<string> {
-  return seal(session);
-}
-
 /** Verifies that a state-changing API request came from this same web origin. */
 export function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  return Boolean(origin && origin === new URL(request.url).origin);
+  return request.headers.get("origin") === new URL(request.url).origin;
 }
 
 /** Returns consistent secure options for the long-lived OpenAI session cookie. */
 export function openAISessionCookie(value: string) {
   return {
-    name: SESSION_COOKIE,
+    ...COOKIE_OPTIONS,
+    name: OPENAI_SESSION_COOKIE,
     value,
-    httpOnly: true,
     maxAge: SESSION_MAX_AGE,
-    path: "/",
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
   };
 }
 
 /** Returns consistent secure options for the temporary device-flow cookie. */
 export function openAIDeviceCookie(value: string) {
   return {
-    name: DEVICE_COOKIE,
+    ...COOKIE_OPTIONS,
+    name: OPENAI_DEVICE_COOKIE,
     value,
-    httpOnly: true,
     maxAge: DEVICE_MAX_AGE,
-    path: "/",
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
   };
-}
-
-/** Returns the temporary device cookie name for route-level reads and deletion. */
-export function openAIDeviceCookieName(): string {
-  return DEVICE_COOKIE;
-}
-
-/** Returns the session cookie name for route-level deletion. */
-export function openAISessionCookieName(): string {
-  return SESSION_COOKIE;
 }

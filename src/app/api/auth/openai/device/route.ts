@@ -5,9 +5,7 @@ export const runtime = "nodejs";
 
 /** Starts a same-origin OpenAI device authorization request. */
 export async function POST(request: Request): Promise<Response> {
-  if (!isSameOrigin(request)) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
-  }
+  if (!isSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
 
   try {
     const device = await startOpenAIDeviceCode();

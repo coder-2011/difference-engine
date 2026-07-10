@@ -16,15 +16,14 @@ type OpenAIConnectionProps = {
   initialConnection: OpenAIConnectionState;
 };
 
-type ConnectionStatus = "idle" | "starting" | "waiting" | "connected" | "error";
+type ConnectionStatus = "idle" | "starting" | "waiting" | "error";
 
 /** Renders OpenAI connection state and the device-code sign-in dialog. */
 export function OpenAIConnection({ compact = false, initialConnection }: OpenAIConnectionProps) {
   const router = useRouter();
-  const [connection, setConnection] = useState(initialConnection);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [connected, setConnected] = useState(initialConnection.connected);
   const [device, setDevice] = useState<DeviceCode | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>(initialConnection.connected ? "connected" : "idle");
+  const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -46,12 +45,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
         const response = await fetch("/api/auth/openai/device/poll", { method: "POST" });
         if (cancelled) return;
 
-        if (response.status === 202) {
-          schedulePoll();
-          return;
-        }
-
-        if (response.status >= 500) {
+        if (response.status === 202 || response.status >= 500) {
           schedulePoll();
           return;
         }
@@ -59,10 +53,9 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
         const body = await response.json() as OpenAIConnectionState & { error?: string };
         if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not finish.");
 
-        setConnection(body);
-        setStatus("connected");
+        setConnected(body.connected);
+        setStatus("idle");
         setDevice(null);
-        setDialogOpen(false);
         router.refresh();
       } catch (pollError) {
         if (cancelled) return;
@@ -80,7 +73,6 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
 
   /** Opens the connection dialog and requests a fresh one-time code. */
   async function startConnection(): Promise<void> {
-    setDialogOpen(true);
     setDevice(null);
     setError("");
     setCopied(false);
@@ -101,8 +93,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
   /** Clears the OpenAI session while leaving GitHub authentication untouched. */
   async function disconnect(): Promise<void> {
     await fetch("/api/auth/openai/logout", { method: "POST" });
-    setConnection({ connected: false });
-    setStatus("idle");
+    setConnected(false);
     router.refresh();
   }
 
@@ -115,14 +106,13 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
 
   /** Closes the dialog and stops client-side polling. */
   function closeDialog(): void {
-    setDialogOpen(false);
     setDevice(null);
-    setStatus(connection.connected ? "connected" : "idle");
+    setStatus("idle");
   }
 
   return (
     <>
-      {connection.connected ? (
+      {connected ? (
         <button className={`openai-button connected ${compact ? "compact" : ""}`} type="button" onClick={disconnect} title="Disconnect OpenAI">
           <span className="connection-dot" />
           <span>{compact ? "OpenAI" : "OpenAI connected"}</span>
@@ -135,7 +125,7 @@ export function OpenAIConnection({ compact = false, initialConnection }: OpenAIC
         </button>
       )}
 
-      {dialogOpen && (
+      {status !== "idle" && (
         <div className="openai-overlay">
           <section className="openai-dialog" role="dialog" aria-modal="true" aria-labelledby="openai-dialog-title">
             <button className="openai-dialog-close" type="button" aria-label="Close OpenAI sign-in" onClick={closeDialog}>

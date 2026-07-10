@@ -11,10 +11,7 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
   callbacks: {
     /** Keeps GitHub's access token inside the encrypted Auth.js session token. */
     jwt({ token, account }) {
-      if (account?.access_token) {
-        token.accessToken = account.access_token;
-      }
-
+      if (account?.access_token) token.accessToken = account.access_token;
       return token;
     },
   },
