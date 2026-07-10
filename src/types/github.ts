@@ -22,5 +22,4 @@ export type DiffDocument = {
   repository: string;
   sourceUrl: string;
   title: string;
-  updatedAt?: string;
 };

@@ -18,10 +18,6 @@ export async function logout(): Promise<void> {
 export async function openSource(formData: FormData): Promise<void> {
   const value = String(formData.get("url") ?? "");
   const viewerPath = viewerPathFromUrl(value);
-
-  if (!viewerPath) {
-    redirect(`/?error=${encodeURIComponent("Enter a GitHub pull request, comparison, or commit URL")}`);
-  }
-
-  redirect(viewerPath);
+  const error = encodeURIComponent("Enter a GitHub pull request, comparison, or commit URL");
+  redirect(viewerPath ?? `/?error=${error}`);
 }

@@ -28,7 +28,6 @@ type PullRequest = {
   head: { label: string; sha: string };
   html_url: string;
   title: string;
-  updated_at: string;
   user: GitHubUser;
 };
 
@@ -88,16 +87,17 @@ export class GitHubError extends Error {
   }
 }
 
+/** Builds the shared media and optional authorization headers for GitHub requests. */
+function githubHeaders(accept: string, token?: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: accept };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
 /** Performs a typed, read-only GitHub API request with optional private-repo access. */
 async function githubRequest<T>(path: string, token?: string): Promise<T> {
-  const headers: HeadersInit = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const headers = githubHeaders("application/vnd.github+json", token);
+  headers["X-GitHub-Api-Version"] = "2022-11-28";
 
   const response = await fetch(`${GITHUB_API}${path}`, {
     headers,
@@ -167,7 +167,6 @@ function parseSource(source: string[]): {
   apiPath: string;
   encodedRepository: string;
   kind: "compare" | "commit" | "pull";
-  publicDiffUrl: string;
   repository: string;
   value: string;
 } {
@@ -181,14 +180,11 @@ function parseSource(source: string[]): {
   const repository = `${owner}/${repo}`;
   const encodedRepository = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const collection = kind === "pull" ? "pulls" : kind === "commit" ? "commits" : "compare";
-  const suffix = `${collection}/${encodeURIComponent(value)}`;
-  const publicCollection = kind === "pull" ? "pull" : kind;
 
   return {
-    apiPath: `/repos/${encodedRepository}/${suffix}`,
+    apiPath: `/repos/${encodedRepository}/${collection}/${encodeURIComponent(value)}`,
     encodedRepository,
     kind,
-    publicDiffUrl: `https://github.com/${repository}/${publicCollection}/${encodeURIComponent(value)}.diff`,
     repository,
     value,
   };
@@ -196,16 +192,10 @@ function parseSource(source: string[]): {
 
 /** Resolves the exact repository revision represented by a pull request, comparison, or commit. */
 async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?: string): Promise<string> {
-  if (parsed.kind === "pull") {
-    const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
-    return pullRequest.head.sha;
-  }
-
-  if (parsed.kind === "compare") {
-    return parsed.value.split("...").at(-1) ?? parsed.value;
-  }
-
-  return parsed.value;
+  if (parsed.kind === "commit") return parsed.value;
+  if (parsed.kind === "compare") return parsed.value.split("...").at(-1) ?? parsed.value;
+  const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
+  return pullRequest.head.sha;
 }
 
 /** Extracts unique destination paths from a standard Git patch. */
@@ -282,17 +272,17 @@ export async function getDiffDocument(source: string[], token?: string): Promise
       repository: parsed.repository,
       sourceUrl: pullRequest.html_url,
       title: pullRequest.title,
-      updatedAt: pullRequest.updated_at,
     };
   }
 
   if (parsed.kind === "compare") {
     const comparison = await githubRequest<Compare>(parsed.apiPath, token);
     const [baseLabel, headLabel] = parsed.value.split("...");
+    const owner = parsed.repository.split("/")[0];
 
     return {
-      author: parsed.repository.split("/")[0],
-      avatarUrl: `https://github.com/${parsed.repository.split("/")[0]}.png`,
+      author: owner,
+      avatarUrl: `https://github.com/${owner}.png`,
       baseLabel,
       changedFiles: comparison.files?.length,
       description: `${comparison.ahead_by} commits ahead and ${comparison.behind_by} behind · ${comparison.status}`,
@@ -320,49 +310,40 @@ export async function getDiffDocument(source: string[], token?: string): Promise
   };
 }
 
+/** Wraps raw diff content with the response contract shared by every GitHub source. */
+function diffResponse(body: BodyInit): Response {
+  return new Response(body, {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
 /** Streams the raw GitHub diff so large comparisons are not serialized through React. */
 export async function getDiffResponse(source: string[], token?: string): Promise<Response> {
   const parsed = parseSource(source);
-  const headers: HeadersInit = { Accept: "application/vnd.github.diff" };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
 
   const response = await fetch(`${GITHUB_API}${parsed.apiPath}`, {
-    headers,
+    headers: githubHeaders("application/vnd.github.diff", token),
     cache: "no-store",
   });
 
-  if (response.ok && response.body) {
-    return new Response(response.body, {
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      status: 200,
-    });
-  }
+  if (response.ok && response.body) return diffResponse(response.body);
 
   // GitHub's REST media type rejects public diffs above 300 files, while its
   // streaming web endpoint still serves them in full.
   if (response.status === 406) {
-    const publicResponse = await fetch(parsed.publicDiffUrl, {
+    const publicDiffUrl = `https://github.com/${parsed.repository}/${parsed.kind}/${encodeURIComponent(parsed.value)}.diff`;
+    const publicResponse = await fetch(publicDiffUrl, {
       cache: "no-store",
       redirect: "follow",
     });
     const contentType = publicResponse.headers.get("content-type") ?? "";
 
     if (publicResponse.ok && publicResponse.body && contentType.startsWith("text/plain")) {
-      return new Response(publicResponse.body, {
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        status: 200,
-      });
+      return diffResponse(publicResponse.body);
     }
 
     if (parsed.kind === "pull" && token) {
-      const largePrivateDiff = await getLargePullRequestDiff(parsed.apiPath, token);
-      return new Response(largePrivateDiff, {
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        status: 200,
-      });
+      return diffResponse(await getLargePullRequestDiff(parsed.apiPath, token));
     }
   }
 
