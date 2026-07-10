@@ -9,8 +9,12 @@ type SelectionState = {
   y: number;
 };
 
+type SelectionQuestionProps = {
+  source: string[];
+};
+
 /** Detects code selections and presents a small question-and-answer popover. */
-export function SelectionQuestion() {
+export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [question, setQuestion] = useState("");
@@ -26,9 +30,12 @@ export function SelectionQuestion() {
 
       const browserSelection = window.getSelection();
       const text = browserSelection?.toString().trim() ?? "";
-      const root = browserSelection?.anchorNode?.getRootNode();
-      const shadowHost = root instanceof ShadowRoot ? root.host : null;
-      const insideDiff = shadowHost?.closest("[data-diff-selection-root]");
+      const anchor = browserSelection?.anchorNode;
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const root = anchor?.getRootNode();
+      // Diffs can render code in either ordinary DOM or an open shadow tree.
+      const selectionElement = root instanceof ShadowRoot ? root.host : anchorElement;
+      const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
 
       if (!text || !insideDiff || !browserSelection?.rangeCount) {
         setSelection(null);
@@ -79,7 +86,7 @@ export function SelectionQuestion() {
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: question.trim(), selection: selection.text }),
+        body: JSON.stringify({ question: question.trim(), selection: selection.text, source }),
       });
       const body = (await response.json()) as { answer?: string; error?: string };
       setAnswer(body.answer ?? body.error ?? "No answer was returned.");

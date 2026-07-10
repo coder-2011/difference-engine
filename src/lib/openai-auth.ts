@@ -130,12 +130,14 @@ function getAccountId(claims: JsonRecord): string | undefined {
 }
 
 /** Validates the token response and builds the minimal encrypted session. */
-function sessionFromTokens(payload: TokenPayload, fallbackRefreshToken?: string): OpenAIAccess {
+function sessionFromTokens(payload: TokenPayload, fallbackSession?: StoredOpenAISession): OpenAIAccess {
   const accessToken = typeof payload.access_token === "string" ? payload.access_token : "";
   const idToken = typeof payload.id_token === "string" ? payload.id_token : "";
-  const refreshToken = typeof payload.refresh_token === "string" ? payload.refresh_token : fallbackRefreshToken;
+  const refreshToken = typeof payload.refresh_token === "string"
+    ? payload.refresh_token
+    : fallbackSession?.refreshToken;
   const claims = parseJwtClaims(idToken);
-  const accountId = claims ? getAccountId(claims) : undefined;
+  const accountId = (claims ? getAccountId(claims) : undefined) ?? fallbackSession?.accountId;
 
   if (!accessToken || !refreshToken || !accountId) {
     throw new Error("OpenAI returned an incomplete authorization session.");
@@ -145,8 +147,8 @@ function sessionFromTokens(payload: TokenPayload, fallbackRefreshToken?: string)
     accessToken,
     session: {
       accountId,
-      email: claims && typeof claims.email === "string" ? claims.email : undefined,
-      name: claims && typeof claims.name === "string" ? claims.name : undefined,
+      email: claims && typeof claims.email === "string" ? claims.email : fallbackSession?.email,
+      name: claims && typeof claims.name === "string" ? claims.name : fallbackSession?.name,
       refreshToken,
       version: 1,
     },
@@ -313,7 +315,7 @@ export async function getOpenAIAccess(): Promise<OpenAIAccess | undefined> {
 
   if (response.status >= 500) throw new Error(`OpenAI token refresh failed (${response.status}).`);
   if (!response.ok) return undefined;
-  return sessionFromTokens(await response.json() as TokenPayload, session.refreshToken);
+  return sessionFromTokens(await response.json() as TokenPayload, session);
 }
 
 /** Best-effort revokes the refresh token before local logout. */

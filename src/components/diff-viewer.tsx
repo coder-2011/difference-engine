@@ -165,7 +165,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
               themeType: "dark",
             }}
           />
-          {openAIConnected && <SelectionQuestion />}
+          {openAIConnected && <SelectionQuestion source={source} />}
         </div>
       </div>
     </section>

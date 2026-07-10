@@ -18,7 +18,7 @@ Try it at [diffs.naman.world](https://diffs.naman.world).
 - Uses GitHub sign-in for private repositories and a personal list of open pull requests that you authored, were assigned, or were asked to review.
 - Renders large patches with a navigable file tree and split or unified views.
 - Shows the pull request description beside the code it explains.
-- Lets you connect OpenAI separately, then select code and ask a question without leaving the diff.
+- Lets you connect OpenAI separately, then ask about selected code with the repository tree, full diff, and changed-file contents in context.
 
 The diff and tree views are built with [`@pierre/diffs`](https://www.npmjs.com/package/@pierre/diffs) and [`@pierre/trees`](https://www.npmjs.com/package/@pierre/trees).
 

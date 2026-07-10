@@ -22,7 +22,7 @@ type PullRequest = {
   body: string | null;
   changed_files: number;
   deletions: number;
-  head: { label: string };
+  head: { label: string; sha: string };
   html_url: string;
   title: string;
   updated_at: string;
@@ -54,6 +54,28 @@ type Commit = {
   html_url: string;
   stats?: { additions: number; deletions: number };
 };
+
+type GitBlob = {
+  content: string;
+  encoding: string;
+};
+
+type GitTreeEntry = {
+  path: string;
+  sha: string;
+  size?: number;
+  type: "blob" | "commit" | "tree";
+};
+
+type GitTree = {
+  tree: GitTreeEntry[];
+  truncated: boolean;
+};
+
+const CONTEXT_TREE_LIMIT = 30_000;
+const CONTEXT_DIFF_LIMIT = 50_000;
+const CONTEXT_FILES_LIMIT = 70_000;
+const CONTEXT_FILE_COUNT = 24;
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -118,6 +140,7 @@ export async function listOpenPullRequests(token: string): Promise<PullRequestSu
 /** Validates and encodes a GitHub-style viewer path for API requests. */
 function parseSource(source: string[]): {
   apiPath: string;
+  encodedRepository: string;
   kind: "compare" | "commit" | "pull";
   publicDiffUrl: string;
   repository: string;
@@ -138,11 +161,81 @@ function parseSource(source: string[]): {
 
   return {
     apiPath: `/repos/${encodedRepository}/${suffix}`,
+    encodedRepository,
     kind,
     publicDiffUrl: `https://github.com/${repository}/${publicCollection}/${encodeURIComponent(value)}.diff`,
     repository,
     value,
   };
+}
+
+/** Resolves the exact repository revision represented by a pull request, comparison, or commit. */
+async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?: string): Promise<string> {
+  if (parsed.kind === "pull") {
+    const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
+    return pullRequest.head.sha;
+  }
+
+  if (parsed.kind === "compare") {
+    return parsed.value.split("...").at(-1) ?? parsed.value;
+  }
+
+  return parsed.value;
+}
+
+/** Extracts unique destination paths from a standard Git patch. */
+function changedPathsFromDiff(diff: string): string[] {
+  const paths = Array.from(diff.matchAll(/^\+\+\+ b\/(.+)$/gm), (match) => match[1]);
+  return [...new Set(paths)];
+}
+
+/** Decodes one textual Git blob while ignoring binary repository content. */
+function decodeGitBlob(blob: GitBlob): string {
+  if (blob.encoding !== "base64") return "";
+  const content = Buffer.from(blob.content.replaceAll("\n", ""), "base64").toString("utf8");
+  return content.includes("\0") ? "" : content;
+}
+
+/** Builds bounded repository-wide context around the exact revision being reviewed. */
+export async function getRepositoryContext(source: string[], token?: string): Promise<string> {
+  const parsed = parseSource(source);
+  const revision = await getSourceRevision(parsed, token);
+  const encodedRevision = encodeURIComponent(revision);
+  const [tree, diff] = await Promise.all([
+    githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodedRevision}?recursive=1`, token),
+    getDiffResponse(source, token).then((response) => response.text()),
+  ]);
+  const blobs = tree.tree.filter((entry) => entry.type === "blob");
+  const blobByPath = new Map(blobs.map((entry) => [entry.path, entry]));
+  const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
+  const preferredPaths = [...changedPathsFromDiff(diff), ...rootFiles];
+  const entries = [...new Set(preferredPaths)]
+    .map((path) => blobByPath.get(path))
+    .filter((entry): entry is GitTreeEntry => Boolean(entry && (entry.size ?? 0) <= CONTEXT_FILES_LIMIT))
+    .slice(0, CONTEXT_FILE_COUNT);
+
+  const contents = await Promise.all(entries.map(async (entry) => {
+    const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
+    return { path: entry.path, text: decodeGitBlob(blob) };
+  }));
+  let fileContext = "";
+
+  // Changed files come first, and the shared budget prevents oversized model requests.
+  for (const file of contents) {
+    const remaining = CONTEXT_FILES_LIMIT - fileContext.length;
+    if (!file.text || remaining <= 0) break;
+    fileContext += `\n### ${file.path}\n${file.text.slice(0, remaining)}\n`;
+  }
+
+  const treeText = blobs.map((entry) => entry.path).join("\n").slice(0, CONTEXT_TREE_LIMIT);
+  const truncation = tree.truncated ? "\n(GitHub truncated this unusually large tree.)" : "";
+  return [
+    `Repository: ${parsed.repository}`,
+    `Revision: ${revision}`,
+    `Repository tree:\n${treeText}${truncation}`,
+    `Changed and root file contents:${fileContext || "\nNo textual files were available."}`,
+    `Full change diff:\n${diff.slice(0, CONTEXT_DIFF_LIMIT)}`,
+  ].join("\n\n");
 }
 
 /** Loads the title, description, author, and change totals shown above a diff. */
