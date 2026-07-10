@@ -2,12 +2,6 @@
 
 <p align="center">A calmer way to review code.</p>
 
-<p align="center">
-  <a href="assets/diffs-launch.mp4">
-    <img src="assets/diffs-launch.gif" alt="A short walkthrough of Diffs" width="960">
-  </a>
-</p>
-
 Diffs is a focused viewer for GitHub pull requests, comparisons, and commits. It keeps the repository tree, pull request context, and the actual patch together, so reviewing a change feels less like navigating a website and more like reading code.
 
 Try it at [diffs.naman.world](https://diffs.naman.world).
