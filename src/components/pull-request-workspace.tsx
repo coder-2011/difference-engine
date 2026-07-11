@@ -101,7 +101,11 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
       if (!response.ok || !result.workspace) throw new Error(result.error ?? "GitHub could not complete this action");
 
+      const refreshedMergeMethods = result.workspace.mergeMethods;
       setWorkspace(result.workspace);
+      setMergeMethod((currentMethod) => refreshedMergeMethods.includes(currentMethod)
+        ? currentMethod
+        : initialMergeMethod(refreshedMergeMethods));
       if (result.celebrate) setCelebrating(true);
       setMessage({
         error: false,
