@@ -471,6 +471,26 @@ function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRe
   };
 }
 
+/** Loads the controls that only an open pull request can render or act on. */
+async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string) {
+  if (pullRequest.state !== "open" || pullRequest.merged) {
+    return { capabilities: undefined, workflowRuns: [] };
+  }
+
+  const workflowRunsPath = `/repos/${parsed.encodedRepository}/actions/runs`;
+  const [headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
+  ]);
+
+  return {
+    capabilities,
+    workflowRuns: mergePullRequestWorkflowRuns([headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns], pullRequest),
+  };
+}
+
 /** Reads the exact authenticated viewer and repository capabilities required for PR mutations. */
 async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>, number: number, token: string): Promise<PullRequestCapabilities | undefined> {
   const [owner, repo] = parsed.repository.split("/");
@@ -523,27 +543,21 @@ function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullR
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
-  const workflowRunsPath = `/repos/${parsed.encodedRepository}/actions/runs`;
-  const [comments, headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
+  const [comments, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
+    getPullRequestControls(parsed, pullRequest, token),
   ]);
   const viewerCanWrite = capabilities?.viewerCanWrite ?? false;
   const state = pullRequest.merged ? "merged" : pullRequest.state;
-  const canMerge = canMergePullRequest(pullRequest, capabilities);
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: !pullRequest.locked,
-    canMerge,
+    canMerge: canMergePullRequest(pullRequest, capabilities),
     comments,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
-    workflowRuns: mergePullRequestWorkflowRuns([headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns], pullRequest)
-      .slice(0, 8)
+    workflowRuns: workflowRuns.slice(0, 8)
       .map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
   };
 }
