@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-rea
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { OpenAIConnection } from "@/components/openai-connection";
+import { PullRequestWorkspace } from "@/components/pull-request-workspace";
 import { getDiffDocument, GitHubError } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
@@ -38,7 +39,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken);
+    document = await getDiffDocument(source, accessToken, Boolean(accessToken));
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;
@@ -71,7 +72,9 @@ export default async function DiffPage({ params }: DiffPageProps) {
           )}
         </div>
 
-        {document.description && (
+        {document.pullRequest ? (
+          <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
+        ) : document.description && (
           <details className="pr-description" open>
             <summary>Pull request description</summary>
             <div className="markdown-body"><ReactMarkdown skipHtml>{document.description}</ReactMarkdown></div>

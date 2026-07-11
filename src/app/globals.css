@@ -1029,6 +1029,14 @@ button {
   color: var(--faint);
 }
 
+.pr-workspace {
+  margin-top: 27px;
+}
+
+.pr-workspace .pr-description {
+  margin-top: 0;
+}
+
 .pr-description {
   max-width: 800px;
   margin-top: 27px;
@@ -1086,6 +1094,389 @@ button {
 .markdown-body a {
   color: #c3b5ff;
   text-decoration: underline;
+}
+
+.pr-conversation {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: 420px;
+  max-height: 520px;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: #0f0f0d;
+}
+
+.pr-conversation-heading {
+  display: flex;
+  height: 39px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line-soft);
+  color: #b5b5ba;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.pr-conversation-heading span:last-child {
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+
+.pr-comment-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 13px;
+  padding: 13px 14px;
+  overflow-y: auto;
+}
+
+.pr-comment {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.pr-comment > div {
+  min-width: 0;
+}
+
+.pr-comment header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.pr-comment strong {
+  color: #d2d2d6;
+  font-weight: 550;
+}
+
+.pr-comment time {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.pr-comment-context {
+  display: block;
+  margin: -1px 0 4px;
+  color: #8f92a0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.pr-comment-markdown {
+  color: #b6b6bb;
+  font-size: 11px;
+  line-height: 1.56;
+}
+
+.pr-comment-markdown > :first-child {
+  margin-top: 0;
+}
+
+.pr-comment-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.pr-comment-markdown p,
+.pr-comment-markdown ul,
+.pr-comment-markdown ol,
+.pr-comment-markdown pre {
+  margin: 6px 0;
+}
+
+.pr-comment-markdown ul,
+.pr-comment-markdown ol {
+  padding-left: 18px;
+}
+
+.pr-comment-markdown code {
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: #1b1b1d;
+  color: #d9d4ee;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.pr-comment-markdown pre {
+  padding: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #0b0b0c;
+}
+
+.pr-comment-empty {
+  margin: auto 0;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: center;
+}
+
+.pr-comment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: #11110f;
+}
+
+.pr-comment-form textarea {
+  min-height: 38px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.pr-comment-form textarea::placeholder {
+  color: #606066;
+}
+
+.pr-comment-form button,
+.workflow-run button,
+.merge-button,
+.close-pr-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pr-comment-form button {
+  align-self: end;
+  height: 29px;
+  padding: 0 9px;
+  background: #eeeeef;
+  color: #111112;
+}
+
+.pr-comment-form button:disabled,
+.workflow-run button:disabled,
+.merge-button:disabled,
+.close-pr-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pr-signin-note {
+  margin: 0;
+  padding: 11px 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.pr-actions {
+  flex: none;
+  border-top: 1px solid var(--line-soft);
+  background: #11110f;
+}
+
+.pr-workflow-list {
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.workflow-run {
+  display: flex;
+  min-height: 33px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid #1d1d1b;
+  color: #8eaa99;
+  font-size: 10px;
+}
+
+.workflow-run.failed {
+  color: #d69a9a;
+}
+
+.workflow-run a {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-run button {
+  height: 23px;
+  flex: none;
+  padding: 0 7px;
+  background: #22221f;
+  color: #d5d5d9;
+}
+
+.workflow-run button:hover,
+.close-pr-button:hover {
+  background: #2a2927;
+}
+
+.pr-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 10px 12px;
+}
+
+.merge-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.merge-control select {
+  height: 30px;
+  max-width: 82px;
+  padding: 0 6px;
+  border: 1px solid #315c45;
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  outline: 0;
+  background: #122219;
+  color: #a8d7b8;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.merge-button {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: #1d9b56;
+  color: #07130b;
+}
+
+.merge-control select + .merge-button {
+  border-radius: 0 6px 6px 0;
+}
+
+.merge-button:hover {
+  background: #35b96d;
+}
+
+.close-pr-button {
+  height: 30px;
+  padding: 0 9px;
+  background: #251719;
+  color: #e0a8ac;
+}
+
+.pr-resolution,
+.pr-action-message {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+}
+
+.pr-resolution.merged {
+  color: #8fd0a7;
+}
+
+.pr-resolution.closed {
+  color: #dda3a8;
+}
+
+.pr-action-message {
+  color: var(--muted);
+}
+
+.pr-action-message.error {
+  color: #dc949a;
+}
+
+.merge-celebration {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.merge-celebration span {
+  position: absolute;
+  top: -18px;
+  border-radius: 2px;
+  opacity: 0.9;
+  animation-name: pr-confetti-fall;
+  animation-timing-function: cubic-bezier(0.2, 0.72, 0.2, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes pr-confetti-fall {
+  0% {
+    transform: translate3d(calc(var(--pr-particle-drift) * -0.2), -16px, 0) rotate(0deg) scale(1.08);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 0.95;
+  }
+
+  100% {
+    transform: translate3d(var(--pr-particle-drift), 112vh, 0) rotate(640deg) scale(0.96);
+    opacity: 0;
+  }
+}
+
+@media (min-width: 900px) {
+  .pr-workspace.has-description {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .pr-workspace.has-description .pr-description,
+  .pr-workspace.has-description .pr-conversation {
+    height: 420px;
+    max-height: 420px;
+    margin-top: 0;
+  }
+
+  .pr-workspace.has-description .pr-description {
+    display: flex;
+    max-width: none;
+    flex-direction: column;
+  }
+
+  .pr-workspace.has-description .markdown-body {
+    max-height: none;
+    flex: 1;
+  }
 }
 
 .diff-workspace {
@@ -1616,6 +2007,10 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .merge-celebration {
+    display: none;
+  }
+
   *,
   *::before,
   *::after {
