@@ -55,10 +55,10 @@ export default async function Home({ searchParams }: HomeProps) {
           <span className="url-prompt" aria-hidden="true">›</span>
           <input
             name="url"
-            type="url"
+            type="text"
             required
-            aria-label="GitHub URL"
-            placeholder="paste a github url — github.com/org/repo/pull/123"
+            aria-label="GitHub URL or pull request request"
+            placeholder="paste a github url or type what you want open"
           />
           <button aria-label="Open diff"><CornerDownLeft size={13} /><span>to open</span></button>
         </form>

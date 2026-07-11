@@ -78,6 +78,7 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
               <div className="pull-card-top">
                 <span className="repo-name">{pullRequest.repository}</span>
                 <span className="pull-number">#{pullRequest.number}</span>
+                {pullRequest.draft && <span className="draft-pill">Draft</span>}
                 {variant === "resolved" && (
                   <span className={`pr-status ${pullRequest.status}`}>{pullRequest.status}</span>
                 )}
@@ -88,7 +89,10 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
                 <span>{pullRequest.author}</span>
                 <span className="meta-dot">·</span>
                 <span>{relativeDate(pullRequest.updatedAt)}</span>
-                {pullRequest.draft && <span className="draft-pill">Draft</span>}
+              </div>
+              <div className="pull-card-changes" aria-label={`${pullRequest.additions} additions and ${pullRequest.deletions} deletions`}>
+                <span className="additions">+{pullRequest.additions}</span>
+                <span className="deletions">−{pullRequest.deletions}</span>
               </div>
               <ArrowRight className="card-arrow" size={16} />
             </Link>

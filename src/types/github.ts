@@ -1,6 +1,8 @@
 export type PullRequestSummary = {
+  additions: number;
   author: string;
   avatarUrl: string;
+  deletions: number;
   draft: boolean;
   number: number;
   repository: string;

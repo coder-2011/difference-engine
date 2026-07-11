@@ -731,9 +731,9 @@ button {
   position: relative;
   display: grid;
   grid-template-areas:
-    "top meta arrow"
-    "title meta arrow";
-  grid-template-columns: minmax(0, 1fr) auto 18px;
+    "top meta changes arrow"
+    "title meta changes arrow";
+  grid-template-columns: minmax(0, 1fr) 150px 80px 18px;
   min-height: 69px;
   padding: 11px 8px 11px 34px;
   overflow: hidden;
@@ -845,7 +845,7 @@ button {
 .pull-card-meta {
   grid-area: meta;
   align-self: center;
-  justify-self: end;
+  justify-self: start;
   gap: 7px;
   color: #68656e;
   font-family: var(--font-mono);
@@ -853,9 +853,26 @@ button {
 }
 
 .draft-pill {
-  margin-left: 4px;
   padding: 2px 6px;
   font-size: 9px;
+}
+
+.pull-card-changes {
+  display: flex;
+  grid-area: changes;
+  align-self: center;
+  justify-self: end;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.pull-card-changes .additions {
+  color: #8fb759;
+}
+
+.pull-card-changes .deletions {
+  color: #c4776b;
 }
 
 .card-arrow {
@@ -1536,8 +1553,8 @@ button {
     grid-template-areas:
       "top arrow"
       "title arrow"
-      "meta meta";
-    grid-template-columns: minmax(0, 1fr) 18px;
+      "meta changes";
+    grid-template-columns: minmax(0, 1fr) 80px;
     padding-left: 25px;
   }
 
@@ -1547,6 +1564,10 @@ button {
 
   .pull-card-meta {
     justify-self: start;
+    margin-top: 7px;
+  }
+
+  .pull-card-changes {
     margin-top: 7px;
   }
 

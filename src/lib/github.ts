@@ -8,13 +8,22 @@ type GitHubUser = {
 };
 
 type SearchPullRequest = {
-  closed_at: string | null;
-  draft?: boolean;
+  additions: number;
+  author: { avatarUrl: string; login: string } | null;
+  closedAt: string | null;
+  deletions: number;
+  isDraft: boolean;
   number: number;
-  repository_url: string;
+  repository: { nameWithOwner: string };
   title: string;
-  updated_at: string;
-  user: GitHubUser;
+  updatedAt: string;
+};
+
+type PullRequestSearch = {
+  search: {
+    nodes: SearchPullRequest[];
+    pageInfo: { endCursor: string | null; hasNextPage: boolean };
+  };
 };
 
 type PullRequestStatus = PullRequestSummary["status"];
@@ -112,19 +121,59 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-/** Returns the most recently updated open pull requests involving the signed-in user. */
-export async function listOpenPullRequests(token: string): Promise<PullRequestSummary[]> {
-  const query = encodeURIComponent("is:pr is:open involves:@me");
-  const items: SearchPullRequest[] = [];
+/** Searches pull requests with the card-level change totals unavailable from GitHub's REST search. */
+async function searchPullRequests(token: string, query: string, limit = 1_000): Promise<SearchPullRequest[]> {
+  const pullRequests: SearchPullRequest[] = [];
+  let cursor: string | null = null;
 
-  for (let page = 1; page <= 10; page += 1) {
-    const path = `/search/issues?q=${query}&sort=updated&order=desc&per_page=100&page=${page}`;
-    const response = await githubRequest<{ items: SearchPullRequest[]; total_count: number }>(path, token);
-    items.push(...response.items);
-    if (items.length >= response.total_count || response.items.length < 100) break;
+  while (pullRequests.length < limit) {
+    const first = Math.min(100, limit - pullRequests.length);
+    const response = await fetch(`${GITHUB_API}/graphql`, {
+      method: "POST",
+      headers: {
+        ...githubHeaders("application/vnd.github+json", token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `query PullRequests($query: String!, $first: Int!, $after: String) {
+          search(query: $query, type: ISSUE, first: $first, after: $after) {
+            pageInfo { endCursor hasNextPage }
+            nodes {
+              ... on PullRequest {
+                additions
+                author { avatarUrl login }
+                closedAt
+                deletions
+                isDraft
+                number
+                repository { nameWithOwner }
+                title
+                updatedAt
+              }
+            }
+          }
+        }`,
+        variables: { after: cursor, first, query },
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) throw new GitHubError("GitHub request failed", response.status);
+    const result = await response.json() as { data?: PullRequestSearch; errors?: unknown[] };
+    if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
+
+    pullRequests.push(...result.data.search.nodes);
+    cursor = result.data.search.pageInfo.endCursor;
+    if (!result.data.search.pageInfo.hasNextPage || !cursor) break;
   }
 
-  return items.map((pullRequest) => summarizePullRequest(pullRequest, "open"));
+  return pullRequests;
+}
+
+/** Returns the most recently updated open pull requests involving the signed-in user. */
+export async function listOpenPullRequests(token: string): Promise<PullRequestSummary[]> {
+  const pullRequests = await searchPullRequests(token, "is:pr is:open involves:@me sort:updated-desc");
+  return pullRequests.map((pullRequest) => summarizePullRequest(pullRequest, "open"));
 }
 
 /** Returns a small, newest-first history of merged and unmerged closed pull requests involving the user. */
@@ -134,9 +183,8 @@ export async function listRecentPullRequests(token: string): Promise<PullRequest
     ["closed", "is:pr is:closed is:unmerged involves:@me"],
   ];
   const results = await Promise.all(queries.map(async ([status, query]) => {
-    const path = `/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=12`;
-    const response = await githubRequest<{ items: SearchPullRequest[] }>(path, token);
-    return response.items.map((pullRequest) => summarizePullRequest(pullRequest, status));
+    const pullRequests = await searchPullRequests(token, `${query} sort:updated-desc`, 12);
+    return pullRequests.map((pullRequest) => summarizePullRequest(pullRequest, status));
   }));
 
   return results
@@ -147,17 +195,19 @@ export async function listRecentPullRequests(token: string): Promise<PullRequest
 
 /** Converts one GitHub search result into the compact shape shared by homepage lists. */
 function summarizePullRequest(pullRequest: SearchPullRequest, status: PullRequestStatus): PullRequestSummary {
-  const repository = pullRequest.repository_url.split("/repos/")[1];
+  const repository = pullRequest.repository.nameWithOwner;
 
   return {
-    author: pullRequest.user.login,
-    avatarUrl: pullRequest.user.avatar_url,
-    draft: Boolean(pullRequest.draft),
+    additions: pullRequest.additions,
+    author: pullRequest.author?.login ?? "ghost",
+    avatarUrl: pullRequest.author?.avatarUrl ?? "https://github.com/ghost.png",
+    deletions: pullRequest.deletions,
+    draft: pullRequest.isDraft,
     number: pullRequest.number,
     repository,
     status,
     title: pullRequest.title,
-    updatedAt: pullRequest.closed_at ?? pullRequest.updated_at,
+    updatedAt: pullRequest.closedAt ?? pullRequest.updatedAt,
     viewerPath: `/${repository}/pull/${pullRequest.number}`,
   };
 }
