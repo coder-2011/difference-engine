@@ -171,7 +171,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           )) : <p className="pr-comment-empty">No conversation yet.</p>}
         </div>
 
-        {workspace.canComment && workspace.state === "open" && (
+        {workspace.canComment && (
           <form className="pr-comment-form" onSubmit={submitComment}>
             <textarea
               aria-label="Comment or GitHub command"
@@ -184,7 +184,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           </form>
         )}
 
-        {!workspace.canComment && workspace.state === "open" && <p className="pr-signin-note">Sign in from the dashboard to comment or use available PR actions.</p>}
+        {!workspace.canComment && <p className="pr-signin-note">Sign in from the dashboard to comment or use available PR actions.</p>}
 
         {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
