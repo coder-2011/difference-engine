@@ -363,6 +363,7 @@ function parseSource(source: string[]): {
 function pullRequestSource(source: string[]): ReturnType<typeof parseSource> {
   const parsed = parseSource(source);
   if (parsed.kind !== "pull") throw new GitHubError("This action is only available on pull requests", 400);
+  if (!/^\d+$/.test(parsed.value)) throw new GitHubError("This pull request number is not supported", 400);
   return parsed;
 }
 
@@ -525,10 +526,12 @@ function requireGitHubToken(token?: string): string {
   return token;
 }
 
-/** Verifies the current PR state before GitHub receives a close, merge, or CI mutation. */
+/** Fetches current PR state and matching viewer capabilities before a GitHub mutation. */
 async function currentPullRequest(parsed: ReturnType<typeof parseSource>, token: string): Promise<{ capabilities: PullRequestCapabilities | undefined; pullRequest: PullRequest }> {
-  const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-  const capabilities = await getPullRequestCapabilities(parsed, pullRequest.number, token);
+  const [pullRequest, capabilities] = await Promise.all([
+    githubRequest<PullRequest>(parsed.apiPath, token),
+    getPullRequestCapabilities(parsed, Number(parsed.value), token),
+  ]);
   return { capabilities, pullRequest };
 }
 
