@@ -503,24 +503,8 @@ function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullR
   };
 }
 
-/** Builds the signed-out workspace without unnecessary GitHub collaboration requests. */
-function emptyPullRequestWorkspace(pullRequest: PullRequest): PullRequestWorkspace {
-  return {
-    canClose: false,
-    canComment: false,
-    commentingDisabledReason: "signin",
-    canMerge: false,
-    comments: [],
-    mergeMethods: [],
-    state: pullRequest.merged ? "merged" : pullRequest.state,
-    workflowRuns: [],
-  };
-}
-
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
-async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
-  if (!token) return emptyPullRequestWorkspace(pullRequest);
-
+async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
   const [comments, workflowRuns, capabilities] = await Promise.all([
     getPullRequestConversation(parsed, token),
     githubRequest<WorkflowRuns>(`/repos/${parsed.encodedRepository}/actions/runs?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
@@ -533,7 +517,6 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: !pullRequest.locked,
-    commentingDisabledReason: pullRequest.locked ? "locked" : undefined,
     canMerge,
     comments,
     mergeMethods: capabilities?.mergeMethods ?? [],
@@ -546,7 +529,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 }
 
 /** Loads the current PR workspace after a client mutation refreshes its canonical GitHub state. */
-export async function getPullRequestWorkspace(source: string[], token?: string): Promise<PullRequestWorkspace> {
+export async function getPullRequestWorkspace(source: string[], token: string): Promise<PullRequestWorkspace> {
   const parsed = pullRequestSource(source);
   const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
   return buildPullRequestWorkspace(parsed, pullRequest, token);
@@ -689,7 +672,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
 
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
+    const workspace = includePullRequestWorkspace && token ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
 
     return {
       additions: pullRequest.additions,

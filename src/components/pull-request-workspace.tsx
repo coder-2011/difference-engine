@@ -184,7 +184,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           </form>
         )}
 
-        {!workspace.canComment && <p className="pr-signin-note">{workspace.commentingDisabledReason === "locked" ? "Conversation locked on GitHub." : "Sign in from the dashboard to comment or use available PR actions."}</p>}
+        {!workspace.canComment && <p className="pr-signin-note">Conversation locked on GitHub.</p>}
 
         {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
