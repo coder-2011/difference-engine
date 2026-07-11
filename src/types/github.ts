@@ -50,6 +50,7 @@ export type PullRequestWorkflowRun = {
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
+  commentingDisabledReason?: "locked" | "signin";
   canMerge: boolean;
   comments: PullRequestComment[];
   mergeMethods: PullRequestMergeMethod[];

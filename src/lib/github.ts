@@ -45,6 +45,7 @@ type PullRequest = {
   deletions: number;
   head: { label: string; ref: string; sha: string };
   html_url: string;
+  locked: boolean;
   merged: boolean;
   mergeable: boolean | null;
   number: number;
@@ -492,7 +493,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
 function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
   if (!capabilities) return false;
 
-  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable !== false && ["CLEAN", "HAS_HOOKS"].includes(capabilities.mergeStateStatus) && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
+  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable !== false && ["CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(capabilities.mergeStateStatus) && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
 }
 
 /** Reflects GitHub's accepted re-run immediately so the same failed run cannot be submitted twice. */
@@ -510,6 +511,7 @@ function emptyPullRequestWorkspace(pullRequest: PullRequest): PullRequestWorkspa
   return {
     canClose: false,
     canComment: false,
+    commentingDisabledReason: "signin",
     canMerge: false,
     comments: [],
     mergeMethods: [],
@@ -533,7 +535,8 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
-    canComment: true,
+    canComment: !pullRequest.locked,
+    commentingDisabledReason: pullRequest.locked ? "locked" : undefined,
     canMerge,
     comments,
     mergeMethods: capabilities?.mergeMethods ?? [],
