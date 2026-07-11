@@ -33,10 +33,7 @@ export type PullRequestComment = {
   body: string;
   context?: string;
   createdAt: string;
-  id: number;
   key: string;
-  kind: "comment" | "review";
-  updatedAt: string;
 };
 
 export type PullRequestMergeMethod = "merge" | "rebase" | "squash";

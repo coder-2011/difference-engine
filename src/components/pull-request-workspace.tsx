@@ -162,7 +162,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         <div className="pr-comment-list">
           {workspace.comments.length ? workspace.comments.map((entry) => (
-            <article className={`pr-comment ${entry.kind}`} key={entry.key}>
+            <article className="pr-comment" key={entry.key}>
               <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
               <div>
                 <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time></header>

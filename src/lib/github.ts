@@ -57,7 +57,6 @@ type IssueComment = {
   body: string;
   created_at: string;
   id: number;
-  updated_at: string;
   user: GitHubUser;
 };
 
@@ -74,7 +73,6 @@ type PullRequestReviewComment = {
   created_at: string;
   id: number;
   path: string;
-  updated_at: string;
   user: GitHubUser;
 };
 
@@ -92,17 +90,15 @@ type WorkflowRuns = {
 };
 
 type PullRequestCapabilities = {
-  mergeStateStatus: string;
   mergeMethods: PullRequestMergeMethod[];
   viewerCanClose: boolean;
-  viewerCanMergeAsAdmin: boolean;
   viewerCanWrite: boolean;
 };
 
 type PullRequestCapabilityQuery = {
   repository: {
     mergeCommitAllowed: boolean;
-    pullRequest: { mergeStateStatus: string; viewerCanClose: boolean; viewerCanMergeAsAdmin: boolean } | null;
+    pullRequest: { viewerCanClose: boolean } | null;
     rebaseMergeAllowed: boolean;
     squashMergeAllowed: boolean;
     viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE" | null;
@@ -208,6 +204,17 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   const response = await githubResponse(path, token);
 
   return response.json() as Promise<T>;
+}
+
+/** Reads the newest GitHub page when an endpoint only returns results chronologically. */
+async function githubLastPage<T>(path: string, token?: string): Promise<T> {
+  const response = await githubResponse(path, token);
+  const lastPage = response.headers.get("link")?.match(/<([^>]+)>; rel="last"/)?.[1];
+
+  if (!lastPage) return response.json() as Promise<T>;
+
+  const url = new URL(lastPage, GITHUB_API);
+  return githubRequest<T>(`${url.pathname}${url.search}`, token);
 }
 
 /** Sends one GitHub mutation whose successful response body is not needed locally. */
@@ -366,10 +373,7 @@ function summarizeComment(comment: IssueComment): PullRequestComment {
     avatarUrl: comment.user.avatar_url,
     body: comment.body,
     createdAt: comment.created_at,
-    id: comment.id,
     key: `comment-${comment.id}`,
-    kind: "comment",
-    updatedAt: comment.updated_at,
   };
 }
 
@@ -383,10 +387,7 @@ function summarizeReview(review: PullRequestReview): PullRequestComment {
     body: review.body || `${state[0]?.toUpperCase() ?? ""}${state.slice(1)} this pull request.`,
     context: state,
     createdAt: review.submitted_at ?? "",
-    id: review.id,
     key: `review-${review.id}`,
-    kind: "review",
-    updatedAt: review.submitted_at ?? "",
   };
 }
 
@@ -398,10 +399,7 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
     body: comment.body,
     context: `review comment · ${comment.path}`,
     createdAt: comment.created_at,
-    id: comment.id,
     key: `review-comment-${comment.id}`,
-    kind: "review",
-    updatedAt: comment.updated_at,
   };
 }
 
@@ -434,9 +432,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
       squashMergeAllowed
       rebaseMergeAllowed
       pullRequest(number: $number) {
-        mergeStateStatus
         viewerCanClose
-        viewerCanMergeAsAdmin
       }
     }
   }`, { number, owner, repo });
@@ -451,10 +447,8 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
   const viewerCanWrite = repository.viewerPermission === "ADMIN" || repository.viewerPermission === "MAINTAIN" || repository.viewerPermission === "WRITE";
 
   return {
-    mergeStateStatus: repository.pullRequest.mergeStateStatus,
     mergeMethods,
     viewerCanClose: repository.pullRequest.viewerCanClose,
-    viewerCanMergeAsAdmin: repository.pullRequest.viewerCanMergeAsAdmin,
     viewerCanWrite,
   };
 }
@@ -463,8 +457,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
 function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
   if (!capabilities) return false;
 
-  const mergeStateAllowsMerge = capabilities.mergeStateStatus === "CLEAN" || capabilities.viewerCanMergeAsAdmin;
-  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable === true && capabilities.viewerCanWrite && mergeStateAllowsMerge && Boolean(capabilities.mergeMethods.length);
+  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable === true && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
 }
 
 /** Reflects GitHub's accepted re-run immediately so the same failed run cannot be submitted twice. */
@@ -477,12 +470,27 @@ function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullR
   };
 }
 
+/** Builds the signed-out workspace without unnecessary GitHub collaboration requests. */
+function emptyPullRequestWorkspace(pullRequest: PullRequest): PullRequestWorkspace {
+  return {
+    canClose: false,
+    canComment: false,
+    canMerge: false,
+    comments: [],
+    mergeMethods: [],
+    state: pullRequest.merged ? "merged" : pullRequest.state,
+    workflowRuns: [],
+  };
+}
+
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
+  if (!token) return emptyPullRequestWorkspace(pullRequest);
+
   const [comments, reviews, reviewComments, workflowRuns, capabilities] = await Promise.all([
-    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100`, token).catch(() => []),
-    githubRequest<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
-    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100`, token).catch(() => []),
+    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
+    githubLastPage<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
+    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
     githubRequest<WorkflowRuns>(`/repos/${parsed.encodedRepository}/actions/runs?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=8`, token).catch(() => ({ workflow_runs: [] })),
     getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
   ]);
