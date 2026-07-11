@@ -39,7 +39,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken);
+    document = await getDiffDocument(source, accessToken, true);
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;

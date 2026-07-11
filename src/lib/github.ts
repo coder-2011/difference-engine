@@ -479,7 +479,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
 function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
   if (!capabilities) return false;
 
-  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable === true && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
+  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable !== false && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
 }
 
 /** Reflects GitHub's accepted re-run immediately so the same failed run cannot be submitted twice. */
@@ -670,13 +670,13 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
   ].join("\n\n");
 }
 
-/** Loads the title, description, author, and change totals shown above a diff. */
-export async function getDiffDocument(source: string[], token?: string): Promise<DiffDocument> {
+/** Loads the title, description, author, change totals, and optionally the interactive PR workspace. */
+export async function getDiffDocument(source: string[], token?: string, includePullRequestWorkspace = false): Promise<DiffDocument> {
   const parsed = parseSource(source);
 
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const workspace = await buildPullRequestWorkspace(parsed, pullRequest, token);
+    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
 
     return {
       additions: pullRequest.additions,
