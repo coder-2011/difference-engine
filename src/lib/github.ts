@@ -43,7 +43,7 @@ type PullRequest = {
   changed_files: number;
   draft: boolean;
   deletions: number;
-  head: { label: string; sha: string };
+  head: { label: string; ref: string; sha: string };
   html_url: string;
   merged: boolean;
   mergeable: boolean | null;
@@ -78,10 +78,13 @@ type PullRequestReviewComment = {
 
 type WorkflowRun = {
   conclusion: string | null;
+  event: string;
+  head_branch: string | null;
   head_sha: string;
   html_url: string;
   id: number;
   name: string;
+  pull_requests?: Array<{ number: number }>;
   status: string;
 };
 
@@ -158,6 +161,7 @@ const CONTEXT_TREE_LIMIT = 30_000;
 const CONTEXT_DIFF_LIMIT = 50_000;
 const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
+const GITHUB_PUBLIC_CACHE_SECONDS = 300;
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -192,7 +196,9 @@ async function githubResponse(path: string, token?: string, method = "GET", body
     headers,
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
+    // Public GitHub data shares a short cache; user-authorized data must always be current.
+    cache: token ? "no-store" : "force-cache",
+    next: token ? undefined : { revalidate: GITHUB_PUBLIC_CACHE_SECONDS },
   });
 
   if (!response.ok) throw await githubError(response);
@@ -431,6 +437,12 @@ function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
   return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
 }
 
+/** Matches direct PR triggers and same-branch push checks while excluding unrelated runs on a shared commit. */
+function isPullRequestWorkflow(run: WorkflowRun, pullRequest: PullRequest): boolean {
+  if (run.pull_requests?.length) return run.pull_requests.some((candidate) => candidate.number === pullRequest.number);
+  return run.head_branch === pullRequest.head.ref && ["pull_request", "pull_request_target", "push"].includes(run.event);
+}
+
 /** Maps one GitHub Actions response into the bounded PR status row used by the client. */
 function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRequestWorkflowRun {
   return {
@@ -527,6 +539,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.workflow_runs
+      .filter((run) => isPullRequestWorkflow(run, pullRequest))
       .slice(0, 8)
       .map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
   };
@@ -588,7 +601,7 @@ export async function performPullRequestAction(source: string[], token: string |
 
   if (action.action === "rerun") {
     const run = await githubRequest<WorkflowRun>(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}`, accessToken);
-    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || run.head_sha !== pullRequest.head.sha) {
+    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || !isPullRequestWorkflow(run, pullRequest) || run.head_sha !== pullRequest.head.sha) {
       throw new GitHubError("GitHub does not allow this workflow run to be restarted", 403);
     }
     // GitHub only accepts failed-job retries for a failed workflow; other rerunnable conclusions restart the workflow.
