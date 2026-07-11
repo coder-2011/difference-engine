@@ -162,7 +162,6 @@ const CONTEXT_TREE_LIMIT = 30_000;
 const CONTEXT_DIFF_LIMIT = 50_000;
 const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
-const GITHUB_PUBLIC_CACHE_SECONDS = 300;
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -197,9 +196,7 @@ async function githubResponse(path: string, token?: string, method = "GET", body
     headers,
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    // Public GitHub data shares a short cache; user-authorized data must always be current.
-    cache: token ? "no-store" : "force-cache",
-    next: token ? undefined : { revalidate: GITHUB_PUBLIC_CACHE_SECONDS },
+    cache: "no-store",
   });
 
   if (!response.ok) throw await githubError(response);
@@ -418,8 +415,8 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
   };
 }
 
-/** Loads the public conversation records shared by signed-in and signed-out PR views. */
-async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestComment[]> {
+/** Loads the authenticated conversation records shown in the PR workspace. */
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token: string): Promise<PullRequestComment[]> {
   const [comments, reviews, reviewComments] = await Promise.all([
     githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
     githubNewestItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, 100).catch(() => []),
@@ -522,7 +519,7 @@ function emptyPullRequestWorkspace(pullRequest: PullRequest): PullRequestWorkspa
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
-  if (!token) return { ...emptyPullRequestWorkspace(pullRequest), comments: await getPullRequestConversation(parsed) };
+  if (!token) return emptyPullRequestWorkspace(pullRequest);
 
   const [comments, workflowRuns, capabilities] = await Promise.all([
     getPullRequestConversation(parsed, token),
