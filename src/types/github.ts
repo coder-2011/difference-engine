@@ -52,6 +52,7 @@ export type PullRequestWorkspace = {
   canComment: boolean;
   canMerge: boolean;
   comments: PullRequestComment[];
+  conversationUnavailable: boolean;
   mergeMethods: PullRequestMergeMethod[];
   state: "closed" | "merged" | "open";
   workflowRuns: PullRequestWorkflowRun[];

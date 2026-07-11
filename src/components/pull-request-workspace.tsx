@@ -3,6 +3,7 @@
 import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CheckCircle2, CircleAlert, CircleX, GitPullRequestClosed, LoaderCircle, Play, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkflowRun, PullRequestWorkspace } from "@/types/github";
@@ -133,7 +134,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
       {description && (
         <details className="pr-description" open>
           <summary>Pull request description</summary>
-          <div className="markdown-body"><ReactMarkdown skipHtml>{description}</ReactMarkdown></div>
+          <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{description}</ReactMarkdown></div>
         </details>
       )}
 
@@ -169,10 +170,11 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
               <div>
                 <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time></header>
                 {entry.context && <span className="pr-comment-context">{entry.context}</span>}
-                <div className="pr-comment-markdown"><ReactMarkdown skipHtml>{entry.body}</ReactMarkdown></div>
+                <div className="pr-comment-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{entry.body}</ReactMarkdown></div>
               </div>
             </article>
-          )) : <p className="pr-comment-empty">No conversation yet.</p>}
+          )) : !workspace.conversationUnavailable && <p className="pr-comment-empty">No conversation yet.</p>}
+          {workspace.conversationUnavailable && <p className="pr-conversation-note">Conversation may be incomplete.</p>}
         </div>
 
         {workspace.canComment && (

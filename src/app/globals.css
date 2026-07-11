@@ -1094,6 +1094,24 @@ button {
   text-decoration: underline;
 }
 
+.markdown-body table,
+.pr-comment-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td,
+.pr-comment-markdown th,
+.pr-comment-markdown td {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
 .pr-conversation {
   position: relative;
   display: flex;
@@ -1148,6 +1166,7 @@ button {
 
 .pr-comment header {
   display: flex;
+  min-width: 0;
   align-items: baseline;
   gap: 7px;
   margin-bottom: 4px;
@@ -1156,8 +1175,12 @@ button {
 }
 
 .pr-comment strong {
+  min-width: 0;
+  overflow: hidden;
   color: #d2d2d6;
   font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pr-comment time {
@@ -1175,6 +1198,7 @@ button {
 }
 
 .pr-comment-markdown {
+  overflow-wrap: anywhere;
   color: #b6b6bb;
   font-size: 11px;
   line-height: 1.56;
@@ -1221,6 +1245,14 @@ button {
   margin: auto 0;
   color: var(--faint);
   font-size: 11px;
+  text-align: center;
+}
+
+.pr-conversation-note {
+  margin: 0;
+  padding: 4px 0;
+  color: var(--faint);
+  font-size: 10px;
   text-align: center;
 }
 

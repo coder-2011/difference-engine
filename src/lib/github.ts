@@ -36,6 +36,11 @@ type PullRequestSearch = {
 
 type PullRequestStatus = PullRequestSummary["status"];
 
+type PullRequestConversation = {
+  comments: PullRequestComment[];
+  unavailable: boolean;
+};
+
 type PullRequest = {
   additions: number;
   base: { label: string };
@@ -398,7 +403,7 @@ function summarizeReview(review: PullRequestReview): PullRequestComment {
   return {
     author: review.user.login,
     avatarUrl: review.user.avatar_url,
-    body: review.body || `${state[0]?.toUpperCase() ?? ""}${state.slice(1)} this pull request.`,
+    body: review.body,
     context: state,
     createdAt: review.submitted_at ?? "",
     key: `review-${review.id}`,
@@ -418,18 +423,25 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
 }
 
 /** Loads the authenticated conversation records shown in the PR workspace. */
-async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token: string): Promise<PullRequestComment[]> {
-  const [comments, reviews, reviewComments] = await Promise.all([
-    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
-    githubNewestItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, 100).catch(() => []),
-    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token: string): Promise<PullRequestConversation> {
+  // Preserve available records while telling the UI when GitHub could not provide the full conversation.
+  const [commentsResult, reviewsResult, reviewCommentsResult] = await Promise.allSettled([
+    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token),
+    githubNewestItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, 100),
+    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token),
   ]);
+  const comments = commentsResult.status === "fulfilled" ? commentsResult.value : [];
+  const reviews = reviewsResult.status === "fulfilled" ? reviewsResult.value : [];
+  const reviewComments = reviewCommentsResult.status === "fulfilled" ? reviewCommentsResult.value : [];
 
-  return [
-    ...comments.map(summarizeComment),
-    ...reviews.filter((review) => Boolean(review.submitted_at)).map(summarizeReview),
-    ...reviewComments.map(summarizeReviewComment),
-  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100);
+  return {
+    comments: [
+      ...comments.map(summarizeComment),
+      ...reviews.filter((review) => Boolean(review.submitted_at && review.body.trim())).map(summarizeReview),
+      ...reviewComments.map(summarizeReviewComment),
+    ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100),
+    unavailable: [commentsResult, reviewsResult, reviewCommentsResult].some((result) => result.status === "rejected"),
+  };
 }
 
 /** Identifies completed GitHub Actions runs that GitHub permits a viewer to retry. */
@@ -543,7 +555,7 @@ function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullR
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
-  const [comments, { capabilities, workflowRuns }] = await Promise.all([
+  const [conversation, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
     getPullRequestControls(parsed, pullRequest, token),
   ]);
@@ -554,7 +566,8 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: !pullRequest.locked,
     canMerge: canMergePullRequest(pullRequest, capabilities),
-    comments,
+    comments: conversation.comments,
+    conversationUnavailable: conversation.unavailable,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.slice(0, 8)
