@@ -4,7 +4,7 @@ import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CheckCircle2, CircleAlert, CircleX, GitPullRequestClosed, LoaderCircle, Play, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, CircleAlert, CircleX, GitPullRequestClosed, LoaderCircle, PanelRightOpen, Play, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkflowRun, PullRequestWorkspace } from "@/types/github";
 
@@ -194,14 +194,23 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {workspace.workflowRuns.length > 0 && <div className="pr-workflow-list">
-              {workspace.workflowRuns.map((run) => (
-                <div className={`workflow-run ${run.status === "completed" && run.conclusion !== "success" ? "failed" : ""}`} key={run.id}>
-                  <a href={run.url} target="_blank" rel="noreferrer"><WorkflowIcon run={run} /> {run.name}</a>
-                  {run.canRerun && <button disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "rerun", runId: run.id })} type="button"><Play size={11} /> Re-run</button>}
+            {workspace.workflowRuns.length > 0 && (
+              <details className="pr-workflow-disclosure">
+                <summary className="pr-ci-summary">
+                  <span>CI</span>
+                  <span>{workspace.workflowRuns.length} checks</span>
+                  <PanelRightOpen size={13} />
+                </summary>
+                <div className="pr-workflow-list">
+                  {workspace.workflowRuns.map((run) => (
+                    <div className={`workflow-run ${run.status === "completed" && run.conclusion !== "success" ? "failed" : ""}`} key={run.id}>
+                      <a href={run.url} target="_blank" rel="noreferrer"><WorkflowIcon run={run} /> {run.name}</a>
+                      {run.canRerun && <button disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "rerun", runId: run.id })} type="button"><Play size={11} /> Re-run</button>}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>}
+              </details>
+            )}
 
             {(workspace.canMerge || workspace.canClose) && <div className="pr-action-row">
               {workspace.canMerge && (
