@@ -23,10 +23,6 @@ function parsePullRequestAction(value: unknown): PullRequestAction | null {
     return { action: "merge", method: value.method as PullRequestMergeMethod };
   }
 
-  if (value.action === "rerun" && typeof value.runId === "number" && Number.isSafeInteger(value.runId)) {
-    return { action: "rerun", runId: value.runId };
-  }
-
   return null;
 }
 

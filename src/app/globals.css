@@ -1281,7 +1281,6 @@ button {
 }
 
 .pr-comment-form button,
-.workflow-run button,
 .merge-button,
 .close-pr-button {
   display: inline-flex;
@@ -1304,7 +1303,6 @@ button {
 }
 
 .pr-comment-form button:disabled,
-.workflow-run button:disabled,
 .merge-button:disabled,
 .close-pr-button:disabled {
   cursor: default;
@@ -1321,107 +1319,47 @@ button {
 }
 
 .pr-actions {
+  display: flex;
   flex: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 12px;
   border-top: 1px solid var(--line-soft);
   background: #11110f;
 }
 
-.pr-workflow-disclosure {
-  position: relative;
-  height: 35px;
-}
-
 .pr-ci-summary {
   display: flex;
-  width: 100%;
-  height: 35px;
   align-items: center;
   gap: 7px;
-  padding: 0 12px;
-  border: 0;
-  background: transparent;
   color: #9dadb1;
-  cursor: pointer;
   font-size: 10px;
-  list-style: none;
-  text-align: left;
 }
 
-.pr-ci-summary::-webkit-details-marker {
-  display: none;
-}
-
-.pr-ci-summary span:nth-child(2) {
-  color: var(--faint);
-}
-
-.pr-ci-summary svg {
-  margin-left: auto;
-}
-
-.pr-ci-summary:hover,
-.pr-ci-summary:focus-visible {
-  background: #171714;
-  outline: 0;
-}
-
-.pr-workflow-list {
-  display: none;
-}
-
-.pr-workflow-disclosure:hover .pr-workflow-list,
-.pr-workflow-disclosure:focus-within .pr-workflow-list,
-.pr-workflow-disclosure[open] .pr-workflow-list {
+.sr-only {
   position: absolute;
-  z-index: 4;
-  right: 0;
-  bottom: 35px;
-  display: block;
-  width: min(270px, 100vw);
-  height: 385px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
-  border: 1px solid var(--line-soft);
-  background: #11110f;
-  box-shadow: -18px -12px 32px rgb(0 0 0 / 0.22);
-}
-
-.workflow-run {
-  display: flex;
-  min-height: 33px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 12px;
-  border-bottom: 1px solid #1d1d1b;
-  color: #8eaa99;
-  font-size: 10px;
-}
-
-.workflow-run.failed {
-  color: #d69a9a;
-}
-
-.workflow-run a {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
   overflow: hidden;
-  color: inherit;
-  text-overflow: ellipsis;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+  border: 0;
 }
 
-.workflow-run button {
-  height: 23px;
-  flex: none;
-  padding: 0 7px;
-  background: #22221f;
-  color: #d5d5d9;
+.ci-success {
+  color: var(--green);
 }
 
-.workflow-run button:hover,
+.ci-skipped {
+  color: #e9c46a;
+}
+
+.ci-failed {
+  color: var(--red);
+}
+
 .close-pr-button:hover {
   background: #2a2927;
 }
@@ -1429,9 +1367,7 @@ button {
 .pr-action-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 9px;
-  padding: 10px 12px;
 }
 
 .merge-control {
@@ -2066,6 +2002,25 @@ button {
 
   .source-link {
     font-size: 0;
+  }
+
+  .pr-actions {
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 38px;
+    padding: 5px 8px;
+  }
+
+  .pr-action-row {
+    gap: 5px;
+  }
+
+  .merge-control select {
+    max-width: 70px;
+  }
+
+  .pr-ci-summary {
+    margin-left: auto;
   }
 
   .openai-dialog {

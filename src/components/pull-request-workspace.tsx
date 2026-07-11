@@ -4,9 +4,9 @@ import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CheckCircle2, CircleAlert, CircleX, GitPullRequestClosed, LoaderCircle, PanelRightOpen, Play, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, CircleX, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkflowRun, PullRequestWorkspace } from "@/types/github";
+import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
   description?: string;
@@ -62,21 +62,18 @@ function initialMergeMethod(methods: PullRequestMergeMethod[]): PullRequestMerge
   return methods.includes("squash") ? "squash" : methods[0] ?? "merge";
 }
 
-/** Renders the visible status indicator for one GitHub Actions workflow run. */
-function WorkflowIcon({ run }: { run: PullRequestWorkflowRun }) {
-  if (run.status !== "completed") return <LoaderCircle className="spinner" size={14} />;
-  if (run.conclusion === "success") return <CheckCircle2 size={14} />;
-  return <CircleAlert size={14} />;
-}
-
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
 export function PullRequestWorkspace({ description, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [comment, setComment] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
-  const [pendingAction, setPendingAction] = useState<string>();
+  const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
   const [message, setMessage] = useState<ActionMessage>();
   const [celebrating, setCelebrating] = useState(false);
+  // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
+  const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
+  const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
+  const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
 
   useEffect(() => {
     if (!celebrating) return;
@@ -87,8 +84,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
-    const actionKey = action.action === "rerun" ? `rerun-${action.runId}` : action.action;
-    setPendingAction(actionKey);
+    setPendingAction(action.action);
     setMessage(undefined);
 
     try {
@@ -110,7 +106,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
       if (result.celebrate) setCelebrating(true);
       setMessage({
         error: false,
-        text: action.action === "comment" ? "Comment posted to GitHub." : action.action === "rerun" ? "GitHub is rerunning failed jobs." : action.action === "close" ? "Pull request closed on GitHub." : "Pull request merged on GitHub.",
+        text: action.action === "comment" ? "Comment posted to GitHub." : action.action === "close" ? "Pull request closed on GitHub." : "Pull request merged on GitHub.",
       });
       return true;
     } catch (error) {
@@ -160,7 +156,6 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         <header className="pr-conversation-heading">
           <span>Conversation</span>
-          <span>{workspace.comments.length}</span>
         </header>
 
         <div className="pr-comment-list">
@@ -194,24 +189,6 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {workspace.workflowRuns.length > 0 && (
-              <details className="pr-workflow-disclosure">
-                <summary className="pr-ci-summary">
-                  <span>CI</span>
-                  <span>{workspace.workflowRuns.length} checks</span>
-                  <PanelRightOpen size={13} />
-                </summary>
-                <div className="pr-workflow-list">
-                  {workspace.workflowRuns.map((run) => (
-                    <div className={`workflow-run ${run.status === "completed" && run.conclusion !== "success" ? "failed" : ""}`} key={run.id}>
-                      <a href={run.url} target="_blank" rel="noreferrer"><WorkflowIcon run={run} /> {run.name}</a>
-                      {run.canRerun && <button disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "rerun", runId: run.id })} type="button"><Play size={11} /> Re-run</button>}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-
             {(workspace.canMerge || workspace.canClose) && <div className="pr-action-row">
               {workspace.canMerge && (
                 <div className="merge-control">
@@ -225,6 +202,15 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
               )}
               {workspace.canClose && <button className="close-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "close" })} type="button"><GitPullRequestClosed size={13} /> Close</button>}
             </div>}
+            {workspace.workflowRuns.length > 0 && (
+              <div className="pr-ci-summary">
+                <span className="sr-only">{successfulCheckCount} successful checks, {skippedOrPendingCheckCount} skipped or pending checks, {failedCheckCount} failed checks.</span>
+                <span aria-hidden="true">CI</span>
+                <span className="ci-success" aria-hidden="true">{successfulCheckCount}</span>
+                <span className="ci-skipped" aria-hidden="true">{skippedOrPendingCheckCount}</span>
+                <span className="ci-failed" aria-hidden="true">{failedCheckCount}</span>
+              </div>
+            )}
           </div>
         )}
 
