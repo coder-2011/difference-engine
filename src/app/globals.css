@@ -982,7 +982,7 @@ button {
 }
 
 .pr-header {
-  width: min(1100px, calc(100% - 40px));
+  width: calc(100% - 40px);
   margin: 0 auto;
   padding: 42px 0 30px;
 }
@@ -996,7 +996,6 @@ button {
 }
 
 .pr-header h1 {
-  max-width: 900px;
   margin: 0;
   font-size: clamp(24px, 4vw, 34px);
   font-weight: 570;
@@ -1038,7 +1037,6 @@ button {
 }
 
 .pr-description {
-  max-width: 800px;
   margin-top: 27px;
   border: 1px solid var(--line-soft);
   border-radius: 9px;

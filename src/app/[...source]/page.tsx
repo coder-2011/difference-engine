@@ -45,6 +45,9 @@ export default async function DiffPage({ params }: DiffPageProps) {
     throw error;
   }
 
+  // GitHub automation stores CI metadata in this marked block, not in the PR prose.
+  const description = document.description?.replace(/<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/, "").trim();
+
   return (
     <main className="diff-page">
       <header className="diff-nav">
@@ -73,11 +76,11 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
 
         {document.pullRequest ? (
-          <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
-        ) : document.description && (
+          <PullRequestWorkspace key={source.join("/")} description={description} source={source} workspace={document.pullRequest} />
+        ) : description && (
           <details className="pr-description" open>
             <summary>Pull request description</summary>
-            <div className="markdown-body"><ReactMarkdown skipHtml>{document.description}</ReactMarkdown></div>
+            <div className="markdown-body"><ReactMarkdown skipHtml>{description}</ReactMarkdown></div>
           </details>
         )}
       </section>
