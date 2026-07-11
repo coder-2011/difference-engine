@@ -404,6 +404,21 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
   };
 }
 
+/** Loads the public conversation records shared by signed-in and signed-out PR views. */
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestComment[]> {
+  const [comments, reviews, reviewComments] = await Promise.all([
+    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
+    githubLastPage<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
+    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
+  ]);
+
+  return [
+    ...comments.map(summarizeComment),
+    ...reviews.filter((review) => Boolean(review.submitted_at)).map(summarizeReview),
+    ...reviewComments.map(summarizeReviewComment),
+  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100);
+}
+
 /** Identifies completed GitHub Actions runs that GitHub permits a viewer to retry. */
 function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
   return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
@@ -484,29 +499,22 @@ function emptyPullRequestWorkspace(pullRequest: PullRequest): PullRequestWorkspa
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
-  if (!token) return emptyPullRequestWorkspace(pullRequest);
+  if (!token) return { ...emptyPullRequestWorkspace(pullRequest), comments: await getPullRequestConversation(parsed) };
 
-  const [comments, reviews, reviewComments, workflowRuns, capabilities] = await Promise.all([
-    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
-    githubLastPage<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
-    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
+  const [comments, workflowRuns, capabilities] = await Promise.all([
+    getPullRequestConversation(parsed, token),
     githubRequest<WorkflowRuns>(`/repos/${parsed.encodedRepository}/actions/runs?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=8`, token).catch(() => ({ workflow_runs: [] })),
     getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
   ]);
   const viewerCanWrite = capabilities?.viewerCanWrite ?? false;
   const state = pullRequest.merged ? "merged" : pullRequest.state;
   const canMerge = canMergePullRequest(pullRequest, capabilities);
-  const conversation = [
-    ...comments.map(summarizeComment),
-    ...reviews.filter((review) => Boolean(review.submitted_at)).map(summarizeReview),
-    ...reviewComments.map(summarizeReviewComment),
-  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100);
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: true,
     canMerge,
-    comments: conversation,
+    comments,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.workflow_runs.map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
@@ -572,7 +580,9 @@ export async function performPullRequestAction(source: string[], token: string |
     if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || run.head_sha !== pullRequest.head.sha) {
       throw new GitHubError("GitHub does not allow this workflow run to be restarted", 403);
     }
-    await githubMutation(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}/rerun-failed-jobs`, accessToken, "POST");
+    // GitHub only accepts failed-job retries for a failed workflow; other rerunnable conclusions restart the workflow.
+    const rerunEndpoint = run.conclusion === "failure" ? "rerun-failed-jobs" : "rerun";
+    await githubMutation(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}/${rerunEndpoint}`, accessToken, "POST");
     return { celebrate: false, workspace: queueWorkflowRun(await getPullRequestWorkspace(source, accessToken), action.runId) };
   }
 
