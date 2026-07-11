@@ -46,6 +46,7 @@ type PullRequest = {
   head: { label: string; ref: string; sha: string };
   html_url: string;
   locked: boolean;
+  merge_commit_sha: string | null;
   merged: boolean;
   mergeable: boolean | null;
   number: number;
@@ -436,10 +437,13 @@ function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
   return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
 }
 
-/** Matches direct PR triggers and same-branch push checks while excluding unrelated runs on a shared commit. */
+/** Matches direct PR triggers or the current head and synthetic merge commits only. */
 function isPullRequestWorkflow(run: WorkflowRun, pullRequest: PullRequest): boolean {
   if (run.pull_requests?.length) return run.pull_requests.some((candidate) => candidate.number === pullRequest.number);
-  return run.head_branch === pullRequest.head.ref && ["pull_request", "pull_request_target", "push"].includes(run.event);
+  if (run.head_branch !== pullRequest.head.ref) return false;
+  if (run.event === "push") return run.head_sha === pullRequest.head.sha;
+  return ["pull_request", "pull_request_target"].includes(run.event)
+    && (run.head_sha === pullRequest.head.sha || run.head_sha === pullRequest.merge_commit_sha);
 }
 
 /** Combines head and synthetic-merge workflow queries into the newest unique PR runs. */
