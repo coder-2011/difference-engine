@@ -103,7 +103,7 @@ export default async function Home({ searchParams }: HomeProps) {
           <LockKeyhole size={18} />
           <div>
             <strong>Your public and private pull requests, in one place.</strong>
-            <span>Sign in to see open and recent PRs that involve you. Diffs uses your GitHub access only for reads.</span>
+            <span>Sign in to see open and recent PRs that involve you. Comments and PR actions you choose go directly to GitHub.</span>
           </div>
         </section>
       )}

@@ -1,4 +1,12 @@
-import type { DiffDocument, PullRequestSummary } from "@/types/github";
+import type {
+  DiffDocument,
+  PullRequestAction,
+  PullRequestComment,
+  PullRequestMergeMethod,
+  PullRequestSummary,
+  PullRequestWorkflowRun,
+  PullRequestWorkspace,
+} from "@/types/github";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -33,11 +41,77 @@ type PullRequest = {
   base: { label: string };
   body: string | null;
   changed_files: number;
+  draft: boolean;
   deletions: number;
   head: { label: string; sha: string };
   html_url: string;
+  merged: boolean;
+  mergeable: boolean | null;
+  number: number;
+  state: "closed" | "open";
   title: string;
   user: GitHubUser;
+};
+
+type IssueComment = {
+  body: string;
+  created_at: string;
+  id: number;
+  updated_at: string;
+  user: GitHubUser;
+};
+
+type PullRequestReview = {
+  body: string;
+  id: number;
+  state: string;
+  submitted_at: string | null;
+  user: GitHubUser;
+};
+
+type PullRequestReviewComment = {
+  body: string;
+  created_at: string;
+  id: number;
+  path: string;
+  updated_at: string;
+  user: GitHubUser;
+};
+
+type WorkflowRun = {
+  conclusion: string | null;
+  head_sha: string;
+  html_url: string;
+  id: number;
+  name: string;
+  status: string;
+};
+
+type WorkflowRuns = {
+  workflow_runs: WorkflowRun[];
+};
+
+type PullRequestCapabilities = {
+  mergeStateStatus: string;
+  mergeMethods: PullRequestMergeMethod[];
+  viewerCanClose: boolean;
+  viewerCanMergeAsAdmin: boolean;
+  viewerCanWrite: boolean;
+};
+
+type PullRequestCapabilityQuery = {
+  repository: {
+    mergeCommitAllowed: boolean;
+    pullRequest: { mergeStateStatus: string; viewerCanClose: boolean; viewerCanMergeAsAdmin: boolean } | null;
+    rebaseMergeAllowed: boolean;
+    squashMergeAllowed: boolean;
+    viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE" | null;
+  } | null;
+};
+
+type PullRequestMergeResult = {
+  merged: boolean;
+  message: string;
 };
 
 type PullRequestFile = {
@@ -103,22 +177,60 @@ function githubHeaders(accept: string, token?: string): Record<string, string> {
   return headers;
 }
 
-/** Performs a typed, read-only GitHub API request with optional private-repo access. */
-async function githubRequest<T>(path: string, token?: string): Promise<T> {
+/** Extracts GitHub's safe response message without exposing a raw failed response. */
+async function githubError(response: Response): Promise<GitHubError> {
+  const body = await response.json().catch(() => null) as { message?: unknown } | null;
+  const fallback = response.status === 404 ? "GitHub item not found" : "GitHub request failed";
+  const message = typeof body?.message === "string" ? body.message : fallback;
+  return new GitHubError(message, response.status);
+}
+
+/** Performs one GitHub API request while keeping the authenticated token on the server. */
+async function githubResponse(path: string, token?: string, method = "GET", body?: unknown): Promise<Response> {
   const headers = githubHeaders("application/vnd.github+json", token);
   headers["X-GitHub-Api-Version"] = "2022-11-28";
+  if (body !== undefined) headers["Content-Type"] = "application/json";
 
   const response = await fetch(`${GITHUB_API}${path}`, {
     headers,
+    method,
+    body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
 
-  if (!response.ok) {
-    const fallback = response.status === 404 ? "GitHub item not found" : "GitHub request failed";
-    throw new GitHubError(fallback, response.status);
-  }
+  if (!response.ok) throw await githubError(response);
+
+  return response;
+}
+
+/** Performs a typed GitHub API request with optional private-repository access. */
+async function githubRequest<T>(path: string, token?: string): Promise<T> {
+  const response = await githubResponse(path, token);
 
   return response.json() as Promise<T>;
+}
+
+/** Sends one GitHub mutation whose successful response body is not needed locally. */
+async function githubMutation(path: string, token: string, method: "PATCH" | "POST", body?: unknown): Promise<void> {
+  await githubResponse(path, token, method, body);
+}
+
+/** Queries the small viewer-specific capability set that REST does not return. */
+async function githubGraphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${GITHUB_API}/graphql`, {
+    method: "POST",
+    headers: {
+      ...githubHeaders("application/vnd.github+json", token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query, variables }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) throw await githubError(response);
+  const result = await response.json() as { data?: T; errors?: unknown[] };
+  if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
+  return result.data;
 }
 
 /** Searches pull requests with the card-level change totals unavailable from GitHub's REST search. */
@@ -240,6 +352,224 @@ function parseSource(source: string[]): {
   };
 }
 
+/** Restricts collaboration features to a real pull-request source. */
+function pullRequestSource(source: string[]): ReturnType<typeof parseSource> {
+  const parsed = parseSource(source);
+  if (parsed.kind !== "pull") throw new GitHubError("This action is only available on pull requests", 400);
+  return parsed;
+}
+
+/** Maps GitHub's raw issue-comment response into the small client-side conversation shape. */
+function summarizeComment(comment: IssueComment): PullRequestComment {
+  return {
+    author: comment.user.login,
+    avatarUrl: comment.user.avatar_url,
+    body: comment.body,
+    createdAt: comment.created_at,
+    id: comment.id,
+    key: `comment-${comment.id}`,
+    kind: "comment",
+    updatedAt: comment.updated_at,
+  };
+}
+
+/** Maps a submitted PR review into the shared conversation timeline. */
+function summarizeReview(review: PullRequestReview): PullRequestComment {
+  const state = review.state.toLowerCase().replaceAll("_", " ");
+
+  return {
+    author: review.user.login,
+    avatarUrl: review.user.avatar_url,
+    body: review.body || `${state[0]?.toUpperCase() ?? ""}${state.slice(1)} this pull request.`,
+    context: state,
+    createdAt: review.submitted_at ?? "",
+    id: review.id,
+    key: `review-${review.id}`,
+    kind: "review",
+    updatedAt: review.submitted_at ?? "",
+  };
+}
+
+/** Maps an inline diff comment into the top-level conversation with its source path. */
+function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestComment {
+  return {
+    author: comment.user.login,
+    avatarUrl: comment.user.avatar_url,
+    body: comment.body,
+    context: `review comment · ${comment.path}`,
+    createdAt: comment.created_at,
+    id: comment.id,
+    key: `review-comment-${comment.id}`,
+    kind: "review",
+    updatedAt: comment.updated_at,
+  };
+}
+
+/** Identifies completed GitHub Actions runs that GitHub permits a viewer to retry. */
+function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
+  return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
+}
+
+/** Maps one GitHub Actions response into the bounded PR status row used by the client. */
+function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRequestWorkflowRun {
+  return {
+    canRerun: canRerunWorkflow(run, viewerCanWrite),
+    conclusion: run.conclusion,
+    id: run.id,
+    name: run.name,
+    status: run.status,
+    url: run.html_url,
+  };
+}
+
+/** Reads the exact authenticated viewer and repository capabilities required for PR mutations. */
+async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>, number: number, token?: string): Promise<PullRequestCapabilities | undefined> {
+  if (!token) return undefined;
+
+  const [owner, repo] = parsed.repository.split("/");
+  const data = await githubGraphql<PullRequestCapabilityQuery>(token, `query PullRequestCapabilities($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      viewerPermission
+      mergeCommitAllowed
+      squashMergeAllowed
+      rebaseMergeAllowed
+      pullRequest(number: $number) {
+        mergeStateStatus
+        viewerCanClose
+        viewerCanMergeAsAdmin
+      }
+    }
+  }`, { number, owner, repo });
+  const repository = data.repository;
+
+  if (!repository?.pullRequest) return undefined;
+
+  const mergeMethods: PullRequestMergeMethod[] = [];
+  if (repository.mergeCommitAllowed) mergeMethods.push("merge");
+  if (repository.squashMergeAllowed) mergeMethods.push("squash");
+  if (repository.rebaseMergeAllowed) mergeMethods.push("rebase");
+  const viewerCanWrite = repository.viewerPermission === "ADMIN" || repository.viewerPermission === "MAINTAIN" || repository.viewerPermission === "WRITE";
+
+  return {
+    mergeStateStatus: repository.pullRequest.mergeStateStatus,
+    mergeMethods,
+    viewerCanClose: repository.pullRequest.viewerCanClose,
+    viewerCanMergeAsAdmin: repository.pullRequest.viewerCanMergeAsAdmin,
+    viewerCanWrite,
+  };
+}
+
+/** Applies GitHub's current PR state, repository settings, and viewer permission to merge visibility. */
+function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
+  if (!capabilities) return false;
+
+  const mergeStateAllowsMerge = capabilities.mergeStateStatus === "CLEAN" || capabilities.viewerCanMergeAsAdmin;
+  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable === true && capabilities.viewerCanWrite && mergeStateAllowsMerge && Boolean(capabilities.mergeMethods.length);
+}
+
+/** Reflects GitHub's accepted re-run immediately so the same failed run cannot be submitted twice. */
+function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullRequestWorkspace {
+  return {
+    ...workspace,
+    workflowRuns: workspace.workflowRuns.map((run) => run.id === runId
+      ? { ...run, canRerun: false, conclusion: null, status: "queued" }
+      : run),
+  };
+}
+
+/** Builds the PR-only conversation and action state without blocking the page on optional data. */
+async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
+  const [comments, reviews, reviewComments, workflowRuns, capabilities] = await Promise.all([
+    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100`, token).catch(() => []),
+    githubRequest<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
+    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100`, token).catch(() => []),
+    githubRequest<WorkflowRuns>(`/repos/${parsed.encodedRepository}/actions/runs?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=8`, token).catch(() => ({ workflow_runs: [] })),
+    getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
+  ]);
+  const viewerCanWrite = capabilities?.viewerCanWrite ?? false;
+  const state = pullRequest.merged ? "merged" : pullRequest.state;
+  const canMerge = canMergePullRequest(pullRequest, capabilities);
+  const conversation = [
+    ...comments.map(summarizeComment),
+    ...reviews.filter((review) => Boolean(review.submitted_at)).map(summarizeReview),
+    ...reviewComments.map(summarizeReviewComment),
+  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100);
+
+  return {
+    canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
+    canComment: Boolean(token),
+    canMerge,
+    comments: conversation,
+    mergeMethods: capabilities?.mergeMethods ?? [],
+    state,
+    workflowRuns: workflowRuns.workflow_runs.map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
+  };
+}
+
+/** Loads the current PR workspace after a client mutation refreshes its canonical GitHub state. */
+export async function getPullRequestWorkspace(source: string[], token?: string): Promise<PullRequestWorkspace> {
+  const parsed = pullRequestSource(source);
+  const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+  return buildPullRequestWorkspace(parsed, pullRequest, token);
+}
+
+/** Requires a GitHub sign-in before attempting a user-authorized mutation. */
+function requireGitHubToken(token?: string): string {
+  if (!token) throw new GitHubError("Sign in with GitHub to use pull request actions", 401);
+  return token;
+}
+
+/** Verifies the current PR state before GitHub receives a close, merge, or CI mutation. */
+async function currentPullRequest(parsed: ReturnType<typeof parseSource>, token: string): Promise<{ capabilities: PullRequestCapabilities | undefined; pullRequest: PullRequest }> {
+  const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+  const capabilities = await getPullRequestCapabilities(parsed, pullRequest.number, token);
+  return { capabilities, pullRequest };
+}
+
+/** Runs one GitHub-native PR action and returns the refreshed UI state plus confirmed merge status. */
+export async function performPullRequestAction(source: string[], token: string | undefined, action: PullRequestAction): Promise<{ celebrate: boolean; workspace: PullRequestWorkspace }> {
+  const accessToken = requireGitHubToken(token);
+  const parsed = pullRequestSource(source);
+
+  if (action.action === "comment") {
+    const body = action.body.trim();
+    if (!body || body.length > 65_536) throw new GitHubError("Comments must be between 1 and 65,536 characters", 400);
+    await githubMutation(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments`, accessToken, "POST", { body });
+    return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  const { capabilities, pullRequest } = await currentPullRequest(parsed, accessToken);
+
+  if (action.action === "close") {
+    if (pullRequest.state !== "open" || pullRequest.merged || !capabilities?.viewerCanClose) {
+      throw new GitHubError("GitHub does not allow this pull request to be closed", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { state: "closed" });
+  }
+
+  if (action.action === "merge") {
+    if (!canMergePullRequest(pullRequest, capabilities) || !capabilities?.mergeMethods.includes(action.method)) {
+      throw new GitHubError("GitHub does not allow this pull request to be merged", 403);
+    }
+
+    const response = await githubResponse(`${parsed.apiPath}/merge`, accessToken, "PUT", { merge_method: action.method, sha: pullRequest.head.sha });
+    const result = await response.json() as PullRequestMergeResult;
+    if (!result.merged) throw new GitHubError(result.message || "GitHub could not merge this pull request", 409);
+    return { celebrate: true, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  if (action.action === "rerun") {
+    const run = await githubRequest<WorkflowRun>(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}`, accessToken);
+    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || run.head_sha !== pullRequest.head.sha) {
+      throw new GitHubError("GitHub does not allow this workflow run to be restarted", 403);
+    }
+    await githubMutation(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}/rerun-failed-jobs`, accessToken, "POST");
+    return { celebrate: false, workspace: queueWorkflowRun(await getPullRequestWorkspace(source, accessToken), action.runId) };
+  }
+
+  return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+}
+
 /** Resolves the exact repository revision represented by a pull request, comparison, or commit. */
 async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?: string): Promise<string> {
   if (parsed.kind === "commit") return parsed.value;
@@ -316,6 +646,7 @@ export async function getDiffDocument(source: string[], token?: string): Promise
 
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+    const workspace = await buildPullRequestWorkspace(parsed, pullRequest, token);
 
     return {
       additions: pullRequest.additions,
@@ -326,6 +657,7 @@ export async function getDiffDocument(source: string[], token?: string): Promise
       deletions: pullRequest.deletions,
       description: pullRequest.body ?? undefined,
       headLabel: pullRequest.head.label,
+      pullRequest: workspace,
       repository: parsed.repository,
       sourceUrl: pullRequest.html_url,
       title: pullRequest.title,

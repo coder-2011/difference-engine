@@ -22,6 +22,46 @@ export type DiffDocument = {
   description?: string;
   headLabel?: string;
   repository: string;
+  pullRequest?: PullRequestWorkspace;
   sourceUrl: string;
   title: string;
 };
+
+export type PullRequestComment = {
+  author: string;
+  avatarUrl: string;
+  body: string;
+  context?: string;
+  createdAt: string;
+  id: number;
+  key: string;
+  kind: "comment" | "review";
+  updatedAt: string;
+};
+
+export type PullRequestMergeMethod = "merge" | "rebase" | "squash";
+
+export type PullRequestWorkflowRun = {
+  canRerun: boolean;
+  conclusion: string | null;
+  id: number;
+  name: string;
+  status: string;
+  url: string;
+};
+
+export type PullRequestWorkspace = {
+  canClose: boolean;
+  canComment: boolean;
+  canMerge: boolean;
+  comments: PullRequestComment[];
+  mergeMethods: PullRequestMergeMethod[];
+  state: "closed" | "merged" | "open";
+  workflowRuns: PullRequestWorkflowRun[];
+};
+
+export type PullRequestAction =
+  | { action: "comment"; body: string }
+  | { action: "close" }
+  | { action: "merge"; method: PullRequestMergeMethod }
+  | { action: "rerun"; runId: number };
