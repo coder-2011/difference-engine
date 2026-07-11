@@ -82,7 +82,6 @@ type WorkflowRun = {
   html_url: string;
   id: number;
   name: string;
-  pull_requests?: Array<{ number: number }>;
   status: string;
 };
 
@@ -92,6 +91,7 @@ type WorkflowRuns = {
 
 type PullRequestCapabilities = {
   mergeMethods: PullRequestMergeMethod[];
+  mergeStateStatus: "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
   viewerCanClose: boolean;
   viewerCanWrite: boolean;
 };
@@ -99,7 +99,7 @@ type PullRequestCapabilities = {
 type PullRequestCapabilityQuery = {
   repository: {
     mergeCommitAllowed: boolean;
-    pullRequest: { viewerCanClose: boolean } | null;
+    pullRequest: { mergeStateStatus: PullRequestCapabilities["mergeStateStatus"]; viewerCanClose: boolean } | null;
     rebaseMergeAllowed: boolean;
     squashMergeAllowed: boolean;
     viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE" | null;
@@ -431,11 +431,6 @@ function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
   return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
 }
 
-/** Checks whether GitHub explicitly associates a workflow run with the pull request being viewed. */
-function isPullRequestWorkflow(run: WorkflowRun, pullRequestNumber: number): boolean {
-  return run.pull_requests?.some((pullRequest) => pullRequest.number === pullRequestNumber) ?? false;
-}
-
 /** Maps one GitHub Actions response into the bounded PR status row used by the client. */
 function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRequestWorkflowRun {
   return {
@@ -458,6 +453,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
       squashMergeAllowed
       rebaseMergeAllowed
       pullRequest(number: $number) {
+        mergeStateStatus
         viewerCanClose
       }
     }
@@ -474,6 +470,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
 
   return {
     mergeMethods,
+    mergeStateStatus: repository.pullRequest.mergeStateStatus,
     viewerCanClose: repository.pullRequest.viewerCanClose,
     viewerCanWrite,
   };
@@ -483,7 +480,7 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
 function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
   if (!capabilities) return false;
 
-  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable !== false && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
+  return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable !== false && ["CLEAN", "HAS_HOOKS"].includes(capabilities.mergeStateStatus) && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
 }
 
 /** Reflects GitHub's accepted re-run immediately so the same failed run cannot be submitted twice. */
@@ -530,7 +527,6 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.workflow_runs
-      .filter((run) => isPullRequestWorkflow(run, pullRequest.number))
       .slice(0, 8)
       .map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
   };
@@ -592,7 +588,7 @@ export async function performPullRequestAction(source: string[], token: string |
 
   if (action.action === "rerun") {
     const run = await githubRequest<WorkflowRun>(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}`, accessToken);
-    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || !isPullRequestWorkflow(run, pullRequest.number) || run.head_sha !== pullRequest.head.sha) {
+    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || run.head_sha !== pullRequest.head.sha) {
       throw new GitHubError("GitHub does not allow this workflow run to be restarted", 403);
     }
     // GitHub only accepts failed-job retries for a failed workflow; other rerunnable conclusions restart the workflow.
