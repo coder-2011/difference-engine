@@ -78,7 +78,6 @@ type PullRequestReviewComment = {
 
 type WorkflowRun = {
   conclusion: string | null;
-  event: string;
   head_sha: string;
   html_url: string;
   id: number;
@@ -208,15 +207,21 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-/** Reads the newest GitHub page when an endpoint only returns results chronologically. */
-async function githubLastPage<T>(path: string, token?: string): Promise<T> {
+/** Reads enough newest items from a chronological GitHub collection to fill the requested window. */
+async function githubNewestItems<T>(path: string, token: string | undefined, limit: number): Promise<T[]> {
   const response = await githubResponse(path, token);
   const lastPage = response.headers.get("link")?.match(/<([^>]+)>; rel="last"/)?.[1];
 
-  if (!lastPage) return response.json() as Promise<T>;
+  if (!lastPage) return response.json() as Promise<T[]>;
 
   const url = new URL(lastPage, GITHUB_API);
-  return githubRequest<T>(`${url.pathname}${url.search}`, token);
+  const items = await githubRequest<T[]>(`${url.pathname}${url.search}`, token);
+  const page = Number(url.searchParams.get("page"));
+  if (items.length >= limit || !Number.isInteger(page) || page <= 1) return items.slice(-limit);
+
+  url.searchParams.set("page", String(page - 1));
+  const previousItems = await githubRequest<T[]>(`${url.pathname}${url.search}`, token);
+  return [...previousItems, ...items].slice(-limit);
 }
 
 /** Sends one GitHub mutation whose successful response body is not needed locally. */
@@ -410,7 +415,7 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
 async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestComment[]> {
   const [comments, reviews, reviewComments] = await Promise.all([
     githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
-    githubLastPage<PullRequestReview[]>(`${parsed.apiPath}/reviews?per_page=100`, token).catch(() => []),
+    githubNewestItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, 100).catch(() => []),
     githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token).catch(() => []),
   ]);
 
@@ -426,10 +431,9 @@ function canRerunWorkflow(run: WorkflowRun, viewerCanWrite: boolean): boolean {
   return viewerCanWrite && run.status === "completed" && ["action_required", "cancelled", "failure", "timed_out"].includes(run.conclusion ?? "");
 }
 
-/** Checks whether GitHub associates a workflow run with the pull request being viewed. */
+/** Checks whether GitHub explicitly associates a workflow run with the pull request being viewed. */
 function isPullRequestWorkflow(run: WorkflowRun, pullRequestNumber: number): boolean {
-  if (run.pull_requests?.length) return run.pull_requests.some((pullRequest) => pullRequest.number === pullRequestNumber);
-  return run.event === "pull_request" || run.event === "pull_request_target";
+  return run.pull_requests?.some((pullRequest) => pullRequest.number === pullRequestNumber) ?? false;
 }
 
 /** Maps one GitHub Actions response into the bounded PR status row used by the client. */
