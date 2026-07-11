@@ -79,6 +79,7 @@ type PullRequestReviewComment = {
 
 type WorkflowRun = {
   conclusion: string | null;
+  created_at: string;
   event: string;
   head_branch: string | null;
   head_sha: string;
@@ -441,6 +442,19 @@ function isPullRequestWorkflow(run: WorkflowRun, pullRequest: PullRequest): bool
   return run.head_branch === pullRequest.head.ref && ["pull_request", "pull_request_target", "push"].includes(run.event);
 }
 
+/** Combines head and synthetic-merge workflow queries into the newest unique PR runs. */
+function mergePullRequestWorkflowRuns(workflowRuns: WorkflowRuns[], pullRequest: PullRequest): WorkflowRun[] {
+  const runs = new Map<number, WorkflowRun>();
+
+  for (const { workflow_runs } of workflowRuns) {
+    for (const run of workflow_runs) {
+      if (isPullRequestWorkflow(run, pullRequest)) runs.set(run.id, run);
+    }
+  }
+
+  return [...runs.values()].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+}
+
 /** Maps one GitHub Actions response into the bounded PR status row used by the client. */
 function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRequestWorkflowRun {
   return {
@@ -505,9 +519,12 @@ function queueWorkflowRun(workspace: PullRequestWorkspace, runId: number): PullR
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
-  const [comments, workflowRuns, capabilities] = await Promise.all([
+  const workflowRunsPath = `/repos/${parsed.encodedRepository}/actions/runs`;
+  const [comments, headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
     getPullRequestConversation(parsed, token),
-    githubRequest<WorkflowRuns>(`/repos/${parsed.encodedRepository}/actions/runs?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
     getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
   ]);
   const viewerCanWrite = capabilities?.viewerCanWrite ?? false;
@@ -521,8 +538,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     comments,
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
-    workflowRuns: workflowRuns.workflow_runs
-      .filter((run) => isPullRequestWorkflow(run, pullRequest))
+    workflowRuns: mergePullRequestWorkflowRuns([headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns], pullRequest)
       .slice(0, 8)
       .map((run) => summarizeWorkflowRun(run, viewerCanWrite)),
   };
@@ -584,7 +600,7 @@ export async function performPullRequestAction(source: string[], token: string |
 
   if (action.action === "rerun") {
     const run = await githubRequest<WorkflowRun>(`/repos/${parsed.encodedRepository}/actions/runs/${action.runId}`, accessToken);
-    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || !isPullRequestWorkflow(run, pullRequest) || run.head_sha !== pullRequest.head.sha) {
+    if (!capabilities?.viewerCanWrite || !canRerunWorkflow(run, true) || !isPullRequestWorkflow(run, pullRequest)) {
       throw new GitHubError("GitHub does not allow this workflow run to be restarted", 403);
     }
     // GitHub only accepts failed-job retries for a failed workflow; other rerunnable conclusions restart the workflow.
