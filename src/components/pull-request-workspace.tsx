@@ -124,8 +124,6 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
     if (await runAction({ action: "comment", body: comment })) setComment("");
   }
 
-  const hasActions = workspace.canMerge || workspace.canClose || workspace.workflowRuns.some((run) => run.canRerun);
-
   return (
     <section className={`pr-workspace ${description ? "has-description" : ""}`}>
       {description && (
@@ -188,7 +186,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         {!workspace.canComment && workspace.state === "open" && <p className="pr-signin-note">Sign in from the dashboard to comment or use available PR actions.</p>}
 
-        {(workspace.workflowRuns.length > 0 || hasActions) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
             {workspace.workflowRuns.length > 0 && <div className="pr-workflow-list">
               {workspace.workflowRuns.map((run) => (

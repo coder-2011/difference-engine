@@ -421,9 +421,7 @@ function summarizeWorkflowRun(run: WorkflowRun, viewerCanWrite: boolean): PullRe
 }
 
 /** Reads the exact authenticated viewer and repository capabilities required for PR mutations. */
-async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>, number: number, token?: string): Promise<PullRequestCapabilities | undefined> {
-  if (!token) return undefined;
-
+async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>, number: number, token: string): Promise<PullRequestCapabilities | undefined> {
   const [owner, repo] = parsed.repository.split("/");
   const data = await githubGraphql<PullRequestCapabilityQuery>(token, `query PullRequestCapabilities($owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
@@ -505,7 +503,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
-    canComment: Boolean(token),
+    canComment: true,
     canMerge,
     comments: conversation,
     mergeMethods: capabilities?.mergeMethods ?? [],
