@@ -2,10 +2,9 @@
 
 import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { CheckCircle2, CircleX, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
+import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
@@ -60,6 +59,12 @@ function commentDate(value: string): string {
 /** Selects the first GitHub-enabled merge method, preferring the common squash flow. */
 function initialMergeMethod(methods: PullRequestMergeMethod[]): PullRequestMergeMethod {
   return methods.includes("squash") ? "squash" : methods[0] ?? "merge";
+}
+
+/** Groups workflow states into the three colors used by the CI details list. */
+function workflowRunTone(status: string, conclusion: string | null): "failed" | "skipped" | "success" {
+  if (status !== "completed" || ["neutral", "skipped", "stale"].includes(conclusion ?? "")) return "skipped";
+  return conclusion === "success" ? "success" : "failed";
 }
 
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
@@ -130,7 +135,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
       {description && (
         <details className="pr-description" open>
           <summary>Pull request description</summary>
-          <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{description}</ReactMarkdown></div>
+          <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
         </details>
       )}
 
@@ -165,7 +170,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
               <div>
                 <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time></header>
                 {entry.context && <span className="pr-comment-context">{entry.context}</span>}
-                <div className="pr-comment-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{entry.body}</ReactMarkdown></div>
+                <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>
               </div>
             </article>
           )) : !workspace.conversationUnavailable && <p className="pr-comment-empty">No conversation yet.</p>}
@@ -203,13 +208,26 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
               {workspace.canClose && <button className="close-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "close" })} type="button"><GitPullRequestClosed size={13} /> Close</button>}
             </div>}
             {workspace.workflowRuns.length > 0 && (
-              <div className="pr-ci-summary">
-                <span className="sr-only">{successfulCheckCount} successful checks, {skippedOrPendingCheckCount} skipped or pending checks, {failedCheckCount} failed checks.</span>
-                <span aria-hidden="true">CI</span>
-                <span className="ci-success" aria-hidden="true">{successfulCheckCount}</span>
-                <span className="ci-skipped" aria-hidden="true">{skippedOrPendingCheckCount}</span>
-                <span className="ci-failed" aria-hidden="true">{failedCheckCount}</span>
-              </div>
+              <details className="pr-ci-summary">
+                <summary>
+                  <span className="sr-only">{successfulCheckCount} successful checks, {skippedOrPendingCheckCount} skipped or pending checks, {failedCheckCount} failed checks.</span>
+                  <span aria-hidden="true">CI</span>
+                  <span className="ci-success" aria-hidden="true">{successfulCheckCount}</span>
+                  <span className="ci-skipped" aria-hidden="true">{skippedOrPendingCheckCount}</span>
+                  <span className="ci-failed" aria-hidden="true">{failedCheckCount}</span>
+                </summary>
+                <div className="pr-ci-panel">
+                  {workspace.workflowRuns.map((run) => {
+                    const tone = workflowRunTone(run.status, run.conclusion);
+                    return (
+                      <a className="pr-ci-run" href={run.url} key={run.id} rel="noreferrer" target="_blank">
+                        <span className={`pr-ci-run-tone ${tone}`} aria-hidden="true" />
+                        <span className="pr-ci-run-name">{run.name}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              </details>
             )}
           </div>
         )}

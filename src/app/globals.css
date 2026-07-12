@@ -1094,6 +1094,72 @@ button {
   text-decoration: underline;
 }
 
+.markdown-body .github-alert,
+.pr-comment-markdown .github-alert {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #7d8f98;
+  border-radius: 0 5px 5px 0;
+  background: #171816;
+}
+
+.markdown-body .github-alert::before,
+.pr-comment-markdown .github-alert::before {
+  display: block;
+  margin-bottom: 4px;
+  color: #aebfc8;
+  content: "Note";
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.markdown-body .github-alert-tip,
+.pr-comment-markdown .github-alert-tip {
+  border-color: var(--green);
+}
+
+.markdown-body .github-alert-important,
+.pr-comment-markdown .github-alert-important {
+  border-color: #a78bfa;
+}
+
+.markdown-body .github-alert-warning,
+.pr-comment-markdown .github-alert-warning {
+  border-color: #e9c46a;
+}
+
+.markdown-body .github-alert-caution,
+.pr-comment-markdown .github-alert-caution {
+  border-color: var(--red);
+}
+
+.markdown-body .github-alert-tip::before,
+.pr-comment-markdown .github-alert-tip::before {
+  color: var(--green);
+  content: "Tip";
+}
+
+.markdown-body .github-alert-important::before,
+.pr-comment-markdown .github-alert-important::before {
+  color: #b6a1ff;
+  content: "Important";
+}
+
+.markdown-body .github-alert-warning::before,
+.pr-comment-markdown .github-alert-warning::before {
+  color: #e9c46a;
+  content: "Warning";
+}
+
+.markdown-body .github-alert-caution::before,
+.pr-comment-markdown .github-alert-caution::before {
+  color: var(--red);
+  content: "Caution";
+}
+
 .markdown-body table,
 .pr-comment-markdown table {
   display: block;
@@ -1319,6 +1385,7 @@ button {
 }
 
 .pr-actions {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -1330,11 +1397,88 @@ button {
 }
 
 .pr-ci-summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pr-ci-summary summary {
   display: flex;
   align-items: center;
   gap: 7px;
   color: #9dadb1;
+  cursor: pointer;
   font-size: 10px;
+  list-style: none;
+}
+
+.pr-ci-summary summary::-webkit-details-marker {
+  display: none;
+}
+
+.pr-ci-panel {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: calc(100% + 7px);
+  display: none;
+  width: min(340px, calc(100vw - 32px));
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #151513;
+  box-shadow: 0 14px 30px #0008;
+}
+
+.pr-ci-summary[open] .pr-ci-panel,
+.pr-ci-summary:hover .pr-ci-panel,
+.pr-ci-summary:focus-within .pr-ci-panel {
+  display: block;
+}
+
+.pr-ci-run {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: #c9c9cd;
+  font-size: 10px;
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.pr-ci-run:last-child {
+  border-bottom: 0;
+}
+
+.pr-ci-run:hover {
+  background: #1c1c1a;
+}
+
+.pr-ci-run-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.pr-ci-run-tone {
+  width: 6px;
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #e9c46a;
+}
+
+.pr-ci-run-tone.success {
+  background: var(--green);
+}
+
+.pr-ci-run-tone.failed {
+  background: var(--red);
 }
 
 .sr-only {

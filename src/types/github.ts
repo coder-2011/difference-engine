@@ -40,7 +40,10 @@ export type PullRequestMergeMethod = "merge" | "rebase" | "squash";
 
 export type PullRequestWorkflowRun = {
   conclusion: string | null;
+  id: number;
+  name: string;
   status: string;
+  url: string;
 };
 
 export type PullRequestWorkspace = {

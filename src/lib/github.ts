@@ -89,7 +89,9 @@ type WorkflowRun = {
   event: string;
   head_branch: string | null;
   head_sha: string;
+  html_url: string;
   id: number;
+  name: string;
   pull_requests?: Array<{ number: number }>;
   status: string;
 };
@@ -464,11 +466,14 @@ function mergePullRequestWorkflowRuns(workflowRuns: WorkflowRuns[], pullRequest:
   return [...runs.values()].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
 }
 
-/** Maps one GitHub Actions response into the compact status count consumed by the client. */
+/** Maps one GitHub Actions response into the compact CI summary and details item consumed by the client. */
 function summarizeWorkflowRun(run: WorkflowRun): PullRequestWorkflowRun {
   return {
     conclusion: run.conclusion,
+    id: run.id,
+    name: run.name,
     status: run.status,
+    url: run.html_url,
   };
 }
 

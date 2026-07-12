@@ -2,11 +2,10 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
+import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
 import { getDiffDocument, GitHubError } from "@/lib/github";
@@ -81,7 +80,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         ) : description && (
           <details className="pr-description" open>
             <summary>Pull request description</summary>
-            <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{description}</ReactMarkdown></div>
+            <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
           </details>
         )}
       </section>
