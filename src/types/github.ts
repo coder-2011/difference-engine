@@ -39,7 +39,6 @@ export type PullRequestComment = {
 export type PullRequestMergeMethod = "merge" | "rebase" | "squash";
 
 export type PullRequestWorkflowRun = {
-  canRerun: boolean;
   conclusion: string | null;
   id: number;
   name: string;
@@ -61,5 +60,4 @@ export type PullRequestWorkspace = {
 export type PullRequestAction =
   | { action: "comment"; body: string }
   | { action: "close" }
-  | { action: "merge"; method: PullRequestMergeMethod }
-  | { action: "rerun"; runId: number };
+  | { action: "merge"; method: PullRequestMergeMethod };
