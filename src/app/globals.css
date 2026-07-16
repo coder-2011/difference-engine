@@ -1113,7 +1113,8 @@ button {
 }
 
 .markdown-body .github-alert,
-.pr-comment-markdown .github-alert {
+.pr-comment-markdown .github-alert,
+.chat-markdown .github-alert {
   margin: 10px 0;
   padding: 8px 10px;
   border-left: 3px solid #7d8f98;
@@ -1122,7 +1123,8 @@ button {
 }
 
 .markdown-body .github-alert::before,
-.pr-comment-markdown .github-alert::before {
+.pr-comment-markdown .github-alert::before,
+.chat-markdown .github-alert::before {
   display: block;
   margin-bottom: 4px;
   color: #aebfc8;
@@ -1135,45 +1137,53 @@ button {
 }
 
 .markdown-body .github-alert-tip,
-.pr-comment-markdown .github-alert-tip {
+.pr-comment-markdown .github-alert-tip,
+.chat-markdown .github-alert-tip {
   border-color: var(--green);
 }
 
 .markdown-body .github-alert-important,
-.pr-comment-markdown .github-alert-important {
+.pr-comment-markdown .github-alert-important,
+.chat-markdown .github-alert-important {
   border-color: #a78bfa;
 }
 
 .markdown-body .github-alert-warning,
-.pr-comment-markdown .github-alert-warning {
+.pr-comment-markdown .github-alert-warning,
+.chat-markdown .github-alert-warning {
   border-color: #e9c46a;
 }
 
 .markdown-body .github-alert-caution,
-.pr-comment-markdown .github-alert-caution {
+.pr-comment-markdown .github-alert-caution,
+.chat-markdown .github-alert-caution {
   border-color: var(--red);
 }
 
 .markdown-body .github-alert-tip::before,
-.pr-comment-markdown .github-alert-tip::before {
+.pr-comment-markdown .github-alert-tip::before,
+.chat-markdown .github-alert-tip::before {
   color: var(--green);
   content: "Tip";
 }
 
 .markdown-body .github-alert-important::before,
-.pr-comment-markdown .github-alert-important::before {
+.pr-comment-markdown .github-alert-important::before,
+.chat-markdown .github-alert-important::before {
   color: #b6a1ff;
   content: "Important";
 }
 
 .markdown-body .github-alert-warning::before,
-.pr-comment-markdown .github-alert-warning::before {
+.pr-comment-markdown .github-alert-warning::before,
+.chat-markdown .github-alert-warning::before {
   color: #e9c46a;
   content: "Warning";
 }
 
 .markdown-body .github-alert-caution::before,
-.pr-comment-markdown .github-alert-caution::before {
+.pr-comment-markdown .github-alert-caution::before,
+.chat-markdown .github-alert-caution::before {
   color: var(--red);
   content: "Caution";
 }
@@ -1218,7 +1228,7 @@ button {
   position: relative;
   display: flex;
   min-width: 0;
-  height: 420px;
+  min-height: 0;
   max-height: 520px;
   flex-direction: column;
   overflow: hidden;
@@ -1699,27 +1709,23 @@ button {
 @media (min-width: 900px) {
   .pr-workspace.has-description {
     display: grid;
+    align-items: start;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 14px;
   }
 
   .pr-workspace.has-description .pr-description,
   .pr-workspace.has-description .pr-conversation {
-    height: 420px;
     max-height: 420px;
     margin-top: 0;
   }
 
   .pr-workspace.has-description .pr-description {
-    display: flex;
     max-width: none;
-    flex-direction: column;
   }
 
   .pr-workspace.has-description .markdown-body {
-    max-height: none;
-    min-height: 0;
-    flex: 1;
+    max-height: 380px;
   }
 }
 
@@ -1924,11 +1930,22 @@ button {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  resize: both;
   border: 1px solid #343438;
   border-radius: 11px;
   background: #141415;
   box-shadow: 0 24px 80px rgb(0 0 0 / 0.55);
+}
+
+/* Keeps resizing available without adding a visible corner decoration to the panel. */
+.question-panel-resize {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  touch-action: none;
 }
 
 .question-panel.dragging-files::before {
@@ -2107,6 +2124,22 @@ button {
 .chat-markdown ol,
 .chat-markdown pre {
   margin: 7px 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3 {
+  margin: 14px 0 7px;
+  color: #e2e1e6;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.chat-markdown blockquote {
+  margin: 7px 0;
+  padding: 3px 9px;
+  border-left: 3px solid #605a70;
+  color: #aaa7b0;
 }
 
 .chat-markdown ul,

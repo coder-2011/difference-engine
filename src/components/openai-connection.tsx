@@ -126,13 +126,13 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
   return (
     <>
       {connected ? (
-        <button className={`openai-button connected ${compact ? "compact" : ""}`} type="button" onClick={disconnect} title="Disconnect OpenAI">
+        <button aria-label="Disconnect OpenAI" className={`openai-button connected ${compact ? "compact" : ""}`} type="button" onClick={disconnect} title="Disconnect OpenAI">
           <span className="connection-dot" />
           <span>{compact ? "OpenAI" : "OpenAI connected"}</span>
           <LogOut size={12} />
         </button>
       ) : (
-        <button className={`openai-button ${compact ? "compact" : ""}`} type="button" onClick={startConnection}>
+        <button aria-label="Connect OpenAI" className={`openai-button ${compact ? "compact" : ""}`} type="button" onClick={startConnection}>
           <Sparkles size={14} />
           <span>Connect OpenAI</span>
         </button>

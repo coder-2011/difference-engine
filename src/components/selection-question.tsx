@@ -38,6 +38,14 @@ type DragState = Point & {
   velocityY: number;
 };
 
+type ResizeState = Point & {
+  height: number;
+  maxHeight: number;
+  maxWidth: number;
+  minHeight: number;
+  width: number;
+};
+
 type SelectionQuestionProps = {
   source: string[];
 };
@@ -91,6 +99,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const panelRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const resizeRef = useRef<ResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
   const followsConversationRef = useRef(true);
@@ -177,6 +186,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   /** Opens a draft question for the first selected code block without sending it. */
   function openPanel(): void {
+    followsConversationRef.current = true;
     setSelection((current) => current && { ...current, open: true });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -192,6 +202,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   /** Opens an empty repository chat without sending a question. */
   function openChat(): void {
+    followsConversationRef.current = true;
     setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -202,6 +213,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     requestRef.current?.abort();
     requestRef.current = null;
     window.cancelAnimationFrame(momentumFrameRef.current);
+    followsConversationRef.current = true;
     setSelection(null);
     setQuestion("");
     setTurns([]);
@@ -297,6 +309,48 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     if (drag && event.type !== "pointercancel") continueMomentum(drag.velocityX, drag.velocityY);
+  }
+
+  /** Resizes from the hidden corner handle without showing the browser's default corner glyph. */
+  function startResizing(event: ReactPointerEvent<HTMLDivElement>): void {
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const rect = panel.getBoundingClientRect();
+    const anchoredRight = panel.style.right !== "auto";
+    const anchoredBottom = panel.style.bottom !== "auto";
+    window.cancelAnimationFrame(momentumFrameRef.current);
+    resizeRef.current = {
+      height: rect.height,
+      maxHeight: anchoredBottom ? window.innerHeight - 16 : window.innerHeight - rect.top - 8,
+      maxWidth: anchoredRight ? window.innerWidth - 16 : window.innerWidth - rect.left - 8,
+      minHeight: Math.min(rect.height, 180),
+      width: rect.width,
+      x: event.clientX,
+      y: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  /** Applies the current pointer distance to the panel's explicit width and height. */
+  function resizePanel(event: ReactPointerEvent<HTMLDivElement>): void {
+    const resize = resizeRef.current;
+    const panel = panelRef.current;
+    if (!resize || !panel) return;
+
+    const width = Math.min(resize.maxWidth, Math.max(300, resize.width + event.clientX - resize.x));
+    const height = Math.min(resize.maxHeight, Math.max(resize.minHeight, resize.height + event.clientY - resize.y));
+    panel.style.width = `${width}px`;
+    panel.style.height = `${height}px`;
+  }
+
+  /** Ends a corner resize and releases the pointer so other panel interactions resume normally. */
+  function stopResizing(event: ReactPointerEvent<HTMLDivElement>): void {
+    resizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   /** Converts one pending browser file to the data URL accepted by the model request. */
@@ -625,6 +679,14 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
               {loading ? "Thinking…" : <><span>Ask</span><CornerDownLeft size={13} /></>}
             </button>
           </form>
+          <div
+            aria-hidden="true"
+            className="question-panel-resize"
+            onPointerCancel={stopResizing}
+            onPointerDown={startResizing}
+            onPointerMove={resizePanel}
+            onPointerUp={stopResizing}
+          />
         </aside>
       )}
     </>
