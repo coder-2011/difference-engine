@@ -192,11 +192,6 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   /** Opens an empty repository chat without sending a question. */
   function openChat(): void {
-    if (selection?.text) {
-      openPanel();
-      return;
-    }
-
     setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
