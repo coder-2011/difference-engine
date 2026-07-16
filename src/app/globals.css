@@ -2057,12 +2057,19 @@ button {
 }
 
 .asked-question-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
   margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #19487c;
+  border-radius: 10px 10px 3px 10px;
+  background: #092b58;
 }
 
 .asked-question {
   display: block;
-  width: 100%;
+  width: auto;
   min-width: 0;
   overflow: hidden;
   color: #fff;
@@ -2103,6 +2110,13 @@ button {
   font-family: var(--font-mono);
   font-size: 9px;
   overflow-wrap: anywhere;
+}
+
+.chat-turn-divider {
+  height: 3px;
+  margin: 10px 0;
+  border-radius: 999px;
+  background: #f7f7f8;
 }
 
 .chat-markdown {

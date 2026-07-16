@@ -613,6 +613,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
                   {turn.attachments?.length ? (
                     <span className="asked-attachments">{turn.attachments.join(", ")}</span>
                   ) : null}
+                  <div className="chat-turn-divider" />
                   {turn.answer
                     ? <div className="chat-markdown"><GitHubMarkdown>{turn.answer}</GitHubMarkdown></div>
                     : (
