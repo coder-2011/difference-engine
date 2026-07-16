@@ -2,7 +2,7 @@
 
 import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, CircleX, GitPullRequest, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
@@ -30,6 +30,12 @@ type ActionMessage = {
 };
 
 const DATE_FORMAT = new Intl.DateTimeFormat("en", { day: "numeric", month: "short" });
+const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
+  close: "Pull request closed on GitHub.",
+  comment: "Comment posted to GitHub.",
+  merge: "Pull request merged on GitHub.",
+  ready: "Pull request marked ready for review on GitHub.",
+};
 const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "0ms", drift: "-30px", duration: "2680ms", left: "4%", size: 9 },
   { color: "#79aeb0", delay: "120ms", drift: "24px", duration: "2820ms", left: "9%", size: 10 },
@@ -67,6 +73,15 @@ function workflowRunTone(status: string, conclusion: string | null): "failed" | 
   return conclusion === "success" ? "success" : "failed";
 }
 
+/** Explains an open pull request's GitHub state without implying unavailable actions will succeed. */
+function openPullRequestState(workspace: PullRequestWorkspace): string {
+  if (workspace.draft) return "Not yet ready for review.";
+  if (workspace.canMerge) return "Ready to merge.";
+  if (workspace.canManageMerge) return "GitHub is checking merge requirements.";
+  if (workspace.hasGitHubAccess) return "You cannot merge this pull request.";
+  return "Sign in with GitHub to manage this pull request.";
+}
+
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
 export function PullRequestWorkspace({ description, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -79,6 +94,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
   const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
   const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
   const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
+  const openState = openPullRequestState(workspace);
 
   useEffect(() => {
     if (!celebrating) return;
@@ -111,7 +127,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
       if (result.celebrate) setCelebrating(true);
       setMessage({
         error: false,
-        text: action.action === "comment" ? "Comment posted to GitHub." : action.action === "close" ? "Pull request closed on GitHub." : "Pull request merged on GitHub.",
+        text: ACTION_MESSAGES[action.action],
       });
       return true;
     } catch (error) {
@@ -163,6 +179,13 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           <span>Conversation</span>
         </header>
 
+        {workspace.state === "open" && (
+          <div className="pr-state">
+            <span className={`pr-state-pill ${workspace.draft ? "draft" : "open"}`}>{workspace.draft ? "Draft" : "Open"}</span>
+            <span>{openState}</span>
+          </div>
+        )}
+
         <div className="pr-comment-list">
           {workspace.comments.length ? workspace.comments.map((entry) => (
             <article className="pr-comment" key={entry.key}>
@@ -190,19 +213,20 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           </form>
         )}
 
-        {!workspace.canComment && <p className="pr-signin-note">Conversation locked on GitHub.</p>}
+        {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canMerge || workspace.canClose) && <div className="pr-action-row">
-              {workspace.canMerge && (
+            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
+              {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
+              {workspace.canManageMerge && (
                 <div className="merge-control">
                   {workspace.mergeMethods.length > 1 && (
                     <select aria-label="Merge method" disabled={Boolean(pendingAction)} onChange={(event) => setMergeMethod(event.target.value as PullRequestMergeMethod)} value={mergeMethod}>
                       {workspace.mergeMethods.map((method) => <option key={method} value={method}>{method}</option>)}
                     </select>
                   )}
-                  <button className="merge-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "merge", method: mergeMethod })} type="button"><Sparkles size={13} /> Merge</button>
+                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button"><Sparkles size={13} /> Merge</button>
                 </div>
               )}
               {workspace.canClose && <button className="close-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "close" })} type="button"><GitPullRequestClosed size={13} /> Close</button>}

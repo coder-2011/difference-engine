@@ -49,9 +49,13 @@ export type PullRequestWorkflowRun = {
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
+  canManageMerge: boolean;
+  canMarkReady: boolean;
   canMerge: boolean;
   comments: PullRequestComment[];
   conversationUnavailable: boolean;
+  draft: boolean;
+  hasGitHubAccess: boolean;
   mergeMethods: PullRequestMergeMethod[];
   state: "closed" | "merged" | "open";
   workflowRuns: PullRequestWorkflowRun[];
@@ -60,4 +64,5 @@ export type PullRequestWorkspace = {
 export type PullRequestAction =
   | { action: "comment"; body: string }
   | { action: "close" }
-  | { action: "merge"; method: PullRequestMergeMethod };
+  | { action: "merge"; method: PullRequestMergeMethod }
+  | { action: "ready" };

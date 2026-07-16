@@ -103,14 +103,21 @@ type WorkflowRuns = {
 type PullRequestCapabilities = {
   mergeMethods: PullRequestMergeMethod[];
   mergeStateStatus: "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
+  pullRequestId: string;
   viewerCanClose: boolean;
+  viewerCanUpdate: boolean;
   viewerCanWrite: boolean;
 };
 
 type PullRequestCapabilityQuery = {
   repository: {
     mergeCommitAllowed: boolean;
-    pullRequest: { mergeStateStatus: PullRequestCapabilities["mergeStateStatus"]; viewerCanClose: boolean } | null;
+    pullRequest: {
+      id: string;
+      mergeStateStatus: PullRequestCapabilities["mergeStateStatus"];
+      viewerCanClose: boolean;
+      viewerCanUpdate: boolean;
+    } | null;
     rebaseMergeAllowed: boolean;
     squashMergeAllowed: boolean;
     viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE" | null;
@@ -425,7 +432,7 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
 }
 
 /** Loads the authenticated conversation records shown in the PR workspace. */
-async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token: string): Promise<PullRequestConversation> {
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestConversation> {
   // Preserve available records while telling the UI when GitHub could not provide the full conversation.
   const [commentsResult, reviewsResult, reviewCommentsResult] = await Promise.allSettled([
     githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token),
@@ -480,17 +487,20 @@ function summarizeWorkflowRun(run: WorkflowRun): PullRequestWorkflowRun {
 }
 
 /** Loads the controls that only an open pull request can render or act on. */
-async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string) {
+async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string) {
   if (pullRequest.state !== "open" || pullRequest.merged) {
     return { capabilities: undefined, workflowRuns: [] };
   }
 
   const workflowRunsPath = `/repos/${parsed.encodedRepository}/actions/runs`;
+  const capabilitiesRequest = token
+    ? getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined)
+    : Promise.resolve(undefined);
   const [headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
+    capabilitiesRequest,
   ]);
 
   return {
@@ -509,8 +519,10 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
       squashMergeAllowed
       rebaseMergeAllowed
       pullRequest(number: $number) {
+        id
         mergeStateStatus
         viewerCanClose
+        viewerCanUpdate
       }
     }
   }`, { number, owner, repo });
@@ -527,7 +539,9 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
   return {
     mergeMethods,
     mergeStateStatus: repository.pullRequest.mergeStateStatus,
+    pullRequestId: repository.pullRequest.id,
     viewerCanClose: repository.pullRequest.viewerCanClose,
+    viewerCanUpdate: repository.pullRequest.viewerCanUpdate,
     viewerCanWrite,
   };
 }
@@ -540,7 +554,7 @@ function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequest
 }
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
-async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
+async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
   const [conversation, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
     getPullRequestControls(parsed, pullRequest, token),
@@ -549,10 +563,14 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
-    canComment: !pullRequest.locked,
+    canComment: Boolean(token) && !pullRequest.locked,
+    canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
+    canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
     comments: conversation.comments,
     conversationUnavailable: conversation.unavailable,
+    draft: pullRequest.draft,
+    hasGitHubAccess: Boolean(token),
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.slice(0, 8).map(summarizeWorkflowRun),
@@ -611,6 +629,18 @@ export async function performPullRequestAction(source: string[], token: string |
     const result = await response.json() as PullRequestMergeResult;
     if (!result.merged) throw new GitHubError(result.message || "GitHub could not merge this pull request", 409);
     return { celebrate: true, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  if (action.action === "ready") {
+    if (pullRequest.state !== "open" || pullRequest.merged || !pullRequest.draft || !capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request to be marked ready for review", 403);
+    }
+
+    await githubGraphql<{ markPullRequestReadyForReview: { pullRequest: { id: string } } }>(accessToken, `mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+      markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+        pullRequest { id }
+      }
+    }`, { pullRequestId: capabilities.pullRequestId });
   }
 
   return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
@@ -727,7 +757,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
 
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const workspace = includePullRequestWorkspace && token ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
+    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
 
     return {
       additions: pullRequest.additions,

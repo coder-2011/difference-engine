@@ -1384,6 +1384,7 @@ button {
 
 .pr-comment-form button,
 .merge-button,
+.ready-review-button,
 .close-pr-button {
   display: inline-flex;
   align-items: center;
@@ -1406,6 +1407,7 @@ button {
 
 .pr-comment-form button:disabled,
 .merge-button:disabled,
+.ready-review-button:disabled,
 .close-pr-button:disabled {
   cursor: default;
   opacity: 0.45;
@@ -1430,6 +1432,35 @@ button {
   padding: 0 12px;
   border-top: 1px solid var(--line-soft);
   background: #11110f;
+}
+
+.pr-state {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.pr-state-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.pr-state-pill.open {
+  background: #153225;
+  color: #8fd0a7;
+}
+
+.pr-state-pill.draft {
+  background: #292536;
+  color: #c7b8ff;
 }
 
 .pr-ci-summary {
@@ -1584,6 +1615,17 @@ button {
 
 .merge-button:hover {
   background: #35b96d;
+}
+
+.ready-review-button {
+  height: 30px;
+  padding: 0 10px;
+  background: #4f3a90;
+  color: #eeeaff;
+}
+
+.ready-review-button:hover {
+  background: #684db4;
 }
 
 .close-pr-button {

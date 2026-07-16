@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows, Github } from "lucide-react";
+import { login } from "@/app/actions";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
@@ -35,11 +36,12 @@ export default async function DiffPage({ params }: DiffPageProps) {
     getGitHubAccessToken(),
     isOpenAIConnected(),
   ]);
+  const callbackUrl = `/${source.map(encodeURIComponent).join("/")}`;
 
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken, Boolean(accessToken));
+    document = await getDiffDocument(source, accessToken, true);
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;
@@ -58,6 +60,12 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
         <div className="diff-nav-actions">
           <OpenAIConnection compact initiallyConnected={openAIConnected} />
+          {!accessToken && (
+            <form action={login}>
+              <input name="callbackUrl" type="hidden" value={callbackUrl} />
+              <button className="github-button" type="submit"><Github size={15} /> Sign in with GitHub</button>
+            </form>
+          )}
           <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
             Open on GitHub <ArrowUpRight size={14} />
           </a>
