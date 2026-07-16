@@ -538,7 +538,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   /** Fills the visible placeholder and leaves the cursor ready to edit it. */
   function fillPlaceholder(): void {
-    const placeholder = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
+    const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
     if (!placeholder) return;
     setQuestion(placeholder);
     window.setTimeout(() => {
@@ -554,7 +554,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   const triggerSelection = selection?.open ? selection.pending : selection;
   const addsToTask = Boolean(selection?.open && selection.pending);
-  const suggestedQuestion = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
+  const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
 
   return (
@@ -642,10 +642,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             )}
             {attachmentError && <p className="attachment-error">{attachmentError}</p>}
             <div className="question-input">
-              {!question && (
-                <span className={`question-suggestion${isGeneratingSuggestion ? " loading" : ""}`} aria-hidden="true">
-                  <span>{isGeneratingSuggestion ? "Finding a useful next question…" : suggestedQuestion}</span>
-                  {!isGeneratingSuggestion && <kbd><b>⇥</b> Tab</kbd>}
+              {!question && !isGeneratingSuggestion && suggestedQuestion && (
+                <span className="question-suggestion" aria-hidden="true">
+                  <span>{suggestedQuestion}</span>
+                  <kbd><b>⇥</b> Tab</kbd>
                 </span>
               )}
               <textarea
@@ -653,7 +653,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Tab" && !question && !isGeneratingSuggestion) {
+                  if (event.key === "Tab" && !question && !isGeneratingSuggestion && suggestedQuestion) {
                     event.preventDefault();
                     fillPlaceholder();
                   } else if (event.key === "Enter" && !event.shiftKey) {

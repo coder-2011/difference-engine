@@ -2323,10 +2323,6 @@ button {
   line-height: 0.8;
 }
 
-.question-suggestion.loading > span {
-  animation: suggestion-pulse 1.5s ease-in-out infinite;
-}
-
 /* Three staggered dots give streamed replies a quiet, familiar loading cue. */
 .chat-loading-wave {
   display: flex;
@@ -2373,10 +2369,6 @@ button {
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
-}
-
-@keyframes suggestion-pulse {
-  50% { opacity: 0.48; }
 }
 
 .question-panel form .ask-submit {
