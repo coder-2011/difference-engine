@@ -1064,9 +1064,22 @@ button {
   max-height: 280px;
   padding: 5px 16px 12px;
   overflow: auto;
+  overflow-wrap: anywhere;
   color: #b6b6bb;
   font-size: 12px;
   line-height: 1.65;
+}
+
+/* Keeps Markdown image attachments inside every rendered GitHub Markdown surface. */
+.markdown-body img,
+.pr-comment-markdown img,
+.chat-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
 }
 
 .markdown-body h1,
@@ -1663,6 +1676,7 @@ button {
 
   .pr-workspace.has-description .markdown-body {
     max-height: none;
+    min-height: 0;
     flex: 1;
   }
 }
