@@ -1,5 +1,7 @@
 import ReactMarkdown from "react-markdown";
+import type { ComponentPropsWithoutRef } from "react";
 import remarkGfm from "remark-gfm";
+import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
 
 type GitHubMarkdownProps = {
   children: string;
@@ -16,7 +18,7 @@ const GITHUB_ALERT = /^\[!(CAUTION|IMPORTANT|NOTE|TIP|WARNING)\]\s*\n?/;
 
 /** Adds alert classes to GitHub's blockquote markers before Markdown becomes HTML. */
 function githubAlerts() {
-  return (tree: unknown) => markGitHubAlerts(tree);
+  return markGitHubAlerts;
 }
 
 /** Walks Markdown nodes and replaces each GitHub alert marker with semantic styling data. */
@@ -44,7 +46,23 @@ function markGitHubAlerts(node: unknown): void {
   markdownNode.children?.forEach(markGitHubAlerts);
 }
 
+/** Preserves table layout while giving wide Markdown tables a contained horizontal viewport. */
+function MarkdownTable({ children, ...props }: ComponentPropsWithoutRef<"table">) {
+  return <div className="markdown-table"><table {...props}>{children}</table></div>;
+}
+
+const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre, table: MarkdownTable };
+const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
+
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
 export function GitHubMarkdown({ children }: GitHubMarkdownProps) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm, githubAlerts]} skipHtml>{children}</ReactMarkdown>;
+  return (
+    <ReactMarkdown
+      components={MARKDOWN_COMPONENTS}
+      remarkPlugins={MARKDOWN_PLUGINS}
+      skipHtml
+    >
+      {children}
+    </ReactMarkdown>
+  );
 }
