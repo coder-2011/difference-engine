@@ -1,6 +1,7 @@
 # Chat behavior
 
 - [x] Make the bottom-left AI chat launcher start a new blank chat.
+- [x] Remove the dead gap above the Tab suggestion in the floating chat.
 
 # Pull request workspace
 
