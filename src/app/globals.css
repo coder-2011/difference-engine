@@ -1889,19 +1889,6 @@ button {
   box-shadow: 0 24px 80px rgb(0 0 0 / 0.55);
 }
 
-.question-panel::after {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 9px;
-  height: 9px;
-  border-right: 1px solid #77737f;
-  border-bottom: 1px solid #77737f;
-  content: "";
-  opacity: 0.82;
-  pointer-events: none;
-}
-
 .question-panel.dragging-files::before {
   position: absolute;
   z-index: 2;
@@ -1971,9 +1958,9 @@ button {
 
 .selected-snippet {
   flex: none;
-  max-height: 76px;
+  max-height: 96px;
   padding: 10px 12px;
-  overflow: hidden;
+  overflow-y: auto;
   border-bottom: 1px solid var(--line-soft);
   background: #0d0d0e;
   color: #78787e;
@@ -1981,6 +1968,12 @@ button {
   font-size: 9px;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.selected-snippet-item + .selected-snippet-item {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
 }
 
 .conversation {
@@ -2005,14 +1998,12 @@ button {
 }
 
 .asked-question-wrap {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
   margin-bottom: 8px;
 }
 
 .asked-question {
   display: block;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   color: #fff;
@@ -2030,7 +2021,8 @@ button {
 }
 
 .asked-question-toggle {
-  flex: none;
+  display: block;
+  margin-top: 4px;
   padding: 0;
   border: 0;
   background: transparent;

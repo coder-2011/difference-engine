@@ -23,6 +23,7 @@ type CodeSelection = Point & {
 };
 
 type SelectionState = CodeSelection & {
+  context: string[];
   open: boolean;
   pending?: CodeSelection;
 };
@@ -127,7 +128,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const nextSelection = { text, x, y };
       setSelection((current) => current?.open
         ? { ...current, pending: nextSelection }
-        : { ...nextSelection, open: false });
+        : { ...nextSelection, context: [text], open: false });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -174,11 +175,17 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     return () => scroller.removeEventListener("scroll", updateFollowState);
   }, [Boolean(turns.length || loading)]);
 
-  /** Opens the chat with the newest selection without clearing prior turns. */
+  /** Opens a draft question for the first selected code block without sending it. */
   function openPanel(): void {
+    setSelection((current) => current && { ...current, open: true });
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /** Adds the newest highlighted block to the active task without sending it. */
+  function addSelectionToTask(): void {
     setSelection((current) => {
-      const nextSelection = current?.pending ?? current;
-      return nextSelection && { ...nextSelection, open: true };
+      if (!current?.open || !current.pending) return current;
+      return { ...current, context: [...current.context, current.pending.text], pending: undefined };
     });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -190,7 +197,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       return;
     }
 
-    setSelection({ open: true, text: "", x: 0, y: 0 });
+    setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -375,6 +382,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   async function submitQuestion(value: string): Promise<void> {
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
+    const taskContext = selection.context.join("\n\n");
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -414,7 +422,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         answer: "",
         attachments: attachmentNames,
         question: submittedQuestion,
-        selection: selection.text,
+        selection: taskContext,
       }]);
       startedTurn = true;
       const response = await fetch("/api/ask", {
@@ -425,7 +433,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           attachments: uploadedAttachments,
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
-          selection: selection.text,
+          selection: taskContext,
           source,
         }),
       });
@@ -496,6 +504,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   }
 
   const triggerSelection = selection?.open ? selection.pending : selection;
+  const addsToTask = Boolean(selection?.open && selection.pending);
   const suggestedQuestion = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
 
@@ -512,9 +521,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           className="selection-trigger"
           style={{ left: triggerSelection.x, top: triggerSelection.y }}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={openPanel}
+          onClick={addsToTask ? addSelectionToTask : openPanel}
         >
-          <Plus size={13} /> Add to task
+          <Plus size={13} /> {addsToTask ? "Add to task" : "Ask Diffs"}
         </button>
       )}
 
@@ -522,7 +531,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         <aside
           ref={panelRef}
           className={`question-panel${isDraggingFiles ? " dragging-files" : ""}`}
-          aria-label={selection.text ? "Ask about selected code" : "AI chat"}
+          aria-label={selection.context.length ? "Ask about selected code" : "AI chat"}
           onDragEnter={beginFileDrag}
           onDragLeave={endFileDrag}
           onDragOver={(event) => event.preventDefault()}
@@ -535,11 +544,17 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             onPointerUp={stopDragging}
             onPointerCancel={stopDragging}
           >
-            <span><Sparkles size={14} /> {selection.text ? "Ask Diffs" : "AI chat"} <GripHorizontal className="drag-hint" size={13} /></span>
+            <span><Sparkles size={14} /> {selection.context.length ? "Ask Diffs" : "AI chat"} <GripHorizontal className="drag-hint" size={13} /></span>
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 
-          {selection.text && <div className="selected-snippet">{selection.text}</div>}
+          {selection.context.length > 0 && (
+            <div className="selected-snippet">
+              {selection.context.map((snippet, index) => (
+                <div className="selected-snippet-item" key={`${snippet}-${index}`}>{snippet}</div>
+              ))}
+            </div>
+          )}
 
           {(turns.length > 0 || loading) && (
             <div className="conversation" ref={conversationRef}>

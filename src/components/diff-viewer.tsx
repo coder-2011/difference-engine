@@ -2,6 +2,7 @@
 
 import type { CodeViewDiffItem, CodeViewHandle, FileDiffMetadata } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
+import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronDown, ChevronRight, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
@@ -45,13 +46,25 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
+    let cancelled = false;
+
+    /** Preloads every file grammar so the viewer's first visible render is syntax-highlighted. */
+    async function showParsedFiles(files: FileDiffMetadata[]): Promise<void> {
+      const langs = [...new Set(files.map((file) => file.lang ?? getFiletypeFromFileName(file.name)))];
+      try {
+        await preloadHighlighter({ langs, preferredHighlighter: "shiki-wasm", themes: ["pierre-dark"] });
+      } catch {
+        // CodeView still renders plain code if a grammar fails to preload.
+      }
+      if (!cancelled) setParsedFiles(files);
+    }
 
     /** Receives parsed files without blocking the main browser thread. */
     function handleMessage(event: MessageEvent<{ error?: string; files?: FileDiffMetadata[] }>): void {
       if (event.data.error) {
         setError(event.data.error);
       } else {
-        setParsedFiles(event.data.files ?? []);
+        void showParsedFiles(event.data.files ?? []);
       }
     }
 
@@ -64,7 +77,10 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     worker.addEventListener("error", handleError);
     worker.postMessage({ cacheKey: source.join("/"), url: `/api/diff/${path}` });
 
-    return () => worker.terminate();
+    return () => {
+      cancelled = true;
+      worker.terminate();
+    };
   }, [source]);
 
   const files = parsedFiles ?? EMPTY_FILES;
@@ -166,6 +182,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
               hunkSeparators: "line-info",
               lineDiffType: "word-alt",
               overflow: "scroll",
+              preferredHighlighter: "shiki-wasm",
               stickyHeaders: true,
               theme: "pierre-dark",
               themeType: "dark",
