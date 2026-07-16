@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
 
 type GitHubMarkdownProps = {
   children: string;
@@ -46,5 +47,13 @@ function markGitHubAlerts(node: unknown): void {
 
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
 export function GitHubMarkdown({ children }: GitHubMarkdownProps) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm, githubAlerts]} skipHtml>{children}</ReactMarkdown>;
+  return (
+    <ReactMarkdown
+      components={{ code: HighlightedCode, pre: MarkdownPre }}
+      remarkPlugins={[remarkGfm, githubAlerts]}
+      skipHtml
+    >
+      {children}
+    </ReactMarkdown>
+  );
 }

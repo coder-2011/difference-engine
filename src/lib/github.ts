@@ -169,6 +169,8 @@ const CONTEXT_TREE_LIMIT = 30_000;
 const CONTEXT_DIFF_LIMIT = 50_000;
 const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
+const TOOL_FILE_COUNT = 8;
+const TOOL_FILES_LIMIT = 48_000;
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -682,6 +684,41 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
     `Changed and root file contents:${fileContext || "\nNo textual files were available."}`,
     `Full change diff:\n${diff.slice(0, CONTEXT_DIFF_LIMIT)}`,
   ].join("\n\n");
+}
+
+/** Reads a small, exact set of files so the code-question agent can inspect missing context. */
+export async function readRepositoryFiles(source: string[], paths: string[], token?: string): Promise<{ files: Array<{ path: string; text?: string; error?: string }>; revision: string }> {
+  const parsed = parseSource(source);
+  const revision = await getSourceRevision(parsed, token);
+  const tree = await githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodeURIComponent(revision)}?recursive=1`, token);
+  const filesByPath = new Map(tree.tree.filter((entry) => entry.type === "blob").map((entry) => [entry.path, entry]));
+  const requestedPaths = [...new Set(paths)].slice(0, TOOL_FILE_COUNT);
+  const files: Array<{ path: string; text?: string; error?: string }> = [];
+  let remaining = TOOL_FILES_LIMIT;
+
+  for (const path of requestedPaths) {
+    const entry = filesByPath.get(path);
+    if (!entry) {
+      files.push({ error: "File not found at this revision.", path });
+      continue;
+    }
+    if ((entry.size ?? 0) > CONTEXT_FILES_LIMIT || remaining <= 0) {
+      files.push({ error: "File is too large to include.", path });
+      continue;
+    }
+
+    const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
+    const text = decodeGitBlob(blob).slice(0, remaining);
+    if (!text) {
+      files.push({ error: "File is binary or empty.", path });
+      continue;
+    }
+
+    remaining -= text.length;
+    files.push({ path, text });
+  }
+
+  return { files, revision };
 }
 
 /** Loads the title, description, author, change totals, and optionally the interactive PR workspace. */

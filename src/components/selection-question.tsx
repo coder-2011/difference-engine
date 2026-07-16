@@ -1,8 +1,8 @@
 "use client";
 
 import { CornerDownLeft, GripHorizontal, Sparkles, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { GitHubMarkdown } from "@/components/github-markdown";
 import type { ChatTurn } from "@/types/chat";
 
 const DEFAULT_QUESTION = "What does this code do?";
@@ -37,6 +37,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<(Point & { left: number; top: number }) | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const followsConversationRef = useRef(true);
 
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
@@ -96,8 +97,25 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   useEffect(() => {
     const conversation = conversationRef.current;
-    if (conversation) conversation.scrollTop = conversation.scrollHeight;
+    if (conversation && followsConversationRef.current) {
+      conversation.scrollTop = conversation.scrollHeight;
+    }
   }, [loading, turns]);
+
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    if (!conversation) return;
+
+    /** Remembers whether the reader wants incoming text to keep following the bottom. */
+    function updateFollowState(): void {
+      const distanceFromBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
+      followsConversationRef.current = distanceFromBottom < 24;
+    }
+
+    updateFollowState();
+    conversation.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => conversation.removeEventListener("scroll", updateFollowState);
+  }, [Boolean(turns.length || loading)]);
 
   /** Opens the chat with the newest selection without clearing prior turns. */
   function openPanel(): void {
@@ -260,7 +278,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   }
 
   const triggerSelection = selection?.open ? selection.pending : selection;
-  const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
+  const suggestedQuestion = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
+  const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
 
   return (
     <>
@@ -300,7 +319,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
                 <article className="chat-turn" key={`${turn.question}-${index}`}>
                   <span className="asked-question">{turn.question}</span>
                   {turn.answer
-                    ? <div className="chat-markdown"><ReactMarkdown skipHtml>{turn.answer}</ReactMarkdown></div>
+                    ? <div className="chat-markdown"><GitHubMarkdown>{turn.answer}</GitHubMarkdown></div>
                     : <p>Reading the codebase…</p>}
                 </article>
               ))}
@@ -308,22 +327,29 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           )}
 
           <form onSubmit={askQuestion}>
-            <textarea
-              ref={inputRef}
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Tab" && !question.trim()) {
-                  event.preventDefault();
-                  fillPlaceholder();
-                } else if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder={placeholder}
-              rows={2}
-            />
+            <div className="question-input">
+              {!question && (
+                <span className={`question-suggestion${isGeneratingSuggestion ? " loading" : ""}`} aria-hidden="true">
+                  <span>{isGeneratingSuggestion ? "Finding a useful next question…" : suggestedQuestion}</span>
+                  {!isGeneratingSuggestion && <kbd><b>⇥</b> Tab</kbd>}
+                </span>
+              )}
+              <textarea
+                ref={inputRef}
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Tab" && !question.trim()) {
+                    event.preventDefault();
+                    fillPlaceholder();
+                  } else if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                rows={2}
+              />
+            </div>
             <button className="ask-submit" disabled={loading || !question.trim()}>
               {loading ? "Thinking…" : <><span>Ask</span><CornerDownLeft size={13} /></>}
             </button>

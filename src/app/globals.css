@@ -15,6 +15,11 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }
 
 html {
@@ -2009,6 +2014,64 @@ button {
   background: #141415;
 }
 
+.question-input {
+  position: relative;
+  min-width: 0;
+}
+
+.question-suggestion {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #5f5f65;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.question-suggestion > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.question-suggestion kbd {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border: 1px solid #34343a;
+  border-radius: 4px;
+  background: rgb(38 38 42 / 0.72);
+  color: #8f8f98;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.04);
+}
+
+.question-suggestion kbd b {
+  color: #b6a6e6;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 0.8;
+}
+
+.question-suggestion.loading > span {
+  animation: suggestion-pulse 1.5s ease-in-out infinite;
+}
+
+.question-input textarea {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
 .question-panel textarea {
   min-height: 48px;
   resize: none;
@@ -2020,8 +2083,8 @@ button {
   line-height: 1.45;
 }
 
-.question-panel textarea::placeholder {
-  color: #5f5f65;
+@keyframes suggestion-pulse {
+  50% { opacity: 0.48; }
 }
 
 .question-panel form .ask-submit {
