@@ -1276,15 +1276,38 @@ button {
   overflow: hidden;
 }
 
-.pr-commit-list > header {
+.pr-commit-list > summary {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 7px 8px;
-  border-bottom: 1px solid #29292d;
   color: #b9b6c1;
+  cursor: pointer;
   font-size: 10px;
   font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.pr-commit-list > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pr-commit-list > summary::after {
+  margin-left: auto;
+  color: var(--faint);
+  content: "⌄";
+  font-size: 13px;
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+}
+
+.pr-commit-list[open] > summary {
+  border-bottom: 1px solid #29292d;
+}
+
+.pr-commit-list[open] > summary::after {
+  transform: rotate(0deg);
 }
 
 .pr-commit {

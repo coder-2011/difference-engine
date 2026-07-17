@@ -193,15 +193,15 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         <div className="pr-comment-list">
           {workspace.commits.length > 0 && (
-            <section className="pr-commit-list" aria-label="Pull request commits">
-              <header><GitCommitHorizontal size={13} /> <span>{workspace.commits.length === 1 ? "1 commit" : `${workspace.commits.length} commits`}</span></header>
+            <details className="pr-commit-list" open>
+              <summary><GitCommitHorizontal size={13} /> <span>{workspace.commits.length === 1 ? "1 commit" : `${workspace.commits.length} commits`}</span></summary>
               {workspace.commits.map((commit) => (
                 <article className="pr-commit" key={commit.sha}>
                   <span className="pr-commit-message" title={commit.message}>{commitSummary(commit.message)}</span>
                   <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}</span>
                 </article>
               ))}
-            </section>
+            </details>
           )}
           {workspace.commitsUnavailable && <p className="pr-conversation-note">Commit history may be incomplete.</p>}
           {workspace.comments.length ? workspace.comments.map((entry) => (

@@ -10,6 +10,7 @@
 
 - [x] Show GitHub PR state and actions, including merge and ready-for-review controls.
 - [x] Show the actual GitHub commit history at the top of PR conversation.
+- [x] Make PR commit history collapsible without hiding it initially.
 
 # Diff chat controls
 
