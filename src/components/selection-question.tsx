@@ -1,6 +1,7 @@
 "use client";
 
 import { CornerDownLeft, GripHorizontal, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import type { CSSProperties } from "react";
 import { ChangeEvent, DragEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import {
@@ -12,6 +13,11 @@ import {
 } from "@/types/chat";
 
 const DEFAULT_QUESTION = "What does this code do?";
+const DEFAULT_CHAT_FONT_SIZE = 12;
+const MAX_CHAT_FONT_SIZE = 22;
+const MIN_PANEL_HEIGHT = 120;
+const MIN_PANEL_WIDTH = 300;
+const RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const;
 
 type Point = {
   x: number;
@@ -38,11 +44,13 @@ type DragState = Point & {
   velocityY: number;
 };
 
+type ResizeDirection = typeof RESIZE_DIRECTIONS[number];
+
 type ResizeState = Point & {
+  direction: ResizeDirection;
   height: number;
-  maxHeight: number;
-  maxWidth: number;
-  minHeight: number;
+  left: number;
+  top: number;
   width: number;
 };
 
@@ -94,8 +102,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -159,6 +167,22 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
+  }, []);
+
+  useEffect(() => {
+    /** Enlarges only chat text when Command-Plus originates inside the Ask Diffs panel. */
+    function increaseChatFont(event: KeyboardEvent): void {
+      const target = event.target;
+      const isChatTarget = target instanceof Element && Boolean(target.closest(".question-panel"));
+      const isCommandPlus = event.metaKey && !event.altKey && !event.ctrlKey && (event.key === "+" || event.key === "=");
+
+      if (!isCommandPlus || !isChatTarget) return;
+      event.preventDefault();
+      setChatFontSize((size) => Math.min(size + 1, MAX_CHAT_FONT_SIZE));
+    }
+
+    window.addEventListener("keydown", increaseChatFont);
+    return () => window.removeEventListener("keydown", increaseChatFont);
   }, []);
 
   useEffect(() => {
@@ -311,41 +335,62 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     if (drag && event.type !== "pointercancel") continueMomentum(drag.velocityX, drag.velocityY);
   }
 
-  /** Resizes from the hidden corner handle without showing the browser's default corner glyph. */
-  function startResizing(event: ReactPointerEvent<HTMLDivElement>): void {
+  /** Starts a resize while preserving the opposite edge of the panel. */
+  function startResizing(event: ReactPointerEvent<HTMLDivElement>, direction: ResizeDirection): void {
     const panel = panelRef.current;
     if (!panel) return;
 
     const rect = panel.getBoundingClientRect();
-    const anchoredRight = panel.style.right !== "auto";
-    const anchoredBottom = panel.style.bottom !== "auto";
     window.cancelAnimationFrame(momentumFrameRef.current);
     resizeRef.current = {
+      direction,
       height: rect.height,
-      maxHeight: anchoredBottom ? window.innerHeight - 16 : window.innerHeight - rect.top - 8,
-      maxWidth: anchoredRight ? window.innerWidth - 16 : window.innerWidth - rect.left - 8,
-      minHeight: Math.min(rect.height, 180),
+      left: rect.left,
+      top: rect.top,
       width: rect.width,
       x: event.clientX,
       y: event.clientY,
     };
+    panel.style.left = `${rect.left}px`;
+    panel.style.top = `${rect.top}px`;
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   }
 
-  /** Applies the current pointer distance to the panel's explicit width and height. */
+  /** Applies pointer movement to the selected edges without letting the panel leave the viewport. */
   function resizePanel(event: ReactPointerEvent<HTMLDivElement>): void {
     const resize = resizeRef.current;
     const panel = panelRef.current;
     if (!resize || !panel) return;
 
-    const width = Math.min(resize.maxWidth, Math.max(300, resize.width + event.clientX - resize.x));
-    const height = Math.min(resize.maxHeight, Math.max(resize.minHeight, resize.height + event.clientY - resize.y));
+    const right = resize.left + resize.width;
+    const bottom = resize.top + resize.height;
+    const resizesWest = resize.direction.includes("w");
+    const resizesEast = resize.direction.includes("e");
+    const resizesNorth = resize.direction.includes("n");
+    const resizesSouth = resize.direction.includes("s");
+    const width = resizesWest
+      ? Math.min(right - 8, Math.max(MIN_PANEL_WIDTH, resize.width + resize.x - event.clientX))
+      : resizesEast
+        ? Math.min(window.innerWidth - resize.left - 8, Math.max(MIN_PANEL_WIDTH, resize.width + event.clientX - resize.x))
+        : resize.width;
+    const height = resizesNorth
+      ? Math.min(bottom - 8, Math.max(MIN_PANEL_HEIGHT, resize.height + resize.y - event.clientY))
+      : resizesSouth
+        ? Math.min(window.innerHeight - resize.top - 8, Math.max(MIN_PANEL_HEIGHT, resize.height + event.clientY - resize.y))
+        : resize.height;
+    const left = resizesWest ? right - width : resize.left;
+    const top = resizesNorth ? bottom - height : resize.top;
+
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
     panel.style.width = `${width}px`;
     panel.style.height = `${height}px`;
   }
 
-  /** Ends a corner resize and releases the pointer so other panel interactions resume normally. */
+  /** Ends an edge or corner resize and returns pointer control to the rest of the panel. */
   function stopResizing(event: ReactPointerEvent<HTMLDivElement>): void {
     resizeRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -585,6 +630,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           onDragLeave={endFileDrag}
           onDragOver={(event) => event.preventDefault()}
           onDrop={dropAttachments}
+          style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
         >
           <div
             className="question-panel-header"
@@ -668,26 +714,31 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             <input
               accept="image/*,application/pdf,text/*,.csv,.ts,.tsx,.js,.jsx,.json,.md,.py"
               className="attachment-picker"
+              id="chat-attachment-picker"
               multiple
               onChange={selectAttachments}
-              ref={attachmentInputRef}
               type="file"
             />
-            <button aria-label="Attach files" className="attach-file" onClick={() => attachmentInputRef.current?.click()} type="button">
+            <label aria-label="Attach files" className="attach-file" htmlFor="chat-attachment-picker">
               <Paperclip size={14} />
-            </button>
+            </label>
             <button className="ask-submit" disabled={loading || !question.trim()}>
               {loading ? "Thinking…" : <><span>Ask</span><CornerDownLeft size={13} /></>}
             </button>
           </form>
-          <div
-            aria-hidden="true"
-            className="question-panel-resize"
-            onPointerCancel={stopResizing}
-            onPointerDown={startResizing}
-            onPointerMove={resizePanel}
-            onPointerUp={stopResizing}
-          />
+          <div aria-hidden="true" className="question-panel-resize-handles">
+            {RESIZE_DIRECTIONS.map((direction) => (
+              <div
+                className="question-panel-resize"
+                data-direction={direction}
+                key={direction}
+                onPointerCancel={stopResizing}
+                onPointerDown={(event) => startResizing(event, direction)}
+                onPointerMove={resizePanel}
+                onPointerUp={stopResizing}
+              />
+            ))}
+          </div>
         </aside>
       )}
     </>

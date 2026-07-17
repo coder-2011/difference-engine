@@ -9,3 +9,10 @@
 # Pull request workspace
 
 - [x] Show GitHub PR state and actions, including merge and ready-for-review controls.
+- [x] Show the actual GitHub commit history at the top of PR conversation.
+
+# Diff chat controls
+
+- [x] Make the floating chat resize from every edge and corner without a visible resize glyph.
+- [x] Let Command-Plus enlarge focused chat text or unfocused code text.
+- [x] Map CUDA source and headers to the C++ syntax grammar in the parser and renderer.

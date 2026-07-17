@@ -2,6 +2,7 @@
 
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs";
+import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 
 type ParseRequest = {
   cacheKey: string;
@@ -12,6 +13,8 @@ type ParseResponse = {
   error?: string;
   files?: FileDiffMetadata[];
 };
+
+configureDiffHighlighting();
 
 /** Fetches and parses a full patch away from the interactive browser thread. */
 async function parseDiff(event: MessageEvent<ParseRequest>): Promise<void> {

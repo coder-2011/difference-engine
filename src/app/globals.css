@@ -1266,6 +1266,58 @@ button {
   overflow-y: auto;
 }
 
+.pr-commit-list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  border: 1px solid #29292d;
+  border-radius: 6px;
+  background: #121214;
+  overflow: hidden;
+}
+
+.pr-commit-list > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-bottom: 1px solid #29292d;
+  color: #b9b6c1;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pr-commit {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 8px;
+}
+
+.pr-commit + .pr-commit {
+  border-top: 1px solid #252529;
+}
+
+.pr-commit-message {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #d2d2d6;
+  font-size: 10px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-commit-meta {
+  flex: none;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .pr-comment {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
@@ -1918,6 +1970,7 @@ button {
 }
 
 .question-panel {
+  --chat-font-size: 12px;
   position: fixed;
   z-index: 90;
   right: 16px;
@@ -1927,7 +1980,7 @@ button {
   max-width: calc(100vw - 16px);
   width: min(380px, calc(100vw - 32px));
   min-width: 300px;
-  min-height: 0;
+  min-height: 120px;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid #343438;
@@ -1936,17 +1989,54 @@ button {
   box-shadow: 0 24px 80px rgb(0 0 0 / 0.55);
 }
 
-/* Keeps resizing available without adding a visible corner decoration to the panel. */
+/* Preserves a clean panel edge while accepting all edge and corner resize gestures. */
+.question-panel-resize-handles {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+
 .question-panel-resize {
   position: absolute;
-  z-index: 2;
-  right: 0;
-  bottom: 0;
-  width: 12px;
-  height: 12px;
-  cursor: nwse-resize;
+  pointer-events: auto;
   touch-action: none;
 }
+
+.question-panel-resize[data-direction="n"],
+.question-panel-resize[data-direction="s"] {
+  right: 12px;
+  left: 12px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.question-panel-resize[data-direction="n"] { top: 0; }
+.question-panel-resize[data-direction="s"] { bottom: 0; }
+
+.question-panel-resize[data-direction="e"],
+.question-panel-resize[data-direction="w"] {
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.question-panel-resize[data-direction="e"] { right: 0; }
+.question-panel-resize[data-direction="w"] { left: 0; }
+
+.question-panel-resize[data-direction="nw"],
+.question-panel-resize[data-direction="se"],
+.question-panel-resize[data-direction="ne"],
+.question-panel-resize[data-direction="sw"] {
+  width: 12px;
+  height: 12px;
+}
+
+.question-panel-resize[data-direction="nw"] { top: 0; left: 0; cursor: nwse-resize; }
+.question-panel-resize[data-direction="se"] { right: 0; bottom: 0; cursor: nwse-resize; }
+.question-panel-resize[data-direction="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+.question-panel-resize[data-direction="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
 
 .question-panel.dragging-files::before {
   position: absolute;
@@ -1959,7 +2049,7 @@ button {
   background: rgb(28 24 36 / 0.9);
   color: #d7caff;
   content: "Drop files to attach";
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.92);
   font-weight: 570;
   pointer-events: none;
 }
@@ -1985,7 +2075,7 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.92);
   font-weight: 570;
 }
 
@@ -2024,7 +2114,7 @@ button {
   background: #0d0d0e;
   color: #78787e;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
   line-height: 1.45;
   white-space: pre-wrap;
 }
@@ -2073,7 +2163,7 @@ button {
   min-width: 0;
   overflow: hidden;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--chat-font-size);
   font-weight: 680;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -2094,7 +2184,7 @@ button {
   background: transparent;
   color: #bba8ef;
   cursor: pointer;
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2108,7 +2198,7 @@ button {
   margin: -4px 0 7px;
   color: #9d91ba;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
   overflow-wrap: anywhere;
 }
 
@@ -2121,7 +2211,7 @@ button {
 
 .chat-markdown {
   color: #ceced2;
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.92);
   line-height: 1.58;
 }
 
@@ -2145,7 +2235,7 @@ button {
 .chat-markdown h3 {
   margin: 14px 0 7px;
   color: #e2e1e6;
-  font-size: 13px;
+  font-size: calc(var(--chat-font-size) * 1.08);
   line-height: 1.35;
 }
 
@@ -2167,7 +2257,7 @@ button {
   background: #202023;
   color: #ddd7ef;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(var(--chat-font-size) * 0.84);
 }
 
 .chat-markdown pre {
@@ -2192,7 +2282,7 @@ button {
 .chat-turn > p {
   margin: 0;
   color: #94919a;
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.92);
 }
 
 .question-panel form {
@@ -2227,7 +2317,7 @@ button {
   background: #1c1921;
   color: #c7bddc;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
 }
 
 .attachment-chip > span {
@@ -2239,7 +2329,7 @@ button {
 
 .attachment-chip small {
   color: #767180;
-  font-size: 8px;
+  font-size: calc(var(--chat-font-size) * 0.67);
 }
 
 .attachment-chip button,
@@ -2267,7 +2357,7 @@ button {
 .attachment-error {
   margin: 0;
   color: #dc949a;
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
 }
 
 .attachment-picker {
@@ -2298,11 +2388,13 @@ button {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
+  padding: 2px 0;
+  box-sizing: border-box;
   min-width: 0;
   color: #5f5f65;
-  font-size: 12px;
+  font-size: var(--chat-font-size);
   line-height: 1.45;
   pointer-events: none;
 }
@@ -2325,14 +2417,14 @@ button {
   background: rgb(38 38 42 / 0.72);
   color: #8f8f98;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(var(--chat-font-size) * 0.75);
   line-height: 1;
   box-shadow: inset 0 1px rgb(255 255 255 / 0.04);
 }
 
 .question-suggestion kbd b {
   color: #b6a6e6;
-  font-size: 12px;
+  font-size: var(--chat-font-size);
   font-weight: 500;
   line-height: 0.8;
 }
@@ -2376,12 +2468,13 @@ button {
 
 .question-panel textarea {
   min-height: 48px;
+  padding: 2px 0;
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--chat-font-size);
   line-height: 1.45;
 }
 
@@ -2397,7 +2490,7 @@ button {
   background: #eeeef0;
   color: #111112;
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(var(--chat-font-size) * 0.84);
   font-weight: 620;
 }
 

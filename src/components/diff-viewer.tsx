@@ -7,7 +7,9 @@ import { CodeView } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronDown, ChevronRight, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
 const SelectionQuestion = dynamic(
@@ -24,6 +26,10 @@ type DiffViewerProps = {
 };
 
 const EMPTY_FILES: FileDiffMetadata[] = [];
+const DEFAULT_CODE_FONT_SIZE = 13;
+const MAX_CODE_FONT_SIZE = 24;
+
+configureDiffHighlighting();
 
 /** Maps Diffs' change vocabulary onto Trees' git-status vocabulary. */
 function gitStatusForFile(file: FileDiffMetadata): GitStatus {
@@ -40,6 +46,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
   const [split, setSplit] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
 
@@ -95,6 +102,22 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     const path = selectedPaths.at(-1);
     if (!path) return;
     viewerRef.current?.scrollTo({ type: "item", id: path, align: "start", behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    /** Enlarges code only when the keyboard focus is outside the Ask Diffs panel. */
+    function increaseCodeFont(event: KeyboardEvent): void {
+      const target = event.target;
+      const isChatTarget = target instanceof Element && Boolean(target.closest(".question-panel"));
+      const isCommandPlus = event.metaKey && !event.altKey && !event.ctrlKey && (event.key === "+" || event.key === "=");
+
+      if (!isCommandPlus || isChatTarget) return;
+      event.preventDefault();
+      setCodeFontSize((size) => Math.min(size + 1, MAX_CODE_FONT_SIZE));
+    }
+
+    window.addEventListener("keydown", increaseCodeFont);
+    return () => window.removeEventListener("keydown", increaseCodeFont);
   }, []);
 
   const { model } = useFileTree({
@@ -172,7 +195,11 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
             <FileTree model={model} aria-label="Changed files" />
           </aside>
         )}
-        <div className="code-view-shell" data-diff-selection-root>
+        <div
+          className="code-view-shell"
+          data-diff-selection-root
+          style={{ "--diffs-font-size": `${codeFontSize}px` } as CSSProperties}
+        >
           <CodeView
             ref={viewerRef}
             items={items}

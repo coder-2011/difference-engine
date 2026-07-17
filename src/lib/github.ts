@@ -2,6 +2,7 @@ import type {
   DiffDocument,
   PullRequestAction,
   PullRequestComment,
+  PullRequestCommit,
   PullRequestMergeMethod,
   PullRequestSummary,
   PullRequestWorkflowRun,
@@ -38,6 +39,11 @@ type PullRequestStatus = PullRequestSummary["status"];
 
 type PullRequestConversation = {
   comments: PullRequestComment[];
+  unavailable: boolean;
+};
+
+type PullRequestCommitList = {
+  commits: PullRequestCommit[];
   unavailable: boolean;
 };
 
@@ -81,6 +87,15 @@ type PullRequestReviewComment = {
   id: number;
   path: string;
   user: GitHubUser;
+};
+
+type PullRequestCommitRecord = {
+  author: GitHubUser | null;
+  commit: {
+    author: { name: string } | null;
+    message: string;
+  };
+  sha: string;
 };
 
 type WorkflowRun = {
@@ -431,6 +446,25 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
   };
 }
 
+/** Maps GitHub's nested commit response into the compact PR conversation record. */
+function summarizePullRequestCommit(commit: PullRequestCommitRecord): PullRequestCommit {
+  return {
+    author: commit.author?.login ?? commit.commit.author?.name ?? "Unknown author",
+    message: commit.commit.message,
+    sha: commit.sha,
+  };
+}
+
+/** Loads the recent commit history without preventing the rest of the PR workspace from rendering. */
+async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestCommitList> {
+  try {
+    const commits = await githubNewestItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token, 100);
+    return { commits: commits.map(summarizePullRequestCommit), unavailable: false };
+  } catch {
+    return { commits: [], unavailable: true };
+  }
+}
+
 /** Loads the authenticated conversation records shown in the PR workspace. */
 async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestConversation> {
   // Preserve available records while telling the UI when GitHub could not provide the full conversation.
@@ -555,8 +589,9 @@ function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequest
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
-  const [conversation, { capabilities, workflowRuns }] = await Promise.all([
+  const [conversation, commits, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
+    getPullRequestCommits(parsed, token),
     getPullRequestControls(parsed, pullRequest, token),
   ]);
   const state = pullRequest.merged ? "merged" : pullRequest.state;
@@ -568,6 +603,8 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
     comments: conversation.comments,
+    commits: commits.commits,
+    commitsUnavailable: commits.unavailable,
     conversationUnavailable: conversation.unavailable,
     draft: pullRequest.draft,
     hasGitHubAccess: Boolean(token),

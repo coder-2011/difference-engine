@@ -36,6 +36,12 @@ export type PullRequestComment = {
   key: string;
 };
 
+export type PullRequestCommit = {
+  author: string;
+  message: string;
+  sha: string;
+};
+
 export type PullRequestMergeMethod = "merge" | "rebase" | "squash";
 
 export type PullRequestWorkflowRun = {
@@ -53,6 +59,8 @@ export type PullRequestWorkspace = {
   canMarkReady: boolean;
   canMerge: boolean;
   comments: PullRequestComment[];
+  commits: PullRequestCommit[];
+  commitsUnavailable: boolean;
   conversationUnavailable: boolean;
   draft: boolean;
   hasGitHubAccess: boolean;

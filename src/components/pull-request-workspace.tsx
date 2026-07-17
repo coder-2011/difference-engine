@@ -2,7 +2,7 @@
 
 import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, GitPullRequest, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
@@ -60,6 +60,11 @@ const CELEBRATION_PARTICLES: readonly Particle[] = [
 /** Formats a GitHub timestamp in the compact form used inside conversation rows. */
 function commentDate(value: string): string {
   return DATE_FORMAT.format(new Date(value));
+}
+
+/** Keeps multiline commit bodies readable in the compact PR conversation timeline. */
+function commitSummary(message: string): string {
+  return message.split("\n", 1)[0] ?? "Untitled commit";
 }
 
 /** Selects the first GitHub-enabled merge method, preferring the common squash flow. */
@@ -187,6 +192,18 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
         )}
 
         <div className="pr-comment-list">
+          {workspace.commits.length > 0 && (
+            <section className="pr-commit-list" aria-label="Pull request commits">
+              <header><GitCommitHorizontal size={13} /> <span>{workspace.commits.length === 1 ? "1 commit" : `${workspace.commits.length} commits`}</span></header>
+              {workspace.commits.map((commit) => (
+                <article className="pr-commit" key={commit.sha}>
+                  <span className="pr-commit-message" title={commit.message}>{commitSummary(commit.message)}</span>
+                  <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}</span>
+                </article>
+              ))}
+            </section>
+          )}
+          {workspace.commitsUnavailable && <p className="pr-conversation-note">Commit history may be incomplete.</p>}
           {workspace.comments.length ? workspace.comments.map((entry) => (
             <article className="pr-comment" key={entry.key}>
               <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
