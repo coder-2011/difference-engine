@@ -2,7 +2,7 @@
 
 import type { CSSProperties, FormEvent } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
@@ -33,9 +33,11 @@ const DATE_FORMAT = new Intl.DateTimeFormat("en", { day: "numeric", month: "shor
 const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
+  "edit-body": "Pull request body updated on GitHub.",
   merge: "Pull request merged on GitHub.",
   ready: "Pull request marked ready for review on GitHub.",
 };
+const PR_STATES_BLOCK = /<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/;
 const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "0ms", drift: "-30px", duration: "2680ms", left: "4%", size: 9 },
   { color: "#79aeb0", delay: "120ms", drift: "24px", duration: "2820ms", left: "9%", size: 10 },
@@ -88,8 +90,10 @@ function openPullRequestState(workspace: PullRequestWorkspace): string {
 }
 
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
-export function PullRequestWorkspace({ description, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
+export function PullRequestWorkspace({ description: initialBody, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [body, setBody] = useState(initialBody ?? "");
+  const [bodyDraft, setBodyDraft] = useState<string>();
   const [comment, setComment] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
   const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
@@ -100,6 +104,8 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
   const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
   const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
   const openState = openPullRequestState(workspace);
+  // Hide automation metadata in rendered prose while retaining it in the editable GitHub body.
+  const visibleBody = body.replace(PR_STATES_BLOCK, "").trim();
 
   useEffect(() => {
     if (!celebrating) return;
@@ -151,13 +157,61 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
     if (await runAction({ action: "comment", body: comment })) setComment("");
   }
 
+  /** Saves the complete Markdown body to GitHub and updates the rendered description only after confirmation. */
+  async function submitBody(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (bodyDraft === undefined || bodyDraft === body || pendingAction) return;
+
+    const savedBody = bodyDraft;
+    if (!await runAction({ action: "edit-body", body: savedBody })) return;
+
+    setBody(savedBody);
+    setBodyDraft(undefined);
+  }
+
   return (
-    <section className={`pr-workspace ${description ? "has-description" : ""}`}>
-      {description && (
+    <section className={`pr-workspace ${visibleBody ? "has-description" : ""}`}>
+      {visibleBody && (
         <details className="pr-description" open>
           <summary>Pull request description</summary>
-          <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
+          <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>
         </details>
+      )}
+
+      {bodyDraft !== undefined && (
+        <div aria-labelledby="pr-body-editor-title" aria-modal="true" className="pr-body-editor" role="dialog">
+          <form onSubmit={submitBody}>
+            <header className="pr-body-editor-header">
+              <div>
+                <strong id="pr-body-editor-title">Edit pull request body</strong>
+                <span>GitHub Markdown</span>
+              </div>
+              <div className="pr-body-editor-actions">
+                <button disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(undefined)} type="button">Cancel</button>
+                <button className="save" disabled={bodyDraft === body || Boolean(pendingAction)} type="submit">Save to GitHub</button>
+              </div>
+            </header>
+            <div className="pr-body-editor-panes">
+              <label className="pr-body-editor-pane">
+                <span>Markdown</span>
+                <textarea
+                  aria-label="Pull request body Markdown"
+                  autoFocus
+                  disabled={Boolean(pendingAction)}
+                  onChange={(event) => setBodyDraft(event.target.value)}
+                  spellCheck
+                  value={bodyDraft}
+                />
+              </label>
+              <section aria-label="Markdown preview" className="pr-body-editor-pane pr-body-editor-preview">
+                <span>Preview</span>
+                <div className="markdown-body">
+                  {bodyDraft ? <GitHubMarkdown>{bodyDraft}</GitHubMarkdown> : <p className="pr-body-editor-empty">Nothing to preview.</p>}
+                </div>
+              </section>
+            </div>
+          </form>
+        </div>
       )}
 
       <aside className="pr-conversation" aria-label="Pull request conversation">
@@ -232,9 +286,10 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
 
         {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
+            {(workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
+              {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">

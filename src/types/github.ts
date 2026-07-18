@@ -55,6 +55,7 @@ export type PullRequestWorkflowRun = {
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
+  canEditBody: boolean;
   canManageMerge: boolean;
   canMarkReady: boolean;
   canMerge: boolean;
@@ -72,5 +73,6 @@ export type PullRequestWorkspace = {
 export type PullRequestAction =
   | { action: "comment"; body: string }
   | { action: "close" }
+  | { action: "edit-body"; body: string }
   | { action: "merge"; method: PullRequestMergeMethod }
   | { action: "ready" };

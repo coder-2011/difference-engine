@@ -599,6 +599,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: Boolean(token) && !pullRequest.locked,
+    canEditBody: Boolean(capabilities?.viewerCanUpdate),
     canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
@@ -649,6 +650,13 @@ export async function performPullRequestAction(source: string[], token: string |
   }
 
   const { capabilities, pullRequest } = await currentPullRequest(parsed, accessToken);
+
+  if (action.action === "edit-body") {
+    if (!capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request body to be edited", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { body: action.body });
+  }
 
   if (action.action === "close") {
     if (pullRequest.state !== "open" || pullRequest.merged || !capabilities?.viewerCanClose) {

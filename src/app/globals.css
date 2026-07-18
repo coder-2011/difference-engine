@@ -1468,6 +1468,7 @@ button {
 }
 
 .pr-comment-form button,
+.edit-pr-button,
 .merge-button,
 .ready-review-button,
 .close-pr-button {
@@ -1491,6 +1492,7 @@ button {
 }
 
 .pr-comment-form button:disabled,
+.edit-pr-button:disabled,
 .merge-button:disabled,
 .ready-review-button:disabled,
 .close-pr-button:disabled {
@@ -1694,6 +1696,17 @@ button {
   color: #07130b;
 }
 
+.edit-pr-button {
+  height: 30px;
+  padding: 0 9px;
+  background: #252527;
+  color: #d4d4d8;
+}
+
+.edit-pr-button:hover {
+  background: #303034;
+}
+
 .merge-control select + .merge-button {
   border-radius: 0 6px 6px 0;
 }
@@ -1747,6 +1760,139 @@ button {
   color: #dc949a;
 }
 
+.pr-body-editor {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  background: #0b0b09;
+}
+
+.pr-body-editor form {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+}
+
+.pr-body-editor-header {
+  display: flex;
+  min-height: 54px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #11110e;
+}
+
+.pr-body-editor-header > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pr-body-editor-header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-body-editor-header span,
+.pr-body-editor-pane > span {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pr-body-editor-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.pr-body-editor-actions button {
+  height: 31px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #1c1c1c;
+  color: #c9c9cd;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pr-body-editor-actions .save {
+  border-color: #315c45;
+  background: #1d9b56;
+  color: #07130b;
+}
+
+.pr-body-editor-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pr-body-editor-panes {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.pr-body-editor-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  margin: 0;
+}
+
+.pr-body-editor-pane > span {
+  flex: none;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: #10100e;
+}
+
+.pr-body-editor-pane textarea {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  resize: none;
+  padding: 16px;
+  border: 0;
+  outline: 0;
+  background: #0b0b0a;
+  color: #d4d4d8;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.pr-body-editor-preview {
+  border-top: 1px solid var(--line);
+  background: #0f0f0d;
+}
+
+.pr-body-editor-preview .markdown-body {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+  padding: 12px 16px 24px;
+}
+
+.pr-body-editor-empty {
+  color: var(--faint);
+}
+
 .merge-celebration {
   position: absolute;
   z-index: 5;
@@ -1782,6 +1928,16 @@ button {
 }
 
 @media (min-width: 900px) {
+  .pr-body-editor-panes {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .pr-body-editor-preview {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+
   .pr-workspace.has-description {
     display: grid;
     align-items: start;

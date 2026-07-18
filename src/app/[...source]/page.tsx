@@ -84,7 +84,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
 
         {document.pullRequest ? (
-          <PullRequestWorkspace key={source.join("/")} description={description} source={source} workspace={document.pullRequest} />
+          <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
         ) : description && (
           <details className="pr-description" open>
             <summary>Pull request description</summary>
