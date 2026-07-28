@@ -26,8 +26,15 @@ type Point = {
 };
 
 type CodeSelection = Point & {
+  location?: CodeSelectionLocation;
   range?: Range;
   text: string;
+};
+
+type CodeSelectionLocation = {
+  id: string;
+  lineNumber: number;
+  side?: "additions" | "deletions";
 };
 
 type SelectionState = CodeSelection & {
@@ -57,6 +64,7 @@ type ResizeState = Point & {
 };
 
 type SelectionQuestionProps = {
+  onRevealSelection: (location: CodeSelectionLocation) => void;
   source: string[];
 };
 
@@ -94,8 +102,23 @@ function PromptPreview({ question }: PromptPreviewProps) {
   );
 }
 
+/** Extracts Pierre's stable file and line coordinates from a browser text range. */
+function selectionLocation(range: Range): CodeSelectionLocation | undefined {
+  const root = range.startContainer.getRootNode();
+  const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const line = element?.closest("[data-line]");
+  const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
+  const lineNumber = Number(line?.getAttribute("data-line"));
+  if (!id || !Number.isInteger(lineNumber)) return undefined;
+
+  const lineType = line?.getAttribute("data-line-type");
+  if (lineType === "change-addition") return { id, lineNumber, side: "additions" };
+  if (lineType === "change-deletion") return { id, lineNumber, side: "deletions" };
+  return { id, lineNumber };
+}
+
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ source }: SelectionQuestionProps) {
+export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -136,7 +159,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         return;
       }
 
-      const range = browserSelection.getRangeAt(0);
+      const range = browserSelection.getRangeAt(0).cloneRange();
       const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
@@ -146,7 +169,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      const nextSelection = { range: range.cloneRange(), text, x, y };
+      const nextSelection = { location: selectionLocation(range), range, text, x, y };
       setSelection((current) => current?.open
         ? { ...current, pending: nextSelection }
         : { ...nextSelection, context: [nextSelection], open: false });
@@ -238,14 +261,15 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   /** Scrolls back to a saved code range and highlights it again in the diff. */
   function showSelection(codeSelection: CodeSelection): void {
     const range = codeSelection.range;
-    const container = range?.commonAncestorContainer;
-    const element = container instanceof Element ? container : container?.parentElement;
-    if (!range || !element?.isConnected) return;
-
-    element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-    const browserSelection = window.getSelection();
-    browserSelection?.removeAllRanges();
-    browserSelection?.addRange(range.cloneRange());
+    const node = range?.startContainer;
+    const element = node instanceof Element ? node : node?.parentElement;
+    if (range && element?.isConnected) {
+      const browserSelection = window.getSelection();
+      browserSelection?.removeAllRanges();
+      browserSelection?.addRange(range.cloneRange());
+    }
+    if (codeSelection.location) onRevealSelection(codeSelection.location);
+    else element?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   }
 
   /** Closes the panel and clears conversation state tied to the old selection. */

@@ -2143,6 +2143,10 @@ button {
   background: #29282c;
 }
 
+.selection-trigger {
+  z-index: 100;
+}
+
 .ai-chat-launch {
   bottom: 16px;
   left: 16px;
