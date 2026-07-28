@@ -9,7 +9,7 @@ import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
-import { getDiffDocument, GitHubError } from "@/lib/github";
+import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
@@ -36,12 +36,15 @@ export default async function DiffPage({ params }: DiffPageProps) {
     getGitHubAccessToken(),
     isOpenAIConnected(),
   ]);
+  const githubConnected = await isGitHubConnected(accessToken);
+  const githubSignedOut = Boolean(accessToken && !githubConnected);
+  const githubToken = githubConnected ? accessToken : undefined;
   const callbackUrl = `/${source.map(encodeURIComponent).join("/")}`;
 
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken, true);
+    document = await getDiffDocument(source, githubToken, true);
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;
@@ -60,10 +63,13 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
         <div className="diff-nav-actions">
           <OpenAIConnection compact initiallyConnected={openAIConnected} />
-          {!accessToken && (
+          {!githubToken && (
             <form action={login}>
               <input name="callbackUrl" type="hidden" value={callbackUrl} />
-              <button className="github-button" type="submit"><Github size={15} /> Sign in with GitHub</button>
+              <button className="github-button" type="submit">
+                <Github size={15} />
+                {githubSignedOut ? "GitHub signed out · Sign in" : "Sign in with GitHub"}
+              </button>
             </form>
           )}
           <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
