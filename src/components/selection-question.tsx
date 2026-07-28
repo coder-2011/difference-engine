@@ -4,6 +4,7 @@ import { CornerDownLeft, GripHorizontal, Paperclip, Plus, Sparkles, X } from "lu
 import type { CSSProperties } from "react";
 import { ChangeEvent, DragEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
+import { OpenAIConnection } from "@/components/openai-connection";
 import {
   MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_ATTACHMENT_BYTES,
@@ -25,11 +26,12 @@ type Point = {
 };
 
 type CodeSelection = Point & {
+  range?: Range;
   text: string;
 };
 
 type SelectionState = CodeSelection & {
-  context: string[];
+  context: CodeSelection[];
   open: boolean;
   pending?: CodeSelection;
 };
@@ -102,6 +104,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [openAIError, setOpenAIError] = useState("");
   const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -133,7 +136,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         return;
       }
 
-      const rect = browserSelection.getRangeAt(0).getBoundingClientRect();
+      const range = browserSelection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
 
@@ -142,10 +146,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      const nextSelection = { text, x, y };
+      const nextSelection = { range: range.cloneRange(), text, x, y };
       setSelection((current) => current?.open
         ? { ...current, pending: nextSelection }
-        : { ...nextSelection, context: [text], open: false });
+        : { ...nextSelection, context: [nextSelection], open: false });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -219,7 +223,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   function addSelectionToTask(): void {
     setSelection((current) => {
       if (!current?.open || !current.pending) return current;
-      return { ...current, context: [...current.context, current.pending.text], pending: undefined };
+      return { ...current, context: [...current.context, current.pending], pending: undefined };
     });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -229,6 +233,19 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     followsConversationRef.current = true;
     setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /** Scrolls back to a saved code range and highlights it again in the diff. */
+  function showSelection(codeSelection: CodeSelection): void {
+    const range = codeSelection.range;
+    const container = range?.commonAncestorContainer;
+    const element = container instanceof Element ? container : container?.parentElement;
+    if (!range || !element?.isConnected) return;
+
+    element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    const browserSelection = window.getSelection();
+    browserSelection?.removeAllRanges();
+    browserSelection?.addRange(range.cloneRange());
   }
 
   /** Closes the panel and clears conversation state tied to the old selection. */
@@ -476,7 +493,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   async function submitQuestion(value: string): Promise<void> {
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
-    const taskContext = selection.context.join("\n\n");
+    const taskContext = selection.context.map((codeSelection) => codeSelection.text).join("\n\n");
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -533,7 +550,9 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       });
       if (!response.ok || !response.body) {
         const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? "No answer was returned.");
+        const message = body.error ?? "No answer was returned.";
+        if (response.status === 401) setOpenAIError(message);
+        throw new Error(message);
       }
 
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -557,12 +576,13 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         if (done) break;
       }
       flushDelta();
-    } catch {
+    } catch (error) {
       flushDelta();
       if (!controller.signal.aborted && startedTurn) {
+        const message = error instanceof Error ? error.message : "The question could not be answered. Please try again.";
         setTurns((current) => current.map((turn, index) => (
           index === current.length - 1
-            ? { ...turn, answer: turn.answer || "The question could not be answered. Please try again." }
+            ? { ...turn, answer: turn.answer || message }
             : turn
         )));
       }
@@ -643,10 +663,28 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 
+          {openAIError && (
+            <div className="openai-session-error" role="alert">
+              <div>
+                <strong>OpenAI signed out</strong>
+                <span>{openAIError}</span>
+              </div>
+              <OpenAIConnection compact initiallyConnected={false} />
+            </div>
+          )}
+
           {selection.context.length > 0 && (
             <div className="selected-snippet">
-              {selection.context.map((snippet, index) => (
-                <div className="selected-snippet-item" key={`${snippet}-${index}`}>{snippet}</div>
+              {selection.context.map((codeSelection, index) => (
+                <button
+                  className="selected-snippet-item"
+                  key={`${codeSelection.text}-${index}`}
+                  onClick={() => showSelection(codeSelection)}
+                  title="Show this code in the diff"
+                  type="button"
+                >
+                  {codeSelection.text}
+                </button>
               ))}
             </div>
           )}

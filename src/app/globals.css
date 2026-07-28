@@ -2298,10 +2298,57 @@ button {
   white-space: pre-wrap;
 }
 
+.selected-snippet-item {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.selected-snippet-item:hover,
+.selected-snippet-item:focus-visible {
+  color: #bba8ef;
+}
+
 .selected-snippet-item + .selected-snippet-item {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
+}
+
+.openai-session-error {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #71343d;
+  background: #35171d;
+}
+
+.openai-session-error > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.openai-session-error strong {
+  color: #ffb3be;
+  font-size: calc(var(--chat-font-size) * 0.9);
+}
+
+.openai-session-error > div > span {
+  color: #d9909a;
+  font-size: calc(var(--chat-font-size) * 0.75);
 }
 
 .conversation {
