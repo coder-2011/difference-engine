@@ -1017,7 +1017,7 @@ button {
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: text;
+  cursor: pointer;
   text-align: left;
 }
 
