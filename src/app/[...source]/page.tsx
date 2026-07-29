@@ -3,12 +3,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-react";
+import { auth } from "@/auth";
+import { login } from "@/app/actions";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
-import { getDiffDocument, GitHubError } from "@/lib/github";
+import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
@@ -30,16 +32,19 @@ export async function generateMetadata({ params }: DiffPageProps): Promise<Metad
 
 /** Renders GitHub metadata above the virtualized, interactive diff workspace. */
 export default async function DiffPage({ params }: DiffPageProps) {
-  const [{ source }, accessToken, openAIConnected] = await Promise.all([
+  const [{ source }, session, accessToken, openAIConnected] = await Promise.all([
     params,
+    auth(),
     getGitHubAccessToken(),
     isOpenAIConnected(),
   ]);
+  const githubConnected = await isGitHubConnected(accessToken);
+  const githubToken = githubConnected ? accessToken : undefined;
 
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken, Boolean(accessToken));
+    document = await getDiffDocument(source, githubToken, Boolean(githubToken));
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;
@@ -57,6 +62,11 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <Link className="back-link" href="/"><ArrowLeft size={14} /> Pull requests</Link>
         </div>
         <div className="diff-nav-actions">
+          {session?.user && !githubConnected && (
+            <form action={login}>
+              <button className="github-button">GitHub signed out · Sign in</button>
+            </form>
+          )}
           <OpenAIConnection compact initiallyConnected={openAIConnected} />
           <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
             Open on GitHub <ArrowUpRight size={14} />

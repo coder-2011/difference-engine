@@ -19,10 +19,32 @@ type DialogState =
 export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAIConnectionProps) {
   const router = useRouter();
   const [connected, setConnected] = useState(initiallyConnected);
+  const [expired, setExpired] = useState(false);
   const [dialog, setDialog] = useState<DialogState>({ status: "idle" });
   const device = dialog.status === "waiting" ? dialog.device : null;
   const copied = dialog.status === "waiting" && dialog.copied;
   const copiesCode = dialog.status === "waiting" && dialog.copiesCode;
+
+  useEffect(() => {
+    if (!initiallyConnected) return;
+    let cancelled = false;
+
+    /** Checks that the stored refresh session still works before showing it as connected. */
+    async function checkConnection(): Promise<void> {
+      const response = await fetch("/api/auth/openai/status", { method: "POST" }).catch(() => null);
+      if (cancelled || !response?.ok) return;
+
+      const body = await response.json() as { connected?: boolean };
+      if (body.connected) return;
+      setConnected(false);
+      setExpired(true);
+    }
+
+    void checkConnection();
+    return () => {
+      cancelled = true;
+    };
+  }, [initiallyConnected]);
 
   useEffect(() => {
     if (!device) return;
@@ -51,6 +73,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
         if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not finish.");
 
         setConnected(true);
+        setExpired(false);
         setDialog({ status: "idle" });
         router.refresh();
       } catch (pollError) {
@@ -108,6 +131,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
   async function disconnect(): Promise<void> {
     await fetch("/api/auth/openai/logout", { method: "POST" });
     setConnected(false);
+    setExpired(false);
     router.refresh();
   }
 
@@ -134,7 +158,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
       ) : (
         <button className={`openai-button ${compact ? "compact" : ""}`} type="button" onClick={startConnection}>
           <Sparkles size={14} />
-          <span>Connect OpenAI</span>
+          <span>{expired ? "OpenAI signed out · Connect" : "Connect OpenAI"}</span>
         </button>
       )}
 

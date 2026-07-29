@@ -220,6 +220,18 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** Confirms GitHub authentication while treating temporary API failures as an unknown, not a logout. */
+export async function isGitHubConnected(token?: string): Promise<boolean> {
+  if (!token) return false;
+
+  try {
+    await githubResponse("/user", token);
+    return true;
+  } catch (error) {
+    return !(error instanceof GitHubError && error.status === 401);
+  }
+}
+
 /** Reads enough newest items from a chronological GitHub collection to fill the requested window. */
 async function githubNewestItems<T>(path: string, token: string | undefined, limit: number): Promise<T[]> {
   const response = await githubResponse(path, token);
