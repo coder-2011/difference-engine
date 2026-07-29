@@ -144,6 +144,26 @@ type PullRequestMergeResult = {
   message: string;
 };
 
+type PullRequestAgentComment =
+  | { body: string; type: "general" }
+  | {
+      body: string;
+      line: number;
+      path: string;
+      side: "LEFT" | "RIGHT";
+      startLine?: number;
+      startSide?: "LEFT" | "RIGHT";
+      type: "line";
+    };
+
+type PullRequestAgentCommentResult = {
+  line?: number;
+  path?: string;
+  side?: "LEFT" | "RIGHT";
+  type: PullRequestAgentComment["type"];
+  url: string;
+};
+
 type PullRequestFile = {
   filename: string;
   patch?: string;
@@ -719,6 +739,58 @@ async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?:
   if (parsed.kind === "compare") return parsed.value.split("...").at(-1) ?? parsed.value;
   const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
   return pullRequest.head.sha;
+}
+
+/** Posts one model-authored comment to the current PR after validating its GitHub target. */
+export async function postPullRequestAgentComment(
+  source: string[],
+  token: string | undefined,
+  comment: PullRequestAgentComment,
+): Promise<PullRequestAgentCommentResult> {
+  const accessToken = requireGitHubToken(token);
+  const parsed = pullRequestSource(source);
+  const body = comment.body.trim();
+  if (!body || body.length > 65_536) throw new GitHubError("Comments must be between 1 and 65,536 characters", 400);
+
+  let response: Response;
+
+  if (comment.type === "general") {
+    const path = `${parsed.apiPath.replace("/pulls/", "/issues/")}/comments`;
+    response = await githubResponse(path, accessToken, "POST", { body });
+  } else {
+    const path = comment.path.trim();
+    const startLine = comment.startLine;
+    const validLine = Number.isInteger(comment.line) && comment.line > 0;
+    const hasRange = startLine !== undefined || comment.startSide !== undefined;
+    const validRange = !hasRange || (
+      Number.isInteger(startLine)
+      && (startLine ?? 0) > 0
+      && (startLine ?? 0) < comment.line
+      && comment.startSide === comment.side
+    );
+
+    if (!path || path.length > 1_024 || !validLine || !validRange) {
+      throw new GitHubError("The GitHub line-comment target is invalid", 400);
+    }
+
+    const commitId = await getSourceRevision(parsed, accessToken);
+    response = await githubResponse(`${parsed.apiPath}/comments`, accessToken, "POST", {
+      body,
+      commit_id: commitId,
+      line: comment.line,
+      path,
+      side: comment.side,
+      start_line: comment.startLine,
+      start_side: comment.startSide,
+    });
+  }
+
+  const created = await response.json() as { html_url?: unknown };
+  if (typeof created.html_url !== "string") throw new GitHubError("GitHub did not return the created comment", 502);
+
+  return comment.type === "general"
+    ? { type: "general", url: created.html_url }
+    : { line: comment.line, path: comment.path.trim(), side: comment.side, type: "line", url: created.html_url };
 }
 
 /** Extracts unique destination paths from a standard Git patch. */
