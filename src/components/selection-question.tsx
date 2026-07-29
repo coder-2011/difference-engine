@@ -19,6 +19,8 @@ const DEFAULT_CHAT_FONT_SIZE = 12;
 const MAX_CHAT_FONT_SIZE = 22;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
+const STREAM_CHARS_PER_TICK = 24;
+const STREAM_RENDER_INTERVAL = 24;
 const RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const;
 
 type Point = {
@@ -325,9 +327,25 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
       followsConversationRef.current = distanceFromBottom < 24;
     }
 
+    /** Stops bottom-following before an upward wheel gesture can be overwritten by the next token. */
+    function stopFollowingOnWheel(event: WheelEvent): void {
+      if (event.deltaY < 0) followsConversationRef.current = false;
+    }
+
+    /** Gives touch and scrollbar gestures control before incoming text can move the viewport. */
+    function stopFollowingOnPointer(): void {
+      followsConversationRef.current = false;
+    }
+
     updateFollowState();
+    scroller.addEventListener("pointerdown", stopFollowingOnPointer, { passive: true });
     scroller.addEventListener("scroll", updateFollowState, { passive: true });
-    return () => scroller.removeEventListener("scroll", updateFollowState);
+    scroller.addEventListener("wheel", stopFollowingOnWheel, { passive: true });
+    return () => {
+      scroller.removeEventListener("pointerdown", stopFollowingOnPointer);
+      scroller.removeEventListener("scroll", updateFollowState);
+      scroller.removeEventListener("wheel", stopFollowingOnWheel);
+    };
   }, [Boolean(turns.length || loading)]);
 
   /** Opens a draft question for the first selected code block without sending it. */
@@ -619,25 +637,50 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     setLoading(true);
     setSuggestion("");
     let pendingDelta = "";
-    let frame = 0;
+    let flushTimer = 0;
+    let resolveDrain: (() => void) | undefined;
     let startedTurn = false;
+    let streamedSuggestion = "";
 
-    /** Commits streamed text at most once per paint instead of rerendering for every token. */
+    /** Reveals one small text batch, then keeps draining at a stable visual cadence. */
     function flushDelta(): void {
-      if (frame) window.cancelAnimationFrame(frame);
-      frame = 0;
-      if (!pendingDelta) return;
-      const text = pendingDelta;
-      pendingDelta = "";
+      if (flushTimer) window.clearTimeout(flushTimer);
+      flushTimer = 0;
+      // Closing a task discards its buffered tail before a later task can receive it.
+      if (controller.signal.aborted) pendingDelta = "";
+      if (!pendingDelta) {
+        resolveDrain?.();
+        resolveDrain = undefined;
+        return;
+      }
+
+      const text = pendingDelta.slice(0, STREAM_CHARS_PER_TICK);
+      pendingDelta = pendingDelta.slice(text.length);
       setTurns((current) => current.map((turn, index) => (
         index === current.length - 1 ? { ...turn, answer: turn.answer + text } : turn
       )));
+      if (pendingDelta) {
+        flushTimer = window.setTimeout(flushDelta, STREAM_RENDER_INTERVAL);
+      } else {
+        resolveDrain?.();
+        resolveDrain = undefined;
+      }
     }
 
-    /** Coalesces model deltas until the browser is ready to paint them. */
+    /** Buffers irregular model deltas behind the steady visible reveal. */
     function queueDelta(text: string): void {
       pendingDelta += text;
-      if (!frame) frame = window.requestAnimationFrame(flushDelta);
+      if (!flushTimer) flushTimer = window.setTimeout(flushDelta, STREAM_RENDER_INTERVAL);
+    }
+
+    /** Waits for the visible answer to catch up before ending the loading state. */
+    function drainDeltas(): Promise<void> {
+      if (!pendingDelta && !flushTimer) return Promise.resolve();
+
+      return new Promise((resolve) => {
+        resolveDrain = resolve;
+        if (!flushTimer) flushTimer = window.setTimeout(flushDelta, STREAM_RENDER_INTERVAL);
+      });
     }
 
     try {
@@ -688,15 +731,21 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           if (!line) continue;
           const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
           if (event.type === "delta" && event.text) queueDelta(event.text);
-          if (event.type === "suggestion" && event.text) setSuggestion(event.text);
+          if (event.type === "suggestion" && event.text) streamedSuggestion = event.text;
           if (event.type === "error") throw new Error(event.message);
         }
 
         if (done) break;
       }
-      flushDelta();
+      await drainDeltas();
+      if (controller.signal.aborted) return;
+      if (streamedSuggestion) setSuggestion(streamedSuggestion);
     } catch (error) {
-      flushDelta();
+      if (controller.signal.aborted) {
+        window.clearTimeout(flushTimer);
+        return;
+      }
+      await drainDeltas();
       if (!controller.signal.aborted && startedTurn) {
         const message = error instanceof Error ? error.message : "The question could not be answered. Please try again.";
         setTurns((current) => current.map((turn, index) => (
