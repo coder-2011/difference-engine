@@ -1754,23 +1754,91 @@ button {
   align-items: center;
 }
 
-.merge-control select {
+.merge-method-dropdown {
+  position: relative;
+}
+
+.merge-method-trigger {
+  display: inline-flex;
+  width: 78px;
   height: 30px;
-  max-width: 82px;
-  padding: 0 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 0 9px 0 11px;
   border: 1px solid #315c45;
   border-right: 0;
   border-radius: 6px 0 0 6px;
   outline: 0;
   background: #122219;
   color: #a8d7b8;
-  font-family: var(--font-mono);
-  font-size: 9px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.merge-method-trigger[aria-expanded="true"] {
+  border-color: #4b8b68;
+  background: #172b20;
+}
+
+.merge-method-trigger[aria-expanded="true"] svg {
+  rotate: 180deg;
+}
+
+.merge-method-trigger:focus-visible {
+  outline: 2px solid #6bc98d;
+  outline-offset: 2px;
+}
+
+.merge-method-trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.merge-method-menu {
+  position: absolute;
+  z-index: 4;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 104px;
+  padding: 4px;
+  border: 1px solid #315c45;
+  border-radius: 7px;
+  background: #111a14;
+  box-shadow: 0 12px 28px #0009;
+}
+
+.merge-method-option {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #b9d9c4;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.merge-method-option:hover,
+.merge-method-option:focus-visible {
+  outline: 0;
+  background: #20372a;
+  color: #e7f4eb;
 }
 
 .merge-button {
+  width: 68px;
   height: 30px;
-  padding: 0 10px;
+  padding: 0 7px;
   border-radius: 6px;
   background: #1d9b56;
   color: #07130b;
@@ -1787,7 +1855,7 @@ button {
   background: #303034;
 }
 
-.merge-control select + .merge-button {
+.merge-method-dropdown + .merge-button {
   border-radius: 0 6px 6px 0;
 }
 
@@ -2946,8 +3014,8 @@ button {
     gap: 5px;
   }
 
-  .merge-control select {
-    max-width: 70px;
+  .merge-method-trigger {
+    width: 74px;
   }
 
   .pr-ci-summary {

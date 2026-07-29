@@ -1,9 +1,9 @@
 "use client";
 
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
@@ -97,9 +97,12 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [bodyDraft, setBodyDraft] = useState<string>();
   const [comment, setComment] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
+  const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
   const [message, setMessage] = useState<ActionMessage>();
   const [celebrating, setCelebrating] = useState(false);
+  const mergeMenuRef = useRef<HTMLDivElement>(null);
+  const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
   // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
   const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
   const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
@@ -114,6 +117,78 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     const timer = window.setTimeout(() => setCelebrating(false), 3_500);
     return () => window.clearTimeout(timer);
   }, [celebrating]);
+
+  useEffect(() => {
+    if (!mergeMenuOpen) return;
+
+    /** Closes the merge-method menu when the user clicks anywhere outside it. */
+    function closeMergeMenu(event: PointerEvent): void {
+      if (event.target instanceof Node && !mergeMenuRef.current?.contains(event.target)) setMergeMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeMergeMenu);
+    return () => document.removeEventListener("pointerdown", closeMergeMenu);
+  }, [mergeMenuOpen]);
+
+  /** Opens the menu from an arrow key or closes it from its focused trigger. */
+  function handleMergeTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
+    if (event.key === "Escape" && mergeMenuOpen) {
+      event.preventDefault();
+      setMergeMenuOpen(false);
+      return;
+    }
+
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
+    const opensUp = event.key === "ArrowUp";
+    event.preventDefault();
+    setMergeMenuOpen(true);
+    window.setTimeout(() => {
+      const options = mergeMenuRef.current?.querySelectorAll<HTMLButtonElement>(".merge-method-option");
+      const selected = mergeMenuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]');
+      const fallback = opensUp ? options?.item((options?.length ?? 1) - 1) : options?.item(0);
+      (selected ?? fallback)?.focus();
+    }, 0);
+  }
+
+  /** Moves focus through the custom merge options and closes the menu on Escape. */
+  function navigateMergeMenu(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key === "Tab") {
+      setMergeMenuOpen(false);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMergeMenuOpen(false);
+      mergeMethodTriggerRef.current?.focus();
+      return;
+    }
+
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+
+    event.preventDefault();
+    const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".merge-method-option"));
+    const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+    if (!options.length) return;
+
+    let nextIndex = 0;
+    if (event.key === "End" || (event.key === "ArrowUp" && currentIndex < 0)) {
+      nextIndex = options.length - 1;
+    } else if (event.key === "ArrowDown" && currentIndex >= 0) {
+      nextIndex = (currentIndex + 1) % options.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + options.length) % options.length;
+    }
+    options[nextIndex]?.focus();
+  }
+
+  /** Applies one merge method, closes the menu, and returns focus to its trigger. */
+  function chooseMergeMethod(method: PullRequestMergeMethod): void {
+    setMergeMethod(method);
+    setMergeMenuOpen(false);
+    mergeMethodTriggerRef.current?.focus();
+  }
 
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
@@ -295,9 +370,39 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               {workspace.canManageMerge && (
                 <div className="merge-control">
                   {workspace.mergeMethods.length > 1 && (
-                    <select aria-label="Merge method" disabled={Boolean(pendingAction)} onChange={(event) => setMergeMethod(event.target.value as PullRequestMergeMethod)} value={mergeMethod}>
-                      {workspace.mergeMethods.map((method) => <option key={method} value={method}>{method}</option>)}
-                    </select>
+                    <div className="merge-method-dropdown" ref={mergeMenuRef}>
+                      <button
+                        aria-expanded={mergeMenuOpen}
+                        aria-haspopup="menu"
+                        aria-label={`Merge method: ${mergeMethod}`}
+                        className="merge-method-trigger"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => setMergeMenuOpen((open) => !open)}
+                        onKeyDown={handleMergeTriggerKeyDown}
+                        ref={mergeMethodTriggerRef}
+                        type="button"
+                      >
+                        <span>{mergeMethod}</span>
+                        <ChevronDown aria-hidden="true" size={13} />
+                      </button>
+                      {mergeMenuOpen && (
+                        <div aria-label="Merge method" className="merge-method-menu" onKeyDown={navigateMergeMenu} role="menu">
+                          {workspace.mergeMethods.map((method) => (
+                            <button
+                              aria-checked={method === mergeMethod}
+                              className="merge-method-option"
+                              key={method}
+                              onClick={() => chooseMergeMethod(method)}
+                              role="menuitemradio"
+                              type="button"
+                            >
+                              <span>{method}</span>
+                              {method === mergeMethod && <Check aria-hidden="true" size={12} />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                   <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button"><Sparkles size={13} /> Merge</button>
                 </div>
