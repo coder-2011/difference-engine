@@ -34,6 +34,7 @@ const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
   "edit-body": "Pull request body updated on GitHub.",
+  "edit-title": "Pull request title updated on GitHub.",
   merge: "Pull request merged on GitHub.",
   ready: "Pull request marked ready for review on GitHub.",
 };

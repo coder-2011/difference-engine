@@ -8,6 +8,7 @@ import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
+import { PullRequestTitle } from "@/components/pull-request-title";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
 import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
@@ -80,7 +81,9 @@ export default async function DiffPage({ params }: DiffPageProps) {
 
       <section className="pr-header">
         <div className="pr-repo"><FileCode2 size={14} /> {document.repository}</div>
-        <h1>{document.title}</h1>
+        {document.pullRequest?.canEditTitle
+          ? <PullRequestTitle initialTitle={document.title} source={source} />
+          : <h1>{document.title}</h1>}
         <div className="pr-byline">
           {document.avatarUrl && <Image className="avatar" src={document.avatarUrl} alt="" width={22} height={22} />}
           <strong>{document.author}</strong>

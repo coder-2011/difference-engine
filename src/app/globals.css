@@ -1008,6 +1008,63 @@ button {
   line-height: 1.16;
 }
 
+.pr-title-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  text-align: left;
+}
+
+.pr-title-button svg {
+  flex: none;
+  color: var(--faint);
+  opacity: 0.55;
+}
+
+.pr-title-button:hover svg,
+.pr-title-button:focus-visible svg {
+  color: var(--text);
+  opacity: 1;
+}
+
+.pr-title-button:focus-visible {
+  outline: 1px solid #54545a;
+  outline-offset: 5px;
+}
+
+.pr-title-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pr-title-editor input {
+  min-width: 0;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid #54545a;
+  border-radius: 6px;
+  outline: 0;
+  background: #111112;
+  color: var(--text);
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: 570;
+  letter-spacing: -0.04em;
+}
+
+.pr-title-error {
+  grid-column: 1 / -1;
+  color: #dc949a;
+  font-size: 10px;
+}
+
 .pr-byline {
   gap: 7px;
   margin-top: 15px;
@@ -1839,6 +1896,7 @@ button {
   gap: 8px;
 }
 
+.pr-title-editor button,
 .pr-body-editor-actions button {
   height: 31px;
   padding: 0 11px;
@@ -1851,12 +1909,14 @@ button {
   font-weight: 600;
 }
 
+.pr-title-editor .save,
 .pr-body-editor-actions .save {
   border-color: #315c45;
   background: #1d9b56;
   color: #07130b;
 }
 
+.pr-title-editor button:disabled,
 .pr-body-editor-actions button:disabled {
   cursor: default;
   opacity: 0.45;
@@ -2853,6 +2913,15 @@ button {
   .pr-header {
     width: calc(100% - 28px);
     padding-top: 28px;
+  }
+
+  .pr-title-editor {
+    grid-template-columns: auto auto;
+  }
+
+  .pr-title-editor input {
+    width: 100%;
+    grid-column: 1 / -1;
   }
 
   .branch-pair {

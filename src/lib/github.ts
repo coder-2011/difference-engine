@@ -612,6 +612,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: Boolean(token) && !pullRequest.locked,
     canEditBody: Boolean(capabilities?.viewerCanUpdate),
+    canEditTitle: Boolean(capabilities?.viewerCanUpdate),
     canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
@@ -662,6 +663,15 @@ export async function performPullRequestAction(source: string[], token: string |
   }
 
   const { capabilities, pullRequest } = await currentPullRequest(parsed, accessToken);
+
+  if (action.action === "edit-title") {
+    const title = action.title.trim();
+    if (!title || title.length > 256) throw new GitHubError("Pull request titles must be between 1 and 256 characters", 400);
+    if (!capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request title to be edited", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { title });
+  }
 
   if (action.action === "edit-body") {
     if (!capabilities?.viewerCanUpdate) {
