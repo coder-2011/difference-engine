@@ -1,8 +1,9 @@
 "use client";
 
+import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 import { CornerDownLeft, GripHorizontal, Paperclip, Plus, Sparkles, X } from "lucide-react";
-import type { CSSProperties } from "react";
-import { ChangeEvent, DragEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
+import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import {
@@ -78,6 +79,16 @@ type PromptPreviewProps = {
   question: string;
 };
 
+type SelectedSnippetProps = {
+  codeSelection: CodeSelection;
+  onShow: (selection: CodeSelection) => void;
+};
+
+type SnippetToken = {
+  color?: string;
+  content: string;
+};
+
 /** Renders a readable prompt preview that expands only when it exceeds two lines. */
 function PromptPreview({ question }: PromptPreviewProps) {
   const [expanded, setExpanded] = useState(false);
@@ -104,6 +115,23 @@ function PromptPreview({ question }: PromptPreviewProps) {
   );
 }
 
+/** Returns the actual range inside Pierre's shadow root instead of the document-level host boundary. */
+function selectedRange(browserSelection: Selection, origin?: EventTarget): Range | undefined {
+  const node = origin instanceof Node ? origin : browserSelection.anchorNode;
+  const root = node?.getRootNode();
+  if (!(root instanceof ShadowRoot)) {
+    return browserSelection.rangeCount ? browserSelection.getRangeAt(0).cloneRange() : undefined;
+  }
+
+  const composedRange = browserSelection.getComposedRanges({ shadowRoots: [root] })[0];
+  if (!composedRange) return undefined;
+
+  const range = document.createRange();
+  range.setStart(composedRange.startContainer, composedRange.startOffset);
+  range.setEnd(composedRange.endContainer, composedRange.endOffset);
+  return range;
+}
+
 /** Extracts Pierre's stable file and line coordinates from a browser text range. */
 function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const root = range.startContainer.getRootNode();
@@ -117,6 +145,70 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   if (lineType === "change-addition") return { id, lineNumber, side: "additions" };
   if (lineType === "change-deletion") return { id, lineNumber, side: "deletions" };
   return { id, lineNumber };
+}
+
+/** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
+function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
+  const [active, setActive] = useState(false);
+  const [tokens, setTokens] = useState<SnippetToken[][]>();
+
+  useEffect(() => {
+    if (!active || tokens || !codeSelection.location) return;
+
+    let cancelled = false;
+    const language = getFiletypeFromFileName(codeSelection.location.id);
+    void getSharedHighlighter({
+      langs: [language],
+      preferredHighlighter: "shiki-wasm",
+      themes: ["pierre-dark"],
+    }).then((highlighter) => highlighter.codeToTokens(codeSelection.text, {
+      lang: language,
+      theme: "pierre-dark",
+    })).then((result) => {
+      if (!cancelled) setTokens(result.tokens);
+    }).catch(() => {
+      // The plain snippet remains usable if this file's grammar cannot load.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [active, codeSelection.location, codeSelection.text, tokens]);
+
+  /** Returns to plain text after hover unless the click left this button focused. */
+  function stopHighlighting(event: ReactMouseEvent<HTMLButtonElement>): void {
+    if (document.activeElement !== event.currentTarget) setActive(false);
+  }
+
+  /** Reveals the source and preserves syntax colors for pointer clicks that do not focus buttons. */
+  function showSnippet(): void {
+    setActive(true);
+    onShow(codeSelection);
+  }
+
+  return (
+    <button
+      className="selected-snippet-item"
+      onBlur={() => setActive(false)}
+      onClick={showSnippet}
+      onFocus={() => setActive(true)}
+      onMouseEnter={() => setActive(true)}
+      onMouseLeave={stopHighlighting}
+      title="Show this code in the diff"
+      type="button"
+    >
+      {active && tokens
+        ? tokens.map((line, lineIndex) => (
+            <Fragment key={lineIndex}>
+              {line.map((token, tokenIndex) => (
+                <span key={tokenIndex} style={{ color: token.color }}>{token.content}</span>
+              ))}
+              {lineIndex < tokens.length - 1 ? "\n" : null}
+            </Fragment>
+          ))
+        : codeSelection.text}
+    </button>
+  );
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
@@ -143,17 +235,18 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
-    function captureSelection(pointer?: Point): void {
+    function captureSelection(pointer?: Point, origin?: EventTarget): void {
       const browserSelection = window.getSelection();
-      const text = browserSelection?.toString().trim() ?? "";
-      const anchor = browserSelection?.anchorNode;
-      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
-      const root = anchor?.getRootNode();
+      const range = browserSelection ? selectedRange(browserSelection, origin) : undefined;
+      const text = range?.toString().trim() ?? "";
+      const node = range?.startContainer;
+      const element = node instanceof Element ? node : node?.parentElement;
+      const root = node?.getRootNode();
       // Diffs can render code in either ordinary DOM or an open shadow tree.
-      const selectionElement = root instanceof ShadowRoot ? root.host : anchorElement;
+      const selectionElement = root instanceof ShadowRoot ? root.host : element;
       const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
 
-      if (!text || !insideDiff || !browserSelection?.rangeCount) {
+      if (!text || !insideDiff || !range) {
         setSelection((current) => {
           if (!current?.open) return null;
           return current.pending ? { ...current, pending: undefined } : current;
@@ -161,7 +254,6 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
         return;
       }
 
-      const range = browserSelection.getRangeAt(0).cloneRange();
       const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
@@ -181,13 +273,14 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     function captureAfterMouseUp(event: MouseEvent): void {
       if (event.target instanceof Element && event.target.closest(".ai-chat-launch, .selection-trigger, .question-panel")) return;
       const pointer = { x: event.clientX, y: event.clientY };
-      window.requestAnimationFrame(() => captureSelection(pointer));
+      const origin = event.composedPath()[0];
+      window.requestAnimationFrame(() => captureSelection(pointer, origin));
     }
 
     /** Captures keyboard-created code selections while ignoring typing inside the chat. */
     function captureAfterKeyUp(event: KeyboardEvent): void {
       if (event.target instanceof Element && event.target.closest(".question-panel")) return;
-      captureSelection();
+      captureSelection(undefined, event.composedPath()[0]);
     }
 
     document.addEventListener("keyup", captureAfterKeyUp, true);
@@ -702,15 +795,11 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           {selection.context.length > 0 && (
             <div className="selected-snippet">
               {selection.context.map((codeSelection, index) => (
-                <button
-                  className="selected-snippet-item"
+                <SelectedSnippet
+                  codeSelection={codeSelection}
                   key={`${codeSelection.text}-${index}`}
-                  onClick={() => showSelection(codeSelection)}
-                  title="Show this code in the diff"
-                  type="button"
-                >
-                  {codeSelection.text}
-                </button>
+                  onShow={showSelection}
+                />
               ))}
             </div>
           )}
