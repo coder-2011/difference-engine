@@ -1850,6 +1850,10 @@ button {
   background: #29282c;
 }
 
+.selection-trigger {
+  z-index: 100;
+}
+
 .ai-chat-launch {
   bottom: 16px;
   left: 16px;
@@ -1955,18 +1959,38 @@ button {
   color: white;
 }
 
-.selected-snippet {
+.selected-snippets {
   flex: none;
   max-height: 76px;
-  padding: 10px 12px;
-  overflow: hidden;
+  overflow-y: auto;
   border-bottom: 1px solid var(--line-soft);
   background: #0d0d0e;
+}
+
+.selected-snippet {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
   color: #78787e;
+  cursor: pointer;
   font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.45;
+  text-align: left;
   white-space: pre-wrap;
+}
+
+.selected-snippet:last-child {
+  border-bottom: 0;
+}
+
+.selected-snippet:hover {
+  background: #131315;
+  color: #aaa7af;
 }
 
 .conversation {
@@ -1991,10 +2015,15 @@ button {
 }
 
 .asked-question-wrap {
-  display: flex;
-  align-items: baseline;
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
   gap: 7px;
   margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #19487c;
+  border-radius: 10px 10px 3px 10px;
+  background: #092b58;
 }
 
 .asked-question {
@@ -2038,6 +2067,13 @@ button {
   font-family: var(--font-mono);
   font-size: 9px;
   overflow-wrap: anywhere;
+}
+
+.chat-turn-divider {
+  height: 3px;
+  margin: 10px 0;
+  border-radius: 999px;
+  background: #f7f7f8;
 }
 
 .chat-markdown {
@@ -2242,10 +2278,6 @@ button {
   line-height: 0.8;
 }
 
-.question-suggestion.loading > span {
-  animation: suggestion-pulse 1.5s ease-in-out infinite;
-}
-
 /* Three staggered dots give streamed replies a quiet, familiar loading cue. */
 .chat-loading-wave {
   display: flex;
@@ -2292,10 +2324,6 @@ button {
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
-}
-
-@keyframes suggestion-pulse {
-  50% { opacity: 0.48; }
 }
 
 .question-panel form .ask-submit {

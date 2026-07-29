@@ -113,7 +113,6 @@ export function HighlightedCode({ block = false, children, className, ...props }
     const highlightedLanguage = language;
 
     if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) {
-      setHighlighted(null);
       return () => {
         cancelled = true;
       };

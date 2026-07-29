@@ -74,6 +74,13 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     [files],
   );
 
+  /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
+  const revealSelection = useCallback((location: { id: string; lineNumber: number; side?: "additions" | "deletions" }) => {
+    const range = { start: location.lineNumber, end: location.lineNumber, side: location.side, endSide: location.side };
+    viewerRef.current?.setSelectedLines({ id: location.id, range });
+    viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+  }, []);
+
   /** Moves the virtualized code view to the file chosen in the tree. */
   const selectFile = useCallback((selectedPaths: readonly string[]) => {
     const path = selectedPaths.at(-1);
@@ -103,6 +110,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
 
     /** Hands downward wheel movement to the page until the review header is above the diff. */
     const revealWorkspace = (event: WheelEvent): void => {
+      if (event.target instanceof Element && event.target.closest(".question-panel")) return;
       if (event.deltaY <= 0 || workspace.getBoundingClientRect().top <= 51) return;
       event.preventDefault();
       window.scrollBy({ top: event.deltaY, behavior: "auto" });
@@ -171,7 +179,7 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
               themeType: "dark",
             }}
           />
-          {openAIConnected && <SelectionQuestion source={source} />}
+          {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} source={source} />}
         </div>
       </div>
     </section>

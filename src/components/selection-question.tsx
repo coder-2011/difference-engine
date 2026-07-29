@@ -19,12 +19,22 @@ type Point = {
 };
 
 type CodeSelection = Point & {
+  location?: CodeSelectionLocation;
+  range: Range;
   text: string;
 };
 
-type SelectionState = CodeSelection & {
+type CodeSelectionLocation = {
+  id: string;
+  lineNumber: number;
+  side?: "additions" | "deletions";
+};
+
+type SelectionState = Point & {
   open: boolean;
   pending?: CodeSelection;
+  selections: CodeSelection[];
+  text: string;
 };
 
 type DragState = Point & {
@@ -38,6 +48,7 @@ type DragState = Point & {
 };
 
 type SelectionQuestionProps = {
+  onRevealSelection: (location: CodeSelectionLocation) => void;
   source: string[];
 };
 
@@ -75,8 +86,23 @@ function PromptPreview({ question }: PromptPreviewProps) {
   );
 }
 
+/** Extracts Pierre's stable file and line coordinates from a browser text range. */
+function selectionLocation(range: Range): CodeSelectionLocation | undefined {
+  const root = range.startContainer.getRootNode();
+  const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const line = element?.closest("[data-line]");
+  const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
+  const lineNumber = Number(line?.getAttribute("data-line"));
+  if (!id || !Number.isInteger(lineNumber)) return undefined;
+
+  const lineType = line?.getAttribute("data-line-type");
+  if (lineType === "change-addition") return { id, lineNumber, side: "additions" };
+  if (lineType === "change-deletion") return { id, lineNumber, side: "deletions" };
+  return { id, lineNumber };
+}
+
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ source }: SelectionQuestionProps) {
+export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -115,7 +141,8 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         return;
       }
 
-      const rect = browserSelection.getRangeAt(0).getBoundingClientRect();
+      const range = browserSelection.getRangeAt(0).cloneRange();
+      const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
 
@@ -124,10 +151,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      const nextSelection = { text, x, y };
+      const nextSelection = { location: selectionLocation(range), range, text, x, y };
       setSelection((current) => current?.open
         ? { ...current, pending: nextSelection }
-        : { ...nextSelection, open: false });
+        : { ...nextSelection, open: false, selections: [nextSelection] });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -174,23 +201,23 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     return () => scroller.removeEventListener("scroll", updateFollowState);
   }, [Boolean(turns.length || loading)]);
 
-  /** Opens the chat with the newest selection without clearing prior turns. */
+  /** Opens the chat and adds a newly highlighted range to its selected code. */
   function openPanel(): void {
     setSelection((current) => {
-      const nextSelection = current?.pending ?? current;
-      return nextSelection && { ...nextSelection, open: true };
+      if (!current) return current;
+      if (!current.pending) return { ...current, open: true };
+      return {
+        ...current.pending,
+        open: true,
+        selections: [...current.selections, current.pending],
+      };
     });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  /** Opens an empty repository chat without sending a question. */
+  /** Opens a fresh repository chat without reusing the current code selection. */
   function openChat(): void {
-    if (selection?.text) {
-      openPanel();
-      return;
-    }
-
-    setSelection({ open: true, text: "", x: 0, y: 0 });
+    setSelection({ open: true, selections: [], text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -207,6 +234,19 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
     setSuggestion("");
     setAttachments([]);
     setAttachmentError("");
+  }
+
+  /** Restores a saved browser range and brings its exact code location into view. */
+  function revealSelection(codeSelection: CodeSelection): void {
+    const node = codeSelection.range.startContainer;
+    const element = node instanceof Element ? node : node.parentElement;
+    if (element?.isConnected) {
+      const browserSelection = window.getSelection();
+      browserSelection?.removeAllRanges();
+      browserSelection?.addRange(codeSelection.range.cloneRange());
+    }
+    if (codeSelection.location) onRevealSelection(codeSelection.location);
+    else element?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   /** Places the panel inside the viewport and returns its clamped coordinates. */
@@ -375,6 +415,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   async function submitQuestion(value: string): Promise<void> {
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
+    const selectedText = selection.selections.map((item) => item.text).join("\n\n");
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -414,7 +455,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
         answer: "",
         attachments: attachmentNames,
         question: submittedQuestion,
-        selection: selection.text,
+        selection: selectedText,
       }]);
       startedTurn = true;
       const response = await fetch("/api/ask", {
@@ -425,7 +466,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
           attachments: uploadedAttachments,
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
-          selection: selection.text,
+          selection: selectedText,
           source,
         }),
       });
@@ -481,7 +522,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
 
   /** Fills the visible placeholder and leaves the cursor ready to edit it. */
   function fillPlaceholder(): void {
-    const placeholder = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
+    const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
     if (!placeholder) return;
     setQuestion(placeholder);
     window.setTimeout(() => {
@@ -496,7 +537,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
   }
 
   const triggerSelection = selection?.open ? selection.pending : selection;
-  const suggestedQuestion = turns.length ? suggestion || "Where is this called from?" : DEFAULT_QUESTION;
+  const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
 
   return (
@@ -539,7 +580,21 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 
-          {selection.text && <div className="selected-snippet">{selection.text}</div>}
+          {selection.selections.length > 0 && (
+            <div className="selected-snippets">
+              {selection.selections.map((item, index) => (
+                <button
+                  className="selected-snippet"
+                  key={`${item.text}-${index}`}
+                  onClick={() => revealSelection(item)}
+                  title="Scroll to highlighted code"
+                  type="button"
+                >
+                  {item.text}
+                </button>
+              ))}
+            </div>
+          )}
 
           {(turns.length > 0 || loading) && (
             <div className="conversation" ref={conversationRef}>
@@ -549,6 +604,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
                   {turn.attachments?.length ? (
                     <span className="asked-attachments">{turn.attachments.join(", ")}</span>
                   ) : null}
+                  <div className="chat-turn-divider" />
                   {turn.answer
                     ? <div className="chat-markdown"><GitHubMarkdown>{turn.answer}</GitHubMarkdown></div>
                     : (
@@ -578,10 +634,10 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
             )}
             {attachmentError && <p className="attachment-error">{attachmentError}</p>}
             <div className="question-input">
-              {!question && (
-                <span className={`question-suggestion${isGeneratingSuggestion ? " loading" : ""}`} aria-hidden="true">
-                  <span>{isGeneratingSuggestion ? "Finding a useful next question…" : suggestedQuestion}</span>
-                  {!isGeneratingSuggestion && <kbd><b>⇥</b> Tab</kbd>}
+              {!question && !isGeneratingSuggestion && suggestedQuestion && (
+                <span className="question-suggestion" aria-hidden="true">
+                  <span>{suggestedQuestion}</span>
+                  <kbd><b>⇥</b> Tab</kbd>
                 </span>
               )}
               <textarea
@@ -589,7 +645,7 @@ export function SelectionQuestion({ source }: SelectionQuestionProps) {
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Tab" && !question && !isGeneratingSuggestion) {
+                  if (event.key === "Tab" && !question && !isGeneratingSuggestion && suggestedQuestion) {
                     event.preventDefault();
                     fillPlaceholder();
                   } else if (event.key === "Enter" && !event.shiftKey) {
