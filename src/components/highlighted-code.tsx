@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
-import { cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
+import { Children, cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
 
 const LANGUAGE_ALIASES = {
   bash: "bash",
@@ -34,6 +34,11 @@ type CodeProps = ComponentPropsWithoutRef<"code"> & {
 type HighlightedResult = {
   html: string;
   language: SupportedLanguage;
+  source: string;
+};
+type MarkdownCodeBlockProps = {
+  children: React.ReactNode;
+  className?: string;
   source: string;
 };
 
@@ -101,6 +106,47 @@ function codeText(children: CodeProps["children"]): string {
   return String(children).replace(/\n$/, "");
 }
 
+/** Wraps code in a fence longer than any backtick run already inside it. */
+function fencedMarkdown(source: string, className?: string): string {
+  const language = className?.match(/language-([^\s]+)/)?.[1] ?? "";
+  let fenceLength = 3;
+
+  for (const match of source.matchAll(/`+/g)) {
+    fenceLength = Math.max(fenceLength, match[0].length + 1);
+  }
+
+  const fence = "`".repeat(fenceLength);
+  return `${fence}${language}\n${source}\n${fence}`;
+}
+
+/** Renders one fenced block with a control that copies valid Markdown source. */
+function MarkdownCodeBlock({ children, className, source }: MarkdownCodeBlockProps) {
+  /** Writes the original code and language fence instead of rendered DOM text. */
+  async function copyMarkdown(): Promise<void> {
+    if (!navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(fencedMarkdown(source, className));
+    } catch {
+      // Clipboard permission can be denied without affecting the rendered code.
+    }
+  }
+
+  return (
+    <div className="markdown-code-block">
+      <button
+        aria-label="Copy code as Markdown"
+        className="markdown-code-copy"
+        onClick={() => void copyMarkdown()}
+        type="button"
+      >
+        Copy MD
+      </button>
+      {children}
+    </div>
+  );
+}
+
 /** Renders inline code normally and fenced code with an asynchronously loaded Shiki grammar. */
 export function HighlightedCode({ block = false, children, className, ...props }: CodeProps) {
   const language = supportedLanguage(className);
@@ -135,16 +181,21 @@ export function HighlightedCode({ block = false, children, className, ...props }
 
   if (!language || source.length > MAX_HIGHLIGHT_LENGTH || source !== deferredSource || !highlighted || highlighted.language !== language || highlighted.source !== source) {
     const code = <code className={className} {...props}>{children}</code>;
-    return block ? <pre>{code}</pre> : code;
+    return block ? <MarkdownCodeBlock className={className} source={source}><pre>{code}</pre></MarkdownCodeBlock> : code;
   }
 
-  return <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: highlighted.html }} />;
+  return (
+    <MarkdownCodeBlock className={className} source={source}>
+      <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+    </MarkdownCodeBlock>
+  );
 }
 
 /** Passes block context to code renderers while preserving ordinary preformatted content. */
 export function MarkdownPre({ children }: ComponentPropsWithoutRef<"pre">) {
-  if (isValidElement<CodeProps>(children) && children.type === HighlightedCode) {
-    return cloneElement(children, { block: true });
+  const code = Children.toArray(children)[0];
+  if (isValidElement<CodeProps>(code)) {
+    return cloneElement(code, { block: true });
   }
 
   return <pre>{children}</pre>;

@@ -82,7 +82,7 @@ type PromptPreviewProps = {
 function PromptPreview({ question }: PromptPreviewProps) {
   const [expanded, setExpanded] = useState(false);
   const [truncated, setTruncated] = useState(false);
-  const promptRef = useRef<HTMLSpanElement>(null);
+  const promptRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const prompt = promptRef.current;
@@ -92,7 +92,9 @@ function PromptPreview({ question }: PromptPreviewProps) {
 
   return (
     <div className="asked-question-wrap">
-      <span className={`asked-question${expanded ? " expanded" : ""}`} ref={promptRef}>{question}</span>
+      <div className={`asked-question chat-markdown${expanded ? " expanded" : ""}`} ref={promptRef}>
+        <GitHubMarkdown>{question}</GitHubMarkdown>
+      </div>
       {truncated && (
         <button className="asked-question-toggle" onClick={() => setExpanded((current) => !current)} type="button">
           {expanded ? "Show less" : "Show more"}
