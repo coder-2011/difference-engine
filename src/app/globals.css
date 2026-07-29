@@ -2859,7 +2859,7 @@ button {
 }
 
 .question-panel textarea {
-  min-height: 48px;
+  min-height: 72px;
   padding: 2px 0;
   resize: none;
   border: 0;
