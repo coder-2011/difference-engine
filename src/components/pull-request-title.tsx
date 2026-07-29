@@ -59,6 +59,7 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
       if (!response.ok) throw new Error(result?.error ?? "GitHub could not rename this pull request");
 
       setTitle(nextTitle);
+      document.title = `${nextTitle} · Diffs`;
       setDraft(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GitHub could not rename this pull request");
