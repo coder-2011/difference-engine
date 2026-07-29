@@ -9,6 +9,8 @@ const LANGUAGE_ALIASES = {
   "c++": "cpp",
   cpp: "cpp",
   css: "css",
+  cu: "cpp",
+  cuh: "cpp",
   cuda: "cpp",
   go: "go",
   html: "html",
@@ -51,67 +53,15 @@ type MarkdownCodeBlockProps = {
   source: string;
 };
 
-let highlighterPromise: ReturnType<typeof loadHighlighter> | undefined;
-
-/** Loads only the grammars that commonly appear in a pull-request discussion. */
-async function loadHighlighter() {
-  const [
-    { createHighlighterCore },
-    { createOnigurumaEngine },
-    { default: githubDark },
-    { default: bash },
-    { default: c },
-    { default: cpp },
-    { default: css },
-    { default: go },
-    { default: html },
-    { default: java },
-    { default: javascript },
-    { default: json },
-    { default: jsx },
-    { default: markdown },
-    { default: python },
-    { default: rust },
-    { default: sql },
-    { default: tsx },
-    { default: typescript },
-    { default: xml },
-    { default: yaml },
-  ] = await Promise.all([
-    import("shiki/core"),
-    import("shiki/engine/oniguruma"),
-    import("@shikijs/themes/github-dark"),
-    import("@shikijs/langs/bash"),
-    import("@shikijs/langs/c"),
-    import("@shikijs/langs/cpp"),
-    import("@shikijs/langs/css"),
-    import("@shikijs/langs/go"),
-    import("@shikijs/langs/html"),
-    import("@shikijs/langs/java"),
-    import("@shikijs/langs/javascript"),
-    import("@shikijs/langs/json"),
-    import("@shikijs/langs/jsx"),
-    import("@shikijs/langs/markdown"),
-    import("@shikijs/langs/python"),
-    import("@shikijs/langs/rust"),
-    import("@shikijs/langs/sql"),
-    import("@shikijs/langs/tsx"),
-    import("@shikijs/langs/typescript"),
-    import("@shikijs/langs/xml"),
-    import("@shikijs/langs/yaml"),
-  ]);
-
-  return createHighlighterCore({
-    engine: createOnigurumaEngine(() => import("shiki/wasm")),
-    langs: [bash, c, cpp, css, go, html, java, javascript, json, jsx, markdown, python, rust, sql, tsx, typescript, xml, yaml],
-    themes: [githubDark],
+/** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
+async function highlightCode(source: string, language: SupportedLanguage): Promise<string> {
+  const { getSharedHighlighter } = await import("@pierre/diffs");
+  const highlighter = await getSharedHighlighter({
+    langs: [language],
+    preferredHighlighter: "shiki-wasm",
+    themes: ["pierre-dark"],
   });
-}
-
-/** Shares one lazy highlighter across all Markdown code blocks in the browser. */
-function getHighlighter() {
-  highlighterPromise ??= loadHighlighter();
-  return highlighterPromise;
+  return highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });
 }
 
 /** Maps a fenced-Markdown class name to a bundled grammar, if one exists. */
@@ -161,7 +111,7 @@ function MarkdownCodeBlock({ children, className, source }: MarkdownCodeBlockPro
         onClick={() => void copyMarkdown()}
         type="button"
       >
-        Copy MD
+        Copy
       </button>
       {children}
     </div>
@@ -186,8 +136,7 @@ export function HighlightedCode({ block = false, children, className, ...props }
       };
     }
 
-    void getHighlighter()
-      .then((highlighter) => highlighter.codeToHtml(deferredSource, { lang: highlightedLanguage, theme: "github-dark" }))
+    void highlightCode(deferredSource, highlightedLanguage)
       .then((html) => {
         if (!cancelled) setHighlighted({ html, language: highlightedLanguage, source: deferredSource });
       })
