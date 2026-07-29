@@ -1201,6 +1201,29 @@ button {
   font-weight: 650;
 }
 
+.markdown-code-block {
+  position: relative;
+}
+
+.markdown-code-copy {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 6px;
+  padding: 3px 6px;
+  border: 1px solid #38383d;
+  border-radius: 4px;
+  background: #19191b;
+  color: #aaa7b0;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.markdown-code-copy:hover {
+  border-color: #5c5668;
+  color: #eeeaf7;
+}
+
 .pr-conversation {
   position: relative;
   display: flex;
@@ -2039,9 +2062,7 @@ button {
 }
 
 .asked-question:not(.expanded) {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  max-height: 2.8em;
 }
 
 .asked-question-toggle {
@@ -2119,6 +2140,12 @@ button {
   background: #0c0c0d;
 }
 
+.markdown-body .markdown-code-block pre,
+.pr-comment-markdown .markdown-code-block pre,
+.chat-markdown .markdown-code-block pre {
+  padding-top: 30px;
+}
+
 .chat-markdown pre code {
   padding: 0;
   background: transparent;
@@ -2128,6 +2155,13 @@ button {
   color: #bba8ef;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.asked-question.chat-markdown {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.4;
 }
 
 .chat-turn > p {
