@@ -6,7 +6,7 @@ type RouteContext = {
   params: Promise<{ source: string[] }>;
 };
 
-/** Proxies GitHub's raw diff stream while keeping private-repository tokens server-side. */
+/** Proxies a GitHub diff or repository snapshot while keeping private-repository tokens server-side. */
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   const [{ source }, accessToken] = await Promise.all([context.params, getGitHubAccessToken(request)]);
 

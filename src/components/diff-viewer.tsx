@@ -1,6 +1,6 @@
 "use client";
 
-import type { CodeViewDiffItem, CodeViewHandle, FileDiffMetadata } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewItem, FileDiffMetadata } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView } from "@pierre/diffs/react";
@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
+import type { RepositoryFile } from "@/types/github";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
 const SelectionQuestion = dynamic(
@@ -26,6 +27,7 @@ type DiffViewerProps = {
 };
 
 const EMPTY_FILES: FileDiffMetadata[] = [];
+const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
 const DEFAULT_CODE_FONT_SIZE = 13;
 const MAX_CODE_FONT_SIZE = 24;
 
@@ -41,7 +43,9 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatus {
 
 /** Fetches, parses, navigates, and renders the full GitHub patch. */
 export function DiffViewer({ additions, changedFiles, deletions, openAIConnected, source }: DiffViewerProps) {
+  const repository = source.length === 2;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
+  const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
   const [split, setSplit] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -56,22 +60,24 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     let cancelled = false;
 
     /** Preloads every file grammar so the viewer's first visible render is syntax-highlighted. */
-    async function showParsedFiles(files: FileDiffMetadata[]): Promise<void> {
+    async function showFiles<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[], show: (files: T[]) => void): Promise<void> {
       const langs = [...new Set(files.map((file) => file.lang ?? getFiletypeFromFileName(file.name)))];
       try {
         await preloadHighlighter({ langs, preferredHighlighter: "shiki-wasm", themes: ["pierre-dark"] });
       } catch {
         // CodeView still renders plain code if a grammar fails to preload.
       }
-      if (!cancelled) setParsedFiles(files);
+      if (!cancelled) show(files);
     }
 
     /** Receives parsed files without blocking the main browser thread. */
-    function handleMessage(event: MessageEvent<{ error?: string; files?: FileDiffMetadata[] }>): void {
+    function handleMessage(event: MessageEvent<{ error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
       if (event.data.error) {
         setError(event.data.error);
+      } else if (repository) {
+        void showFiles(event.data.repositoryFiles ?? [], setRepositoryFiles);
       } else {
-        void showParsedFiles(event.data.files ?? []);
+        void showFiles(event.data.files ?? [], setParsedFiles);
       }
     }
 
@@ -82,19 +88,21 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
 
     worker.addEventListener("message", handleMessage);
     worker.addEventListener("error", handleError);
-    worker.postMessage({ cacheKey: source.join("/"), url: `/api/diff/${path}` });
+    worker.postMessage({ cacheKey: source.join("/"), repository, url: `/api/diff/${path}` });
 
     return () => {
       cancelled = true;
       worker.terminate();
     };
-  }, [source]);
+  }, [repository, source]);
 
-  const files = parsedFiles ?? EMPTY_FILES;
+  const diffFiles = parsedFiles ?? EMPTY_FILES;
+  const codeFiles = repositoryFiles ?? EMPTY_REPOSITORY_FILES;
+  const files = repository ? codeFiles : diffFiles;
   const paths = useMemo(() => files.map((file) => file.name), [files]);
   const gitStatus = useMemo<GitStatusEntry[]>(
-    () => files.map((file) => ({ path: file.name, status: gitStatusForFile(file) })),
-    [files],
+    () => repository ? [] : diffFiles.map((file) => ({ path: file.name, status: gitStatusForFile(file) })),
+    [diffFiles, repository],
   );
 
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
@@ -159,18 +167,20 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
     return () => workspace.removeEventListener("wheel", revealWorkspace, { capture: true });
   }, []);
 
-  const items = useMemo<CodeViewDiffItem[]>(
-    () => files.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
-    [collapsed, files],
+  const items = useMemo<CodeViewItem[]>(
+    () => repository
+      ? codeFiles.map((file) => ({ id: file.name, type: "file", file, collapsed, version: collapsed ? 1 : 0 }))
+      : diffFiles.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
+    [codeFiles, collapsed, diffFiles, repository],
   );
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
 
   if (error) {
-    return <div className="diff-error"><strong>Couldn’t load this diff</strong><span>{error}</span></div>;
+    return <div className="diff-error"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div>;
   }
 
-  if (!parsedFiles) {
-    return <div className="diff-loading"><LoaderCircle className="spinner" size={20} /><strong>Fetching diff</strong><span>Streaming the patch from GitHub…</span></div>;
+  if (repository ? !repositoryFiles : !parsedFiles) {
+    return <div className="diff-loading"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div>;
   }
 
   return (
@@ -189,18 +199,20 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
             {collapsed ? "Expand" : "Collapse"}
           </button>
-          <div className="segmented-control">
-            <button className={!split ? "active" : ""} onClick={() => setSplit(false)} title="Unified view"><Rows3 size={14} /></button>
-            <button className={split ? "active" : ""} onClick={() => setSplit(true)} title="Split view"><Columns2 size={14} /></button>
-          </div>
+          {!repository && (
+            <div className="segmented-control">
+              <button className={!split ? "active" : ""} onClick={() => setSplit(false)} title="Unified view"><Rows3 size={14} /></button>
+              <button className={split ? "active" : ""} onClick={() => setSplit(true)} title="Split view"><Columns2 size={14} /></button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className={`viewer-body ${sidebarOpen ? "" : "sidebar-closed"}`}>
         {sidebarOpen && (
           <aside className="file-sidebar">
-            <div className="file-sidebar-title">Changed files <span>{files.length}</span></div>
-            <FileTree model={model} aria-label="Changed files" />
+            <div className="file-sidebar-title">{repository ? "Files" : "Changed files"} <span>{files.length}</span></div>
+            <FileTree model={model} aria-label={repository ? "Files" : "Changed files"} />
           </aside>
         )}
         <div

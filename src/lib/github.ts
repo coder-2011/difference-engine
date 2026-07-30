@@ -1,3 +1,7 @@
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
+import { extract } from "tar-stream";
 import type {
   DiffDocument,
   PullRequestAction,
@@ -7,6 +11,7 @@ import type {
   PullRequestSummary,
   PullRequestWorkflowRun,
   PullRequestWorkspace,
+  RepositoryFile,
 } from "@/types/github";
 
 const GITHUB_API = "https://api.github.com";
@@ -187,7 +192,16 @@ type Commit = {
   };
   files?: unknown[];
   html_url: string;
+  sha: string;
   stats?: { additions: number; deletions: number };
+};
+
+type Repository = {
+  default_branch: string;
+  description: string | null;
+  html_url: string;
+  name: string;
+  owner: GitHubUser;
 };
 
 type GitBlob = {
@@ -213,6 +227,7 @@ const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
+const REPOSITORY_DATA_EXTENSIONS = new Set(["csv", "done", "jsonl", "log", "sha256"]);
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -409,25 +424,36 @@ function summarizePullRequest(pullRequest: SearchPullRequest, status: PullReques
 function parseSource(source: string[]): {
   apiPath: string;
   encodedRepository: string;
-  kind: "compare" | "commit" | "pull";
+  kind: "compare" | "commit" | "pull" | "repository";
   repository: string;
   value: string;
 } {
   const [owner, repo, kind, value] = source;
-  const validKind = kind === "pull" || kind === "compare" || kind === "commit";
+  const parsedKind = kind === "pull" || kind === "compare" || kind === "commit" ? kind : undefined;
 
-  if (source.length !== 4 || !owner || !repo || !value || !validKind) {
-    throw new GitHubError("This GitHub URL is not supported", 400);
-  }
+  if (!owner || !repo) throw new GitHubError("This GitHub URL is not supported", 400);
 
   const repository = `${owner}/${repo}`;
   const encodedRepository = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  const collection = kind === "pull" ? "pulls" : kind === "commit" ? "commits" : "compare";
+  if (source.length === 2) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      kind: "repository",
+      repository,
+      value: "",
+    };
+  }
+  if (source.length !== 4 || !value || !parsedKind) {
+    throw new GitHubError("This GitHub URL is not supported", 400);
+  }
+
+  const collection = parsedKind === "pull" ? "pulls" : parsedKind === "commit" ? "commits" : "compare";
 
   return {
     apiPath: `/repos/${encodedRepository}/${collection}/${encodeURIComponent(value)}`,
     encodedRepository,
-    kind,
+    kind: parsedKind,
     repository,
     value,
   };
@@ -737,6 +763,11 @@ export async function performPullRequestAction(source: string[], token: string |
 async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?: string): Promise<string> {
   if (parsed.kind === "commit") return parsed.value;
   if (parsed.kind === "compare") return parsed.value.split("...").at(-1) ?? parsed.value;
+  if (parsed.kind === "repository") {
+    const repository = await githubRequest<Repository>(parsed.apiPath, token);
+    const commit = await githubRequest<Commit>(`${parsed.apiPath}/commits/${encodeURIComponent(repository.default_branch)}`, token);
+    return commit.sha;
+  }
   const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
   return pullRequest.head.sha;
 }
@@ -806,6 +837,12 @@ function decodeGitBlob(blob: GitBlob): string {
   return content.includes("\0") ? "" : content;
 }
 
+/** Keeps source-like text files while excluding bulky benchmark and log artifacts. */
+function isRepositorySourceFile(path: string): boolean {
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  return !extension || !REPOSITORY_DATA_EXTENSIONS.has(extension);
+}
+
 /** Builds bounded repository-wide context around the exact revision being reviewed. */
 export async function getRepositoryContext(source: string[], token?: string): Promise<string> {
   const parsed = parseSource(source);
@@ -813,7 +850,7 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
   const encodedRevision = encodeURIComponent(revision);
   const [tree, diff] = await Promise.all([
     githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodedRevision}?recursive=1`, token),
-    getDiffResponse(source, token).then((response) => response.text()),
+    parsed.kind === "repository" ? "" : getDiffResponse(source, token).then((response) => response.text()),
   ]);
   const blobByPath = new Map<string, GitTreeEntry>();
   let treeText = "";
@@ -894,6 +931,19 @@ export async function readRepositoryFiles(source: string[], paths: string[], tok
 export async function getDiffDocument(source: string[], token?: string, includePullRequestWorkspace = false): Promise<DiffDocument> {
   const parsed = parseSource(source);
 
+  if (parsed.kind === "repository") {
+    const repository = await githubRequest<Repository>(parsed.apiPath, token);
+
+    return {
+      author: repository.owner.login,
+      avatarUrl: repository.owner.avatar_url,
+      description: repository.description ?? undefined,
+      repository: parsed.repository,
+      sourceUrl: repository.html_url,
+      title: repository.name,
+    };
+  }
+
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
     const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
@@ -956,9 +1006,41 @@ function diffResponse(body: BodyInit): Response {
   });
 }
 
+/** Downloads one repository snapshot and returns every textual file without exposing GitHub credentials. */
+async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositoryFile[]> {
+  const revision = await getSourceRevision(parsed, token);
+  const response = await githubResponse(`${parsed.apiPath}/tarball/${encodeURIComponent(revision)}`, token);
+  if (!response.body) throw new GitHubError("The repository could not be loaded", 502);
+
+  const archive = extract();
+  const extraction = pipeline(
+    Readable.from([Buffer.from(await response.arrayBuffer())]),
+    createGunzip(),
+    archive,
+  );
+  const files: RepositoryFile[] = [];
+
+  for await (const entry of archive) {
+    const name = entry.header.name.split("/").slice(1).join("/");
+    if (entry.header.type !== "file" || !name || !isRepositorySourceFile(name)) {
+      entry.resume();
+      continue;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of entry) chunks.push(Buffer.from(chunk));
+    const contents = Buffer.concat(chunks).toString("utf8");
+    if (!contents.includes("\0")) files.push({ contents, name });
+  }
+
+  await extraction;
+  return files.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 /** Streams the raw GitHub diff so large comparisons are not serialized through React. */
 export async function getDiffResponse(source: string[], token?: string): Promise<Response> {
   const parsed = parseSource(source);
+  if (parsed.kind === "repository") return Response.json(await getRepositoryFiles(parsed, token));
 
   const response = await fetch(`${GITHUB_API}${parsed.apiPath}`, {
     headers: githubHeaders("application/vnd.github.diff", token),
@@ -1025,7 +1107,8 @@ function formatPullRequestFile(file: PullRequestFile): string {
 /** Converts a supported GitHub URL into this app's equivalent viewer path. */
 export function viewerPathFromUrl(value: string): string | null {
   try {
-    const url = new URL(value);
+    const bareRepository = /^\/?[\w.-]+\/[\w.-]+\/?$/.test(value);
+    const url = new URL(bareRepository ? `https://github.com/${value.replace(/^\/+/, "")}` : value);
     const source = url.pathname.replace(/\.(diff|patch)$/, "").split("/").filter(Boolean);
 
     if (url.hostname !== "github.com") {

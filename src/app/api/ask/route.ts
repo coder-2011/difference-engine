@@ -470,7 +470,7 @@ export async function POST(request: Request): Promise<Response> {
     ? body.source
     : [];
 
-  if (!question || source.length !== 4) {
+  if (!question || (source.length !== 2 && source.length !== 4)) {
     return NextResponse.json({ error: "Enter a question." }, { status: 400 });
   }
 

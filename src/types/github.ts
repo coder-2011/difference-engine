@@ -27,6 +27,11 @@ export type DiffDocument = {
   title: string;
 };
 
+export type RepositoryFile = {
+  contents: string;
+  name: string;
+};
+
 export type PullRequestComment = {
   author: string;
   avatarUrl: string;

@@ -96,7 +96,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
         ) : description && (
           <details className="pr-description" open>
-            <summary>Pull request description</summary>
+            <summary>{source.length === 2 ? "Repository description" : "Pull request description"}</summary>
             <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
           </details>
         )}
