@@ -424,11 +424,13 @@ function summarizePullRequest(pullRequest: SearchPullRequest, status: PullReques
 function parseSource(source: string[]): {
   apiPath: string;
   encodedRepository: string;
+  filePath?: string;
   kind: "compare" | "commit" | "pull" | "repository";
   repository: string;
+  repositoryRef?: string;
   value: string;
 } {
-  const [owner, repo, kind, value] = source;
+  const [owner, repo, kind, value, ...filePath] = source;
   const parsedKind = kind === "pull" || kind === "compare" || kind === "commit" ? kind : undefined;
 
   if (!owner || !repo) throw new GitHubError("This GitHub URL is not supported", 400);
@@ -441,6 +443,17 @@ function parseSource(source: string[]): {
       encodedRepository,
       kind: "repository",
       repository,
+      value: "",
+    };
+  }
+  if (kind === "blob" && value && filePath.length) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      filePath: filePath.join("/"),
+      kind: "repository",
+      repository,
+      repositoryRef: value,
       value: "",
     };
   }
@@ -765,7 +778,8 @@ async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?:
   if (parsed.kind === "compare") return parsed.value.split("...").at(-1) ?? parsed.value;
   if (parsed.kind === "repository") {
     const repository = await githubRequest<Repository>(parsed.apiPath, token);
-    const commit = await githubRequest<Commit>(`${parsed.apiPath}/commits/${encodeURIComponent(repository.default_branch)}`, token);
+    const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
+    const commit = await githubRequest<Commit>(`${parsed.apiPath}/commits/${encodeURIComponent(repositoryRef)}`, token);
     return commit.sha;
   }
   const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
@@ -933,13 +947,20 @@ export async function getDiffDocument(source: string[], token?: string, includeP
 
   if (parsed.kind === "repository") {
     const repository = await githubRequest<Repository>(parsed.apiPath, token);
+    const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
+    const fileUrl = parsed.filePath
+      ? `/blob/${encodeURIComponent(repositoryRef)}/${parsed.filePath.split("/").map(encodeURIComponent).join("/")}`
+      : "";
 
     return {
       author: repository.owner.login,
       avatarUrl: repository.owner.avatar_url,
+      defaultBranch: repository.default_branch,
       description: repository.description ?? undefined,
+      filePath: parsed.filePath,
       repository: parsed.repository,
-      sourceUrl: repository.html_url,
+      repositoryRef,
+      sourceUrl: `${repository.html_url}${fileUrl}`,
       title: repository.name,
     };
   }
@@ -1116,7 +1137,8 @@ export function viewerPathFromUrl(value: string): string | null {
     }
 
     parseSource(source);
-    return `/${source.join("/")}`;
+    const lineHash = /^#L[1-9]\d*(?:-L[1-9]\d*)?$/.test(url.hash) ? url.hash : "";
+    return `/${source.join("/")}${lineHash}`;
   } catch {
     return null;
   }

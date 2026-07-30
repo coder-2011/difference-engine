@@ -96,7 +96,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
         ) : description && (
           <details className="pr-description" open>
-            <summary>{source.length === 2 ? "Repository description" : "Pull request description"}</summary>
+            <summary>{document.defaultBranch ? "Repository description" : "Pull request description"}</summary>
             <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
           </details>
         )}
@@ -105,8 +105,11 @@ export default async function DiffPage({ params }: DiffPageProps) {
       <DiffViewer
         additions={document.additions}
         changedFiles={document.changedFiles}
+        defaultBranch={document.defaultBranch}
         deletions={document.deletions}
+        filePath={document.filePath}
         openAIConnected={openAIConnected}
+        repositoryRef={document.repositoryRef}
         source={source}
       />
     </main>

@@ -1,5 +1,6 @@
 "use client";
 
+import type { CodeViewLineSelection } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewItem, FileDiffMetadata } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
@@ -10,6 +11,8 @@ import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
+import { RepositoryCompare } from "./repository-compare";
+import { RepositorySearch } from "./repository-search";
 import type { RepositoryFile } from "@/types/github";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
@@ -21,9 +24,19 @@ const SelectionQuestion = dynamic(
 type DiffViewerProps = {
   additions?: number;
   changedFiles?: number;
+  defaultBranch?: string;
   deletions?: number;
+  filePath?: string;
   openAIConnected: boolean;
+  repositoryRef?: string;
   source: string[];
+};
+
+type CodeLocation = {
+  endLineNumber?: number;
+  id: string;
+  lineNumber: number;
+  side?: "additions" | "deletions";
 };
 
 const EMPTY_FILES: FileDiffMetadata[] = [];
@@ -41,9 +54,36 @@ function gitStatusForFile(file: FileDiffMetadata): GitStatus {
   return "modified";
 }
 
+/** Parses the standard GitHub single-line or line-range hash. */
+function lineRangeFromHash(hash: string): { end: number; start: number } | null {
+  const match = hash.match(/^#L([1-9]\d*)(?:-L([1-9]\d*))?$/);
+  if (!match) return null;
+
+  const start = Number(match[1]);
+  const end = Math.max(start, Number(match[2] ?? start));
+  return { end, start };
+}
+
+/** Formats one repository file and selected range as a shareable viewer URL. */
+function repositoryFileUrl(source: string[], repositoryRef: string, filePath: string, start?: number, end?: number): string {
+  const repository = source.slice(0, 2).map(encodeURIComponent).join("/");
+  const path = filePath.split("/").map(encodeURIComponent).join("/");
+  const lineHash = start ? `#L${start}${end && end !== start ? `-L${end}` : ""}` : "";
+  return `/${repository}/blob/${encodeURIComponent(repositoryRef)}/${path}${lineHash}`;
+}
+
 /** Fetches, parses, navigates, and renders the full GitHub patch. */
-export function DiffViewer({ additions, changedFiles, deletions, openAIConnected, source }: DiffViewerProps) {
-  const repository = source.length === 2;
+export function DiffViewer({
+  additions,
+  changedFiles,
+  defaultBranch,
+  deletions,
+  filePath,
+  openAIConnected,
+  repositoryRef,
+  source,
+}: DiffViewerProps) {
+  const repository = defaultBranch !== undefined;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -106,11 +146,40 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
   );
 
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
-  const revealSelection = useCallback((location: { id: string; lineNumber: number; side?: "additions" | "deletions" }) => {
-    const range = { start: location.lineNumber, end: location.lineNumber, side: location.side, endSide: location.side };
+  const revealSelection = useCallback((location: CodeLocation) => {
+    const end = location.endLineNumber ?? location.lineNumber;
+    const range = { start: location.lineNumber, end, side: location.side, endSide: location.side };
     viewerRef.current?.setSelectedLines({ id: location.id, range });
     viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
   }, []);
+
+  /** Opens a repository search result and writes its file and line into the URL. */
+  const revealRepositoryResult = useCallback((result: { lineNumber?: number; path: string }) => {
+    if (!repositoryRef) return;
+
+    if (result.lineNumber) {
+      revealSelection({ id: result.path, lineNumber: result.lineNumber });
+    } else {
+      viewerRef.current?.scrollTo({ type: "item", id: result.path, align: "start", behavior: "smooth" });
+    }
+
+    const nextUrl = repositoryFileUrl(source, repositoryRef, result.path, result.lineNumber);
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, [repositoryRef, revealSelection, source]);
+
+  /** Keeps a user-selected repository line range in the browser's shareable URL. */
+  const rememberRepositorySelection = useCallback((selection: CodeViewLineSelection | null) => {
+    if (!repositoryRef || !selection) return;
+
+    const nextUrl = repositoryFileUrl(
+      source,
+      repositoryRef,
+      selection.id,
+      selection.range.start,
+      selection.range.end,
+    );
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, [repositoryRef, source]);
 
   /** Moves the virtualized code view to the file chosen in the tree. */
   const selectFile = useCallback((selectedPaths: readonly string[]) => {
@@ -148,8 +217,34 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
   useEffect(() => {
     model.resetPaths(paths);
     model.setGitStatus(gitStatus);
-    if (paths[0]) model.getItem(paths[0])?.select();
-  }, [gitStatus, model, paths]);
+    const selectedPath = filePath && paths.includes(filePath) ? filePath : paths[0];
+    if (selectedPath) model.getItem(selectedPath)?.select();
+  }, [filePath, gitStatus, model, paths]);
+
+  useEffect(() => {
+    if (!repositoryFiles || !filePath) return;
+
+    const file = repositoryFiles.find((candidate) => candidate.name === filePath);
+    if (!file) return;
+
+    const lineRange = lineRangeFromHash(window.location.hash);
+    // CodeView installs its virtualized items in a layout effect, so navigate on the next frame.
+    const frame = window.requestAnimationFrame(() => {
+      if (!lineRange) {
+        viewerRef.current?.scrollTo({ type: "item", id: filePath, align: "start" });
+        return;
+      }
+
+      const lines = file.contents.split("\n");
+      // Pierre does not render the empty segment after a trailing newline.
+      const lineCount = Math.max(1, lines.length - Number(file.contents.endsWith("\n")));
+      const start = Math.min(lineRange.start, lineCount);
+      const end = Math.min(Math.max(start, lineRange.end), lineCount);
+      revealSelection({ endLineNumber: end, id: filePath, lineNumber: start });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [filePath, repositoryFiles, revealSelection]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -192,10 +287,16 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
           {deletions !== undefined && <span className="deletions">−{deletions.toLocaleString()}</span>}
         </div>
         <div className="viewer-actions">
-          <button onClick={() => setSidebarOpen((open) => !open)} title="Toggle file tree">
+          {repository && repositoryRef && defaultBranch && (
+            <div className="repository-tools">
+              <RepositorySearch files={codeFiles} onOpenResult={revealRepositoryResult} />
+              <RepositoryCompare currentRef={repositoryRef} defaultBranch={defaultBranch} repository={source.slice(0, 2).join("/")} />
+            </div>
+          )}
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title="Toggle file tree">
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           </button>
-          <button onClick={() => setCollapsed((value) => !value)}>
+          <button className="collapse-toggle" onClick={() => setCollapsed((value) => !value)}>
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
             {collapsed ? "Expand" : "Collapse"}
           </button>
@@ -223,9 +324,11 @@ export function DiffViewer({ additions, changedFiles, deletions, openAIConnected
           <CodeView
             ref={viewerRef}
             items={items}
+            onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
             options={{
               diffStyle: split ? "split" : "unified",
               diffIndicators: "bars",
+              enableLineSelection: repository,
               hunkSeparators: "line-info",
               lineDiffType: "word-alt",
               overflow: "scroll",

@@ -18,10 +18,13 @@ export type DiffDocument = {
   avatarUrl: string;
   baseLabel?: string;
   changedFiles?: number;
+  defaultBranch?: string;
   deletions?: number;
   description?: string;
+  filePath?: string;
   headLabel?: string;
   repository: string;
+  repositoryRef?: string;
   pullRequest?: PullRequestWorkspace;
   sourceUrl: string;
   title: string;
