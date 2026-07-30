@@ -457,6 +457,17 @@ function parseSource(source: string[]): {
       value: "",
     };
   }
+  // A trailing path without GitHub's /blob/<ref> prefix targets the default branch.
+  if (!parsedKind && source.length > 2) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      filePath: source.slice(2).join("/"),
+      kind: "repository",
+      repository,
+      value: "",
+    };
+  }
   if (source.length !== 4 || !value || !parsedKind) {
     throw new GitHubError("This GitHub URL is not supported", 400);
   }
@@ -1027,7 +1038,7 @@ function diffResponse(body: BodyInit): Response {
   });
 }
 
-/** Downloads one repository snapshot and returns every textual file without exposing GitHub credentials. */
+/** Downloads one repository snapshot and returns its requested file or every textual file. */
 async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositoryFile[]> {
   const revision = await getSourceRevision(parsed, token);
   const response = await githubResponse(`${parsed.apiPath}/tarball/${encodeURIComponent(revision)}`, token);
@@ -1043,7 +1054,8 @@ async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?
 
   for await (const entry of archive) {
     const name = entry.header.name.split("/").slice(1).join("/");
-    if (entry.header.type !== "file" || !name || !isRepositorySourceFile(name)) {
+    const requestedFile = !parsed.filePath || name === parsed.filePath;
+    if (entry.header.type !== "file" || !name || !requestedFile || !isRepositorySourceFile(name)) {
       entry.resume();
       continue;
     }
@@ -1055,6 +1067,9 @@ async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?
   }
 
   await extraction;
+  if (parsed.filePath && !files.length) {
+    throw new GitHubError("The requested file was not found or cannot be displayed", 404);
+  }
   return files.sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -1128,8 +1143,8 @@ function formatPullRequestFile(file: PullRequestFile): string {
 /** Converts a supported GitHub URL into this app's equivalent viewer path. */
 export function viewerPathFromUrl(value: string): string | null {
   try {
-    const bareRepository = /^\/?[\w.-]+\/[\w.-]+\/?$/.test(value);
-    const url = new URL(bareRepository ? `https://github.com/${value.replace(/^\/+/, "")}` : value);
+    const bareSource = /^\/?[\w.-]+\/[\w.-]+(?:\/[^?#]+)*\/?(?:#L[1-9]\d*(?:-L[1-9]\d*)?)?$/.test(value);
+    const url = new URL(bareSource ? `https://github.com/${value.replace(/^\/+/, "")}` : value);
     const source = url.pathname.replace(/\.(diff|patch)$/, "").split("/").filter(Boolean);
 
     if (url.hostname !== "github.com") {

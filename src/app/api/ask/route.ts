@@ -470,7 +470,7 @@ export async function POST(request: Request): Promise<Response> {
     ? body.source
     : [];
 
-  const repositoryFile = source.length >= 5 && source[2] === "blob";
+  const repositoryFile = source.length >= 3 && !["compare", "commit", "pull"].includes(source[2]);
   if (!question || (source.length !== 2 && source.length !== 4 && !repositoryFile)) {
     return NextResponse.json({ error: "Enter a question." }, { status: 400 });
   }
