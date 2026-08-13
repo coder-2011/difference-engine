@@ -1,7 +1,7 @@
 "use client";
 
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
-import { CornerDownLeft, GripHorizontal, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
@@ -38,6 +38,17 @@ type CodeSelectionLocation = {
   id: string;
   lineNumber: number;
   side?: "additions" | "deletions";
+};
+
+type Annotation = {
+  id: string;
+  selection: CodeSelection;
+  text: string;
+};
+
+type AnnotationDraft = {
+  selection: CodeSelection;
+  text: string;
 };
 
 type SelectionState = CodeSelection & {
@@ -90,6 +101,15 @@ type SnippetToken = {
   color?: string;
   content: string;
 };
+
+/** Formats source-anchored annotations as Markdown ready to paste into a review. */
+function formattedAnnotations(annotations: Annotation[]): string {
+  return annotations.map((annotation) => {
+    const location = annotation.selection.location;
+    const reference = location ? `\`${location.id}:${location.lineNumber}\` ` : "";
+    return `- ${reference}${annotation.text}`;
+  }).join("\n");
+}
 
 /** Renders a readable prompt preview that expands only when it exceeds two lines. */
 function PromptPreview({ question }: PromptPreviewProps) {
@@ -225,7 +245,11 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
   const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const annotationInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -234,6 +258,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const requestRef = useRef<AbortController | null>(null);
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
+  const annotationCounterRef = useRef(0);
 
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
@@ -260,9 +285,9 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
 
-      const maxX = Math.max(window.innerWidth - 154, 8);
-      const maxY = Math.max(window.innerHeight - 39, 8);
-      const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
+      const maxX = Math.max(window.innerWidth - 328, 8);
+      const maxY = Math.max(window.innerHeight - 144, 8);
+      const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 144;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
       const nextSelection = { location: selectionLocation(range), range, text, x, y };
@@ -273,7 +298,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
-      if (event.target instanceof Element && event.target.closest(".ai-chat-launch, .selection-trigger, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .selection-actions, .annotation-composer, .question-panel")) return;
       const pointer = { x: event.clientX, y: event.clientY };
       const origin = event.composedPath()[0];
       window.requestAnimationFrame(() => captureSelection(pointer, origin));
@@ -369,6 +394,52 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     followsConversationRef.current = true;
     setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /** Opens a compact composer for a note attached to the current highlighted code. */
+  function openAnnotationComposer(codeSelection: CodeSelection): void {
+    setAnnotationDraft({ selection: codeSelection, text: "" });
+    window.setTimeout(() => annotationInputRef.current?.focus(), 0);
+  }
+
+  /** Adds one non-empty annotation while retaining the exact code range it describes. */
+  function addAnnotation(codeSelection: CodeSelection, value: string): void {
+    const text = value.trim();
+    if (!text) return;
+
+    annotationCounterRef.current += 1;
+    setAnnotations((current) => [...current, {
+      id: `annotation-${annotationCounterRef.current}`,
+      selection: codeSelection,
+      text,
+    }]);
+  }
+
+  /** Saves the manual annotation draft and returns the selection controls to their normal state. */
+  function saveAnnotation(event: FormEvent): void {
+    event.preventDefault();
+    if (!annotationDraft) return;
+
+    addAnnotation(annotationDraft.selection, annotationDraft.text);
+    setAnnotationDraft(null);
+  }
+
+  /** Removes an annotation without changing the underlying highlighted code selection. */
+  function removeAnnotation(annotationId: string): void {
+    setAnnotations((current) => current.filter((annotation) => annotation.id !== annotationId));
+  }
+
+  /** Copies every source reference and annotation in one Markdown-ready clipboard payload. */
+  async function copyAnnotations(): Promise<void> {
+    if (!annotations.length) return;
+
+    try {
+      await navigator.clipboard.writeText(formattedAnnotations(annotations));
+      setCopyStatus("Copied");
+      window.setTimeout(() => setCopyStatus(""), 2_000);
+    } catch {
+      setCopyStatus("Copy failed");
+    }
   }
 
   /** Scrolls back to a saved code range and highlights it again in the diff. */
@@ -631,6 +702,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
     const taskContext = selection.context.map((codeSelection) => codeSelection.text).join("\n\n");
+    const annotationSelection = selection.context.at(-1);
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -732,6 +804,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
           if (event.type === "delta" && event.text) queueDelta(event.text);
           if (event.type === "suggestion" && event.text) streamedSuggestion = event.text;
+          if (event.type === "annotation" && event.text && annotationSelection) addAnnotation(annotationSelection, event.text);
           if (event.type === "error") throw new Error(event.message);
         }
 
@@ -793,27 +866,54 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   return (
     <>
       {!selection?.open && (
-        <button aria-label="Open AI chat" className="ai-chat-launch" onClick={openChat} type="button">
-          <Sparkles size={14} /> AI chat
-        </button>
+        <div className="ai-chat-actions">
+          <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
+            <Sparkles size={14} /> Ask Diffs
+          </button>
+          <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
+            <ClipboardCopy size={14} /> Copy Annotations
+          </button>
+          {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
+        </div>
       )}
 
-      {triggerSelection && (
-        <button
-          className="selection-trigger"
-          style={{ left: triggerSelection.x, top: triggerSelection.y }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={addsToTask ? addSelectionToTask : openPanel}
+      {triggerSelection && !annotationDraft && (
+        <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
+          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={addsToTask ? addSelectionToTask : openPanel} type="button">
+            <Plus size={13} /> {addsToTask ? "Add to task" : "Ask Diffs"}
+          </button>
+          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
+            <MessageSquarePlus size={13} /> Annotate
+          </button>
+        </div>
+      )}
+
+      {annotationDraft && (
+        <form
+          className="annotation-composer"
+          onSubmit={saveAnnotation}
+          style={{ left: annotationDraft.selection.x, top: annotationDraft.selection.y }}
         >
-          <Plus size={13} /> {addsToTask ? "Add to task" : "Ask Diffs"}
-        </button>
+          <textarea
+            aria-label="Annotation"
+            onChange={(event) => setAnnotationDraft((current) => current ? { ...current, text: event.target.value } : current)}
+            placeholder="Add a short annotation"
+            ref={annotationInputRef}
+            rows={3}
+            value={annotationDraft.text}
+          />
+          <div>
+            <button onClick={() => setAnnotationDraft(null)} type="button">Cancel</button>
+            <button disabled={!annotationDraft.text.trim()} type="submit">Add annotation</button>
+          </div>
+        </form>
       )}
 
       {selection?.open && (
         <aside
           ref={panelRef}
           className={`question-panel${isDraggingFiles ? " dragging-files" : ""}`}
-          aria-label={selection.context.length ? "Ask about selected code" : "AI chat"}
+          aria-label={selection.context.length ? "Ask about selected code" : "Ask Diffs"}
           onDragEnter={beginFileDrag}
           onDragLeave={endFileDrag}
           onDragOver={(event) => event.preventDefault()}
@@ -827,7 +927,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
             onPointerUp={stopDragging}
             onPointerCancel={stopDragging}
           >
-            <span><Sparkles size={14} /> {selection.context.length ? "Ask Diffs" : "AI chat"} <GripHorizontal className="drag-hint" size={13} /></span>
+            <span><Sparkles size={14} /> Ask Diffs <GripHorizontal className="drag-hint" size={13} /></span>
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 
@@ -849,6 +949,20 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
                   key={`${codeSelection.text}-${index}`}
                   onShow={showSelection}
                 />
+              ))}
+            </div>
+          )}
+
+          {annotations.length > 0 && (
+            <div className="annotation-list">
+              <div className="annotation-list-title">Annotations <span>{annotations.length}</span></div>
+              {annotations.map((annotation) => (
+                <div className="annotation-item" key={annotation.id}>
+                  <button onClick={() => showSelection(annotation.selection)} type="button">
+                    {annotation.text}
+                  </button>
+                  <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+                </div>
               ))}
             </div>
           )}
