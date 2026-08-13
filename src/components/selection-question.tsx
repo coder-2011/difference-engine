@@ -46,7 +46,7 @@ type Annotation = {
   text: string;
 };
 
-type AnnotationDraft = {
+type AnnotationDraft = Point & {
   selection: CodeSelection;
   text: string;
 };
@@ -139,8 +139,10 @@ function PromptPreview({ question }: PromptPreviewProps) {
 
 /** Returns the actual range inside Pierre's shadow root instead of the document-level host boundary. */
 function selectedRange(browserSelection: Selection, origin?: EventTarget): Range | undefined {
-  const node = origin instanceof Node ? origin : browserSelection.anchorNode;
-  const root = node?.getRootNode();
+  const originNode = origin instanceof Node ? origin : undefined;
+  const anchorRoot = browserSelection.anchorNode?.getRootNode();
+  const originRoot = originNode?.getRootNode();
+  const root = anchorRoot instanceof ShadowRoot ? anchorRoot : originRoot;
   if (!(root instanceof ShadowRoot)) {
     return browserSelection.rangeCount ? browserSelection.getRangeAt(0).cloneRange() : undefined;
   }
@@ -285,9 +287,9 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
 
-      const maxX = Math.max(window.innerWidth - 328, 8);
-      const maxY = Math.max(window.innerHeight - 144, 8);
-      const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 144;
+      const maxX = Math.max(window.innerWidth - 238, 8);
+      const maxY = Math.max(window.innerHeight - 39, 8);
+      const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
       const nextSelection = { location: selectionLocation(range), range, text, x, y };
@@ -398,7 +400,9 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
   /** Opens a compact composer for a note attached to the current highlighted code. */
   function openAnnotationComposer(codeSelection: CodeSelection): void {
-    setAnnotationDraft({ selection: codeSelection, text: "" });
+    const x = Math.min(codeSelection.x, Math.max(window.innerWidth - 328, 8));
+    const y = Math.min(codeSelection.y, Math.max(window.innerHeight - 144, 8));
+    setAnnotationDraft({ selection: codeSelection, text: "", x, y });
     window.setTimeout(() => annotationInputRef.current?.focus(), 0);
   }
 
