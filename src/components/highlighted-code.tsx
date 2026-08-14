@@ -31,54 +31,44 @@ type SupportedLanguage = typeof LANGUAGE_ALIASES[keyof typeof LANGUAGE_ALIASES];
 type CodeProps = ComponentPropsWithoutRef<"code">;
 
 let highlighterPromise: ReturnType<typeof loadHighlighter> | undefined;
+const languagePromises: Partial<Record<SupportedLanguage, Promise<void>>> = {};
 
-/** Loads only the grammars that commonly appear in a pull-request discussion. */
+/** Defers the Shiki engine and every grammar until Markdown contains a supported fence. */
 async function loadHighlighter() {
-  const [
-    { createHighlighterCore },
-    { createOnigurumaEngine },
-    { default: githubDark },
-    { default: bash },
-    { default: css },
-    { default: html },
-    { default: javascript },
-    { default: json },
-    { default: jsx },
-    { default: markdown },
-    { default: python },
-    { default: tsx },
-    { default: typescript },
-    { default: xml },
-    { default: yaml },
-  ] = await Promise.all([
+  const [{ createBundledHighlighter }, { createOnigurumaEngine }] = await Promise.all([
     import("shiki/core"),
     import("shiki/engine/oniguruma"),
-    import("@shikijs/themes/github-dark"),
-    import("@shikijs/langs/bash"),
-    import("@shikijs/langs/css"),
-    import("@shikijs/langs/html"),
-    import("@shikijs/langs/javascript"),
-    import("@shikijs/langs/json"),
-    import("@shikijs/langs/jsx"),
-    import("@shikijs/langs/markdown"),
-    import("@shikijs/langs/python"),
-    import("@shikijs/langs/tsx"),
-    import("@shikijs/langs/typescript"),
-    import("@shikijs/langs/xml"),
-    import("@shikijs/langs/yaml"),
   ]);
-
-  return createHighlighterCore({
-    engine: createOnigurumaEngine(() => import("shiki/wasm")),
-    langs: [bash, css, html, javascript, json, jsx, markdown, python, tsx, typescript, xml, yaml],
-    themes: [githubDark],
+  const createHighlighter = createBundledHighlighter({
+    engine: () => createOnigurumaEngine(() => import("shiki/wasm")),
+    langs: {
+      bash: () => import("@shikijs/langs/bash"),
+      css: () => import("@shikijs/langs/css"),
+      html: () => import("@shikijs/langs/html"),
+      javascript: () => import("@shikijs/langs/javascript"),
+      json: () => import("@shikijs/langs/json"),
+      jsx: () => import("@shikijs/langs/jsx"),
+      markdown: () => import("@shikijs/langs/markdown"),
+      python: () => import("@shikijs/langs/python"),
+      tsx: () => import("@shikijs/langs/tsx"),
+      typescript: () => import("@shikijs/langs/typescript"),
+      xml: () => import("@shikijs/langs/xml"),
+      yaml: () => import("@shikijs/langs/yaml"),
+    },
+    themes: { "github-dark": () => import("@shikijs/themes/github-dark") },
   });
+  return createHighlighter({ langs: [], themes: ["github-dark"] });
 }
 
-/** Shares one lazy highlighter across all Markdown code blocks in the browser. */
+/** Shares one lazy highlighter and defers grammar modules until a fence requests one. */
 function getHighlighter() {
   highlighterPromise ??= loadHighlighter();
   return highlighterPromise;
+}
+
+/** Loads one grammar once so simultaneous code blocks do not fetch it more than once. */
+function loadLanguage(highlighter: Awaited<ReturnType<typeof loadHighlighter>>, language: SupportedLanguage): Promise<void> {
+  return languagePromises[language] ??= highlighter.loadLanguage(language);
 }
 
 /** Maps a fenced-Markdown class name to a bundled grammar, if one exists. */
@@ -112,7 +102,10 @@ export function HighlightedCode({ children, className, ...props }: CodeProps) {
     }
 
     void getHighlighter()
-      .then((highlighter) => highlighter.codeToHtml(deferredSource, { lang: language, theme: "github-dark" }))
+      .then(async (highlighter) => {
+        await loadLanguage(highlighter, language);
+        return highlighter.codeToHtml(deferredSource, { lang: language, theme: "github-dark" });
+      })
       .then((html) => {
         if (!cancelled) setHighlighted(html);
       })
