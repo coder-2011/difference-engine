@@ -5,7 +5,8 @@ import Image from "next/image";
 import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
-import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
+import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
+import type { PullRequestAction, PullRequestMergeMethod, PullRequestReviewEvent, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
   description?: string;
@@ -36,6 +37,10 @@ const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   "edit-title": "Pull request title updated on GitHub.",
   merge: "Pull request merged on GitHub.",
   ready: "Pull request marked ready for review on GitHub.",
+  reply: "Reply posted to GitHub.",
+  review: "Review submitted to GitHub.",
+  "resolve-thread": "Review thread resolved on GitHub.",
+  "unresolve-thread": "Review thread reopened on GitHub.",
 };
 const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge commit",
@@ -112,6 +117,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [body, setBody] = useState(initialBody ?? "");
   const [bodyDraft, setBodyDraft] = useState<string>();
   const [comment, setComment] = useState("");
+  const [reviewBody, setReviewBody] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
   const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
@@ -119,11 +125,27 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [celebrating, setCelebrating] = useState(false);
   const mergeMenuRef = useRef<HTMLDivElement>(null);
   const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
+  // Keep a preserved client workspace renderable while a deployment adds new conversation fields.
+  const reviewThreads = workspace.reviewThreads ?? [];
+  const timelineEvents = workspace.timelineEvents ?? [];
   // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
   const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
   const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
   const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
   const openState = openPullRequestState(workspace);
+  // GitHub interleaves normal comments, reviews, and activity records by time in one conversation.
+  const conversationItems = [
+    ...workspace.comments.map((entry) => ({ createdAt: entry.createdAt, entry, kind: "comment" as const, key: entry.key })),
+    ...timelineEvents.map((event) => ({ createdAt: event.createdAt, event, kind: "event" as const, key: event.key })),
+  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const reviewThreadsByReview = new Map<number, typeof reviewThreads>();
+  // Group each inline discussion once before rendering every submitted review in the timeline.
+  for (const thread of reviewThreads) {
+    if (!thread.reviewId) continue;
+    const threads = reviewThreadsByReview.get(thread.reviewId) ?? [];
+    threads.push(thread);
+    reviewThreadsByReview.set(thread.reviewId, threads);
+  }
   // Hide automation metadata in rendered prose while retaining it in the editable GitHub body.
   const visibleBody = body.replace(PR_STATES_BLOCK, "").trim();
 
@@ -249,6 +271,12 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     if (await runAction({ action: "comment", body: comment })) setComment("");
   }
 
+  /** Submits the selected GitHub review state with the optional review body. */
+  async function submitReview(event: PullRequestReviewEvent): Promise<void> {
+    if (pendingAction) return;
+    if (await runAction({ action: "review", body: reviewBody, event })) setReviewBody("");
+  }
+
   /** Saves the complete Markdown body to GitHub and updates the rendered description only after confirmation. */
   async function submitBody(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -351,16 +379,31 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
             </details>
           )}
           {workspace.commitsUnavailable && <p className="pr-conversation-note">Commit history may be incomplete.</p>}
-          {workspace.comments.length ? workspace.comments.map((entry) => (
-            <article className="pr-comment" key={entry.key}>
-              <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
-              <div>
-                <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time></header>
-                {entry.context && <span className="pr-comment-context">{entry.context}</span>}
-                <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>
+          {conversationItems.length || reviewThreads.length ? conversationItems.map((item) => {
+            if (item.kind === "event") {
+              return <p className="pr-timeline-event" key={item.key}><time dateTime={item.event.createdAt}>{commentDate(item.event.createdAt)}</time>{item.event.text}</p>;
+            }
+
+            const entry = item.entry;
+            return (
+              <div className="pr-conversation-entry" key={item.key}>
+                <article className="pr-comment">
+                  <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
+                  <div>
+                    <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time>{entry.updatedAt !== entry.createdAt && <span>edited</span>}</header>
+                    {entry.context && <span className="pr-comment-context">{entry.context}</span>}
+                    {entry.body && <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>}
+                  </div>
+                </article>
+                {entry.reviewId && reviewThreadsByReview.get(entry.reviewId)?.map((thread) => (
+                  <PullRequestReviewThread key={thread.comments[0]?.id ?? thread.path} onAction={runAction} pending={Boolean(pendingAction)} thread={thread} />
+                ))}
               </div>
-            </article>
-          )) : !workspace.conversationUnavailable && <p className="pr-comment-empty">No conversation yet.</p>}
+            );
+          }) : !workspace.conversationUnavailable && <p className="pr-comment-empty">No conversation yet.</p>}
+          {reviewThreads.filter((thread) => !thread.reviewId).map((thread) => (
+            <PullRequestReviewThread key={thread.comments[0]?.id ?? thread.path} onAction={runAction} pending={Boolean(pendingAction)} thread={thread} />
+          ))}
           {workspace.conversationUnavailable && <p className="pr-conversation-note">Conversation may be incomplete.</p>}
         </div>
 
@@ -379,9 +422,22 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
         {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose || workspace.canReview) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
+            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose || workspace.canReview) && <div className="pr-action-row">
+              {workspace.canReview && (
+                <details className="pr-review-form">
+                  <summary>Review</summary>
+                  <div className="pr-review-form-panel">
+                    <textarea aria-label="Pull request review" disabled={Boolean(pendingAction)} onChange={(event) => setReviewBody(event.target.value)} placeholder="Leave a review comment…" value={reviewBody} />
+                    <div>
+                      <button disabled={Boolean(pendingAction) || !reviewBody.trim()} onClick={() => void submitReview("REQUEST_CHANGES")} type="button">Request changes</button>
+                      <button disabled={Boolean(pendingAction) || !reviewBody.trim()} onClick={() => void submitReview("COMMENT")} type="button">Comment</button>
+                      <button disabled={Boolean(pendingAction)} onClick={() => void submitReview("APPROVE")} type="button">Approve</button>
+                    </div>
+                  </div>
+                </details>
+              )}
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">

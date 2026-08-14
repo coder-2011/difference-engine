@@ -3,7 +3,7 @@ import { GitHubError, performPullRequestAction } from "@/lib/github";
 import { isRecord } from "@/lib/json";
 import { isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
-import type { PullRequestAction, PullRequestMergeMethod } from "@/types/github";
+import type { PullRequestAction, PullRequestMergeMethod, PullRequestReviewEvent } from "@/types/github";
 
 type RouteContext = {
   params: Promise<{ source: string[] }>;
@@ -17,6 +17,10 @@ function parsePullRequestAction(value: unknown): PullRequestAction | null {
     return { action: "comment", body: value.body };
   }
 
+  if (value.action === "reply" && typeof value.body === "string" && typeof value.commentId === "number") {
+    return { action: "reply", body: value.body, commentId: value.commentId };
+  }
+
   if (value.action === "close") return { action: "close" };
 
   if (value.action === "edit-title" && typeof value.title === "string") {
@@ -28,6 +32,22 @@ function parsePullRequestAction(value: unknown): PullRequestAction | null {
   }
 
   if (value.action === "ready") return { action: "ready" };
+
+  if (
+    value.action === "review"
+    && typeof value.body === "string"
+    && (value.event === "APPROVE" || value.event === "COMMENT" || value.event === "REQUEST_CHANGES")
+  ) {
+    return { action: "review", body: value.body, event: value.event as PullRequestReviewEvent };
+  }
+
+  if (value.action === "resolve-thread" && typeof value.threadId === "string") {
+    return { action: "resolve-thread", threadId: value.threadId };
+  }
+
+  if (value.action === "unresolve-thread" && typeof value.threadId === "string") {
+    return { action: "unresolve-thread", threadId: value.threadId };
+  }
 
   if (value.action === "merge" && (value.method === "merge" || value.method === "rebase" || value.method === "squash")) {
     return { action: "merge", method: value.method as PullRequestMergeMethod };
