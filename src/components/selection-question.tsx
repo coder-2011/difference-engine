@@ -293,6 +293,8 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
   const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
+  // Keep the user-visible scale anchored to the default Ask Diffs text size.
+  const chatZoomPercent = Math.round((chatFontSize / DEFAULT_CHAT_FONT_SIZE) * 100);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
@@ -1131,6 +1133,7 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
             {attachmentError && <p className="attachment-error">{attachmentError}</p>}
             <div aria-label="Chat text size" className="chat-zoom-controls">
               <button aria-label="Decrease chat text size" disabled={chatFontSize === MIN_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(-1)} type="button"><Minus size={12} /></button>
+              <span aria-live="polite" className="chat-zoom-value">{chatZoomPercent}%</span>
               <button aria-label="Increase chat text size" disabled={chatFontSize === MAX_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(1)} type="button"><Plus size={12} /></button>
             </div>
             <div className="question-input">

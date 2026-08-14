@@ -3609,7 +3609,8 @@ button {
 .question-panel form {
   display: grid;
   flex: none;
-  grid-template-columns: auto 1fr auto auto;
+  position: relative;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   padding: 11px;
   border-top: 1px solid var(--line);
@@ -3686,15 +3687,20 @@ button {
 }
 
 .chat-zoom-controls {
-  align-self: end;
+  /* Overlay the compact zoom controls in the input footer instead of taking a grid column. */
+  position: absolute;
+  z-index: 2;
+  bottom: 14px;
+  left: 11px;
   display: flex;
+  align-items: center;
   gap: 2px;
 }
 
 .chat-zoom-controls button {
   display: grid;
-  width: 29px;
-  height: 29px;
+  width: 23px;
+  height: 23px;
   place-items: center;
   padding: 0;
   border: 1px solid #35343a;
@@ -3702,6 +3708,14 @@ button {
   background: transparent;
   color: #958e9d;
   cursor: pointer;
+}
+
+.chat-zoom-value {
+  min-width: 29px;
+  color: #958e9d;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: center;
 }
 
 .chat-zoom-controls button:hover:not(:disabled) {
@@ -3819,7 +3833,8 @@ button {
 
 .question-panel textarea {
   min-height: 72px;
-  padding: 2px 0;
+  box-sizing: border-box;
+  padding: 2px 0 30px;
   resize: none;
   border: 0;
   outline: 0;
