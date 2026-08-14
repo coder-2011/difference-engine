@@ -4,7 +4,7 @@ import {
   isSameOrigin,
   OPENAI_SESSION_COOKIE,
 } from "@/lib/openai-auth";
-import { getRepositoryContext, readRepositoryFiles } from "@/lib/github";
+import { getRepositoryContext, readRepositoryFiles, type RepositoryContext } from "@/lib/github";
 import { isRecord } from "@/lib/json";
 import { getGitHubAccessToken } from "@/lib/session";
 import type { ChatTurn } from "@/types/chat";
@@ -198,7 +198,7 @@ function requestedPaths(argumentsJson: string): string[] {
 }
 
 /** Executes repository reads and turns each result into the Response API's tool-output shape. */
-async function repositoryToolOutputs(calls: RepositoryToolCall[], source: string[], token?: string): Promise<unknown[]> {
+async function repositoryToolOutputs(calls: RepositoryToolCall[], source: string[], repositoryContext: RepositoryContext, token?: string): Promise<unknown[]> {
   return Promise.all(calls.map(async (call) => {
     const paths = requestedPaths(call.arguments);
     if (!paths.length) {
@@ -210,7 +210,7 @@ async function repositoryToolOutputs(calls: RepositoryToolCall[], source: string
     }
 
     try {
-      const result = await readRepositoryFiles(source, paths, token);
+      const result = await readRepositoryFiles(source, paths, token, repositoryContext.snapshot);
       return { type: "function_call_output", call_id: call.callId, output: JSON.stringify(result) };
     } catch {
       return {
@@ -254,7 +254,7 @@ export async function POST(request: Request): Promise<Response> {
     return response;
   }
 
-  let repositoryContext: string;
+  let repositoryContext: RepositoryContext;
 
   try {
     const githubToken = await getGitHubAccessToken(request);
@@ -275,7 +275,7 @@ export async function POST(request: Request): Promise<Response> {
     `<conversation_history>\n${history.map((turn) => `Selected code: ${turn.selection}\nUser: ${turn.question}\nAssistant: ${turn.answer}`).join("\n\n") || "No previous turns."}\n</conversation_history>`,
     `<question>\n${question}\n</question>`,
     `<selected_code>\n${selection}\n</selected_code>`,
-    `<repository_context>\n${repositoryContext}\n</repository_context>`,
+    `<repository_context>\n${repositoryContext.text}\n</repository_context>`,
   ].join("\n\n");
   const model = process.env.OPENAI_OAUTH_MODEL ?? "gpt-5.6-terra";
   const answerMessages: unknown[] = [{ role: "user", content: [{ type: "input_text", text: answerInput }] }];
@@ -326,7 +326,7 @@ export async function POST(request: Request): Promise<Response> {
           const calls = repositoryToolCalls(answer.output);
           if (!calls.length) break;
 
-          answerMessages.push(...answer.output, ...await repositoryToolOutputs(calls, source, githubToken));
+          answerMessages.push(...answer.output, ...await repositoryToolOutputs(calls, source, repositoryContext, githubToken));
           const followup = await requestModel(
             headers,
             model,

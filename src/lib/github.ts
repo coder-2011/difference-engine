@@ -165,6 +165,16 @@ type GitTree = {
   truncated: boolean;
 };
 
+type RepositorySnapshot = {
+  revision: string;
+  tree: GitTree;
+};
+
+export type RepositoryContext = {
+  snapshot: RepositorySnapshot;
+  text: string;
+};
+
 const CONTEXT_TREE_LIMIT = 30_000;
 const CONTEXT_DIFF_LIMIT = 50_000;
 const CONTEXT_FILES_LIMIT = 70_000;
@@ -624,6 +634,13 @@ async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?:
   return pullRequest.head.sha;
 }
 
+/** Loads the immutable revision and file tree shared by one code-question request. */
+async function getRepositorySnapshot(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositorySnapshot> {
+  const revision = await getSourceRevision(parsed, token);
+  const tree = await githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodeURIComponent(revision)}?recursive=1`, token);
+  return { revision, tree };
+}
+
 /** Extracts unique destination paths from a standard Git patch. */
 function changedPathsFromDiff(diff: string): string[] {
   const paths = Array.from(diff.matchAll(/^\+\+\+ b\/(.+)$/gm), (match) => match[1]);
@@ -637,30 +654,34 @@ function decodeGitBlob(blob: GitBlob): string {
   return content.includes("\0") ? "" : content;
 }
 
-/** Builds bounded repository-wide context around the exact revision being reviewed. */
-export async function getRepositoryContext(source: string[], token?: string): Promise<string> {
+/** Builds bounded repository-wide context and retains its exact revision for later file lookups. */
+export async function getRepositoryContext(source: string[], token?: string): Promise<RepositoryContext> {
   const parsed = parseSource(source);
-  const revision = await getSourceRevision(parsed, token);
-  const encodedRevision = encodeURIComponent(revision);
-  const [tree, diff] = await Promise.all([
-    githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodedRevision}?recursive=1`, token),
+  const [snapshot, diff] = await Promise.all([
+    getRepositorySnapshot(parsed, token),
     getDiffResponse(source, token).then((response) => response.text()),
   ]);
-  const blobByPath = new Map<string, GitTreeEntry>();
+  const { revision, tree } = snapshot;
+  const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
+  const preferredPaths = [...new Set([...changedPathsFromDiff(diff), ...rootFiles])];
+  const preferredPathSet = new Set(preferredPaths);
+  const preferredBlobsByPath = new Map<string, GitTreeEntry>();
   let treeText = "";
 
-  // Build the lookup once, but stop materializing path text at the model's fixed budget.
+  // Keep only model-context candidates while building the bounded tree summary.
   for (const entry of tree.tree) {
     if (entry.type !== "blob") continue;
-    blobByPath.set(entry.path, entry);
+    if (preferredPathSet.has(entry.path)) preferredBlobsByPath.set(entry.path, entry);
     if (treeText.length < CONTEXT_TREE_LIMIT) treeText += `${treeText ? "\n" : ""}${entry.path}`;
   }
-  const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
-  const preferredPaths = [...changedPathsFromDiff(diff), ...rootFiles];
-  const entries = [...new Set(preferredPaths)]
-    .map((path) => blobByPath.get(path))
-    .filter((entry): entry is GitTreeEntry => Boolean(entry && (entry.size ?? 0) <= CONTEXT_FILES_LIMIT))
-    .slice(0, CONTEXT_FILE_COUNT);
+
+  const entries: GitTreeEntry[] = [];
+  for (const path of preferredPaths) {
+    const entry = preferredBlobsByPath.get(path);
+    if (!entry || (entry.size ?? 0) > CONTEXT_FILES_LIMIT) continue;
+    entries.push(entry);
+    if (entries.length === CONTEXT_FILE_COUNT) break;
+  }
 
   const contents = await Promise.all(entries.map(async (entry) => {
     const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
@@ -677,22 +698,31 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
 
   treeText = treeText.slice(0, CONTEXT_TREE_LIMIT);
   const truncation = tree.truncated ? "\n(GitHub truncated this unusually large tree.)" : "";
-  return [
+  const text = [
     `Repository: ${parsed.repository}`,
     `Revision: ${revision}`,
     `Repository tree:\n${treeText}${truncation}`,
     `Changed and root file contents:${fileContext || "\nNo textual files were available."}`,
     `Full change diff:\n${diff.slice(0, CONTEXT_DIFF_LIMIT)}`,
   ].join("\n\n");
+  return { snapshot, text };
 }
 
-/** Reads a small, exact set of files so the code-question agent can inspect missing context. */
-export async function readRepositoryFiles(source: string[], paths: string[], token?: string): Promise<{ files: Array<{ path: string; text?: string; error?: string }>; revision: string }> {
-  const parsed = parseSource(source);
-  const revision = await getSourceRevision(parsed, token);
-  const tree = await githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodeURIComponent(revision)}?recursive=1`, token);
-  const filesByPath = new Map(tree.tree.filter((entry) => entry.type === "blob").map((entry) => [entry.path, entry]));
+/** Reads a small, exact set of files from the same revision that supplied the model context. */
+export async function readRepositoryFiles(source: string[], paths: string[], token?: string, snapshot?: RepositorySnapshot): Promise<{ files: Array<{ path: string; text?: string; error?: string }>; revision: string }> {
+  const repositorySnapshot = snapshot ?? await getRepositorySnapshot(parseSource(source), token);
+  const { revision, tree } = repositorySnapshot;
   const requestedPaths = [...new Set(paths)].slice(0, TOOL_FILE_COUNT);
+  const requestedPathSet = new Set(requestedPaths);
+  const filesByPath = new Map<string, GitTreeEntry>();
+
+  // Stop retaining tree entries once every requested blob has been found.
+  for (const entry of tree.tree) {
+    if (entry.type !== "blob" || !requestedPathSet.has(entry.path)) continue;
+    filesByPath.set(entry.path, entry);
+    if (filesByPath.size === requestedPaths.length) break;
+  }
+
   const files: Array<{ path: string; text?: string; error?: string }> = [];
   let remaining = TOOL_FILES_LIMIT;
 
