@@ -1757,10 +1757,10 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid #1a7f37;
+  border: 1px solid #144720;
   border-radius: 0 6px 6px 0;
   outline: 0;
-  background: #238636;
+  background: #1b5e2b;
   color: #ffffff;
   cursor: pointer;
   font-family: var(--font-sans);
@@ -1769,8 +1769,8 @@ button {
 }
 
 .merge-method-trigger[aria-expanded="true"] {
-  border-color: #2ea043;
-  background: #2ea043;
+  border-color: #237238;
+  background: #237238;
 }
 
 .merge-method-trigger[aria-expanded="true"] svg {
@@ -1845,7 +1845,7 @@ button {
   height: 30px;
   padding: 0 12px;
   border-radius: 6px 0 0 6px;
-  background: #238636;
+  background: #1b5e2b;
   color: #ffffff;
 }
 
@@ -1862,7 +1862,7 @@ button {
 
 .merge-button:hover,
 .merge-method-trigger:hover {
-  background: #2ea043;
+  background: #237238;
 }
 
 .ready-review-button {
