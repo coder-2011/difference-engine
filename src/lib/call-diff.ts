@@ -300,8 +300,39 @@ function markTree(node: CallTreeNode, status: Exclude<CallDiffStatus, "same">): 
   return { ...node, children: node.children.map((child) => markTree(child, status)), status };
 }
 
+/** Compares structural call steps without serializing temporary JSON for every function. */
+function sameSteps(before: CallStep[], after: CallStep[]): boolean {
+  if (before.length !== after.length) return false;
+
+  for (let index = 0; index < before.length; index += 1) {
+    const beforeStep = before[index]!;
+    const afterStep = after[index]!;
+    if (beforeStep.key !== afterStep.key || beforeStep.type !== afterStep.type || !sameSteps(beforeStep.children, afterStep.children)) return false;
+  }
+
+  return true;
+}
+
+/** Compares two functions by the structural fields that define their visible call flow. */
+function sameFunctionShape(before: FunctionInfo | undefined, after: FunctionInfo | undefined): boolean {
+  return before === after || Boolean(before && after && sameSteps(before.steps, after.steps));
+}
+
+/** Checks whether an LCS diff can retain the fully aligned child sequence without a matrix. */
+function haveAlignedKeys(before: CallTreeNode[], after: CallTreeNode[]): boolean {
+  if (before.length !== after.length) return false;
+
+  for (let index = 0; index < before.length; index += 1) {
+    if (before[index]!.key !== after[index]!.key) return false;
+  }
+
+  return true;
+}
+
 /** Diffs ordered child calls through LCS so additions and removals retain source order. */
 function diffChildren(before: CallTreeNode[], after: CallTreeNode[]): CallDiffNode[] {
+  if (haveAlignedKeys(before, after)) return before.map((node, index) => diffTree(node, after[index]!));
+
   const rows = before.length;
   const columns = after.length;
   const matches = Array.from({ length: rows + 1 }, () => Array<number>(columns + 1).fill(0));
@@ -348,12 +379,6 @@ function treeHasChanges(node: CallDiffNode): boolean {
   return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
-/** Serializes only structural step data so line movement does not create a false call-flow change. */
-function functionShape(info: FunctionInfo | undefined): string {
-  if (!info) return "";
-  return JSON.stringify(info.steps, ["children", "key", "type"]);
-}
-
 /** Reads both snapshots, infers affected exported entrypoints, and returns their compact call-tree diffs. */
 export async function getCallDiffDocument(source: string[], token?: string): Promise<CallDiffDocument> {
   const [snapshot, ts] = await Promise.all([getCallDiffSource(source, token), import("typescript")]);
@@ -365,7 +390,7 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
   for (const id of functionIds) {
     const beforeInfo = before.byId.get(id);
     const afterInfo = after.byId.get(id);
-    if (functionShape(beforeInfo) === functionShape(afterInfo)) continue;
+    if (sameFunctionShape(beforeInfo, afterInfo)) continue;
     const tree = diffTree(beforeInfo && buildCallTree(beforeInfo, before), afterInfo && buildCallTree(afterInfo, after));
     if (!treeHasChanges(tree)) continue;
     entries.push({ exported: Boolean(beforeInfo?.exported || afterInfo?.exported), key: id, tree });
