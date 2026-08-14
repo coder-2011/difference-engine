@@ -2816,11 +2816,12 @@ button {
   background: transparent;
   color: #c7c1d0;
   cursor: pointer;
-  font-size: calc(var(--chat-font-size) * 0.84);
-  line-height: 1.4;
+  font-size: calc(var(--chat-font-size) * 0.92);
+  font-weight: 500;
+  line-height: 1.45;
   text-align: left;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .annotation-item > button:first-child:hover {
