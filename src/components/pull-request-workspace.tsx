@@ -38,6 +38,11 @@ const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   merge: "Pull request merged on GitHub.",
   ready: "Pull request marked ready for review on GitHub.",
 };
+const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge commit",
+  rebase: "Rebase and merge",
+  squash: "Squash and merge",
+};
 const PR_STATES_BLOCK = /<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/;
 const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "0ms", drift: "-30px", duration: "2680ms", left: "4%", size: 9 },
@@ -369,12 +374,13 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">
+                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button">Merge pull request</button>
                   {workspace.mergeMethods.length > 1 && (
                     <div className="merge-method-dropdown" ref={mergeMenuRef}>
                       <button
                         aria-expanded={mergeMenuOpen}
                         aria-haspopup="menu"
-                        aria-label={`Merge method: ${mergeMethod}`}
+                        aria-label={`Merge method: ${MERGE_METHOD_LABELS[mergeMethod]}`}
                         className="merge-method-trigger"
                         disabled={Boolean(pendingAction)}
                         onClick={() => setMergeMenuOpen((open) => !open)}
@@ -382,7 +388,6 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                         ref={mergeMethodTriggerRef}
                         type="button"
                       >
-                        <span>{mergeMethod}</span>
                         <ChevronDown aria-hidden="true" size={13} />
                       </button>
                       {mergeMenuOpen && (
@@ -396,15 +401,14 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                               role="menuitemradio"
                               type="button"
                             >
-                              <span>{method}</span>
                               {method === mergeMethod && <Check aria-hidden="true" size={12} />}
+                              <span>{MERGE_METHOD_LABELS[method]}</span>
                             </button>
                           ))}
                         </div>
                       )}
                     </div>
                   )}
-                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button">Merge</button>
                 </div>
               )}
               {workspace.canClose && <button className="close-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "close" })} type="button"><GitPullRequestClosed size={13} /> Close</button>}
