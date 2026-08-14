@@ -298,8 +298,8 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const resizeRef = useRef<ResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
-  const chatSelectionRangeRef = useRef<Range>();
-  const activeChatSelectionRef = useRef<CodeSelection>();
+  const chatSelectionRangeRef = useRef<Range | undefined>(undefined);
+  const activeChatSelectionRef = useRef<CodeSelection | undefined>(undefined);
   const priorHighlightsRef = useRef<string[]>([]);
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
