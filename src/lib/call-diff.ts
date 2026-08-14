@@ -33,7 +33,7 @@ type FunctionIndex = {
   bySymbol: Map<string, FunctionInfo[]>;
 };
 
-type CallTreeNode = Omit<CallDiffNode, "status">;
+type CallTreeNode = Omit<CallDiffNode, "children" | "status"> & { children: CallTreeNode[] };
 
 const CALL_DIFF_ENTRY_LIMIT = 12;
 const CALL_DIFF_MAX_DEPTH = 4;
