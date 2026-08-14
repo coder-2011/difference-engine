@@ -2536,7 +2536,7 @@ button {
 .ai-chat-actions {
   z-index: 80;
   bottom: 16px;
-  left: 16px;
+  left: 12px;
 }
 
 .copy-annotations:disabled {
