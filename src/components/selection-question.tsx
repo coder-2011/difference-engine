@@ -170,10 +170,15 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const line = element?.closest("[data-line]");
   const endLine = endElement?.closest("[data-line]");
   const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
-  const lineNumber = Number(line?.getAttribute("data-line"));
-  if (!id || !Number.isInteger(lineNumber)) return undefined;
+  // A missing data-line attribute must not coerce to line zero.
+  const lineAttribute = line?.getAttribute("data-line");
+  if (!id || typeof lineAttribute !== "string") return undefined;
 
-  const endLineNumber = Number(endLine?.getAttribute("data-line"));
+  const lineNumber = Number(lineAttribute);
+  if (!Number.isInteger(lineNumber)) return undefined;
+
+  const endLineAttribute = endLine?.getAttribute("data-line");
+  const endLineNumber = typeof endLineAttribute === "string" ? Number(endLineAttribute) : undefined;
   const lineType = line?.getAttribute("data-line-type");
   const endLineType = endLine?.getAttribute("data-line-type");
   const side = lineType === "change-addition" ? "additions" : lineType === "change-deletion" ? "deletions" : undefined;
