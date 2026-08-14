@@ -973,6 +973,12 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           <textarea
             aria-label="Annotation"
             onChange={(event) => setAnnotationDraft((current) => current ? { ...current, text: event.target.value } : current)}
+            onKeyDown={(event) => {
+              // Command-Enter saves the note without preventing ordinary multiline editing.
+              if (event.key !== "Enter" || !event.metaKey || !annotationDraft.text.trim()) return;
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }}
             placeholder="Add a short annotation"
             ref={annotationInputRef}
             rows={3}
