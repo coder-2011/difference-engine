@@ -12,6 +12,7 @@ type CallStep = {
   key: string;
   label: string;
   line: number;
+  snippet: string;
   type: "branch" | "call";
 };
 
@@ -23,6 +24,7 @@ type FunctionInfo = {
   line: number;
   localOwner?: string;
   scope: string;
+  snippet: string;
   steps: CallStep[];
   symbol: string;
 };
@@ -71,6 +73,11 @@ function lineForNode(sourceFile: TsSourceFile, node: TsNode): number {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
+/** Keeps Call Flow selection context to the exact source line behind one AST node. */
+function snippetForNode(sourceFile: TsSourceFile, node: TsNode): string {
+  return sourceLineAt(sourceFile.text, node.getStart(sourceFile));
+}
+
 /** Detects an export modifier without treating default or ambient declarations specially. */
 function isExported(ts: TypeScript, node: import("typescript").HasModifiers): boolean {
   return Boolean(ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
@@ -106,6 +113,7 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
       key: `branch:${label}`,
       label,
       line: lineForNode(sourceFile, anchor),
+      snippet: snippetForNode(sourceFile, anchor),
       type: "branch",
     });
   }
@@ -140,6 +148,7 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
         key: symbol,
         label: functionLabel(symbol),
         line: lineForNode(sourceFile, node),
+        snippet: snippetForNode(sourceFile, node),
         type: "call",
       });
       node.arguments.forEach(visit);
@@ -154,6 +163,7 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
         key: symbol,
         label: functionLabel(symbol),
         line: lineForNode(sourceFile, node),
+        snippet: snippetForNode(sourceFile, node),
         type: "call",
       });
       node.arguments?.forEach(visit);
@@ -162,14 +172,14 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
 
     if (ts.isJsxSelfClosingElement(node)) {
       const symbol = jsxSymbol(sourceFile, node.tagName);
-      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol} />`, line: lineForNode(sourceFile, node), type: "call" });
+      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol} />`, line: lineForNode(sourceFile, node), snippet: snippetForNode(sourceFile, node), type: "call" });
       ts.forEachChild(node.attributes, visit);
       return;
     }
 
     if (ts.isJsxElement(node)) {
       const symbol = jsxSymbol(sourceFile, node.openingElement.tagName);
-      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol}>`, line: lineForNode(sourceFile, node), type: "call" });
+      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol}>`, line: lineForNode(sourceFile, node), snippet: snippetForNode(sourceFile, node), type: "call" });
       ts.forEachChild(node.openingElement.attributes, visit);
       node.children.forEach(visit);
       return;
@@ -192,6 +202,7 @@ function addFunction(functions: FunctionInfo[], ts: TypeScript, sourceFile: TsSo
     line: lineForNode(sourceFile, definition),
     localOwner,
     scope,
+    snippet: snippetForNode(sourceFile, definition),
     steps: collectSteps(ts, sourceFile, body, className),
     symbol,
   };
@@ -400,6 +411,13 @@ function lineForOffset(text: string, offset: number): number {
   return line;
 }
 
+/** Returns the trimmed source line containing one offset for Call Flow selection context. */
+function sourceLineAt(text: string, offset: number): string {
+  const start = text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
+  const end = text.indexOf("\n", offset);
+  return text.slice(start, end === -1 ? text.length : end).trim();
+}
+
 /** Collects direct identifier calls for languages that do not have the TypeScript parser path. */
 function collectTextSteps(path: string, text: string, body: TextRange): CallStep[] {
   const steps: CallStep[] = [];
@@ -411,7 +429,7 @@ function collectTextSteps(path: string, text: string, body: TextRange): CallStep
     const offset = body.start + match.index;
     const prefix = source.slice(Math.max(0, match.index - 16), match.index);
     if (TEXT_CALL_KEYWORDS.has(symbol) || /\b(?:def|fn|func|function|predicate|rpc)\s*$/.test(prefix)) continue;
-    steps.push({ children: [], file: path, key: symbol, label: functionLabel(symbol), line: lineForOffset(text, offset), type: "call" });
+    steps.push({ children: [], file: path, key: symbol, label: functionLabel(symbol), line: lineForOffset(text, offset), snippet: sourceLineAt(text, offset), type: "call" });
   }
 
   return steps;
@@ -438,6 +456,7 @@ function parseTextFunctions(path: string, text: string, scope: string): Function
       id: functionId(scope, symbol),
       line: lineForOffset(text, declaration),
       scope,
+      snippet: sourceLineAt(text, declaration),
       steps: collectTextSteps(path, text, body),
       symbol,
     });
@@ -517,24 +536,25 @@ function buildCallTree(info: FunctionInfo, index: FunctionIndex): CallTreeNode {
           key: step.key,
           label: step.label,
           line: step.line,
+          snippet: step.snippet,
         };
       }
 
       const callee = resolveCall(step, owner, index);
       if (!callee) {
-        return { children: [], file: step.file, kind: "call", key: step.key, label: step.label, line: step.line };
+        return { children: [], file: step.file, kind: "call", key: step.key, label: step.label, line: step.line, snippet: step.snippet };
       }
       if (visiting.has(callee.id)) {
-        return { children: [], file: step.file, kind: "call", key: step.key, label: `${callee.symbol}() ↻`, line: step.line };
+        return { children: [], file: step.file, kind: "call", key: step.key, label: `${callee.symbol}() ↻`, line: step.line, snippet: step.snippet };
       }
       if (depth >= CALL_DIFF_MAX_DEPTH) {
-        return { children: [], file: step.file, kind: "call", key: step.key, label: step.label, line: step.line };
+        return { children: [], file: step.file, kind: "call", key: step.key, label: step.label, line: step.line, snippet: step.snippet };
       }
 
       visiting.add(callee.id);
       const children = expandSteps(callee.steps, callee, depth + 1, visiting);
       visiting.delete(callee.id);
-      return { children, file: step.file, kind: "call", key: step.key, label: functionLabel(callee.symbol), line: step.line };
+      return { children, file: step.file, kind: "call", key: step.key, label: functionLabel(callee.symbol), line: step.line, snippet: step.snippet };
     });
   }
 
@@ -545,6 +565,7 @@ function buildCallTree(info: FunctionInfo, index: FunctionIndex): CallTreeNode {
     key: info.id,
     label: functionLabel(info.symbol),
     line: info.line,
+    snippet: info.snippet,
   };
 }
 

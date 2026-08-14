@@ -37,7 +37,7 @@ type CodeSelection = Point & {
   text: string;
 };
 
-type CodeSelectionLocation = {
+export type CodeSelectionLocation = {
   endLineNumber?: number;
   endSide?: "additions" | "deletions";
   id: string;
@@ -80,7 +80,13 @@ type ResizeState = Point & {
   width: number;
 };
 
+export type ProgrammaticSelection = Point & {
+  location: CodeSelectionLocation;
+  text: string;
+};
+
 type SelectionQuestionProps = {
+  programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
   source: string[];
 };
@@ -275,7 +281,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
@@ -322,6 +328,12 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
   }, [sourceKey]);
+
+  useEffect(() => {
+    if (!programmaticSelection) return;
+    // Call Flow supplies a single server-derived source line because it has no selectable code DOM.
+    setSelection({ ...programmaticSelection, open: false });
+  }, [programmaticSelection]);
 
   useEffect(() => {
     if (!selection?.open) {
@@ -389,7 +401,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
-      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-list, .selection-actions, .annotation-composer, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-list, .selection-actions, .annotation-composer, .question-panel, .call-diff-viewer")) return;
       const pointer = { x: event.clientX, y: event.clientY };
       const origin = event.composedPath()[0];
       window.requestAnimationFrame(() => captureSelection(pointer, origin));

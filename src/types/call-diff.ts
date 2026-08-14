@@ -7,6 +7,7 @@ export type CallDiffNode = {
   key: string;
   label: string;
   line: number;
+  snippet: string;
   status: CallDiffStatus;
 };
 

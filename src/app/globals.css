@@ -2546,12 +2546,24 @@ button {
   background: #18181a;
 }
 
-.call-diff-node-line > a {
+.call-diff-node-line > a,
+.call-diff-node-select {
   display: flex;
   min-width: 0;
   flex: 1;
   align-items: center;
   gap: 10px;
+}
+
+.call-diff-node-select {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.call-diff-node-select {
+  cursor: pointer;
 }
 
 .call-diff-node-line code {
@@ -2569,11 +2581,22 @@ button {
   font-style: italic;
 }
 
-.call-diff-node-line a > span {
+.call-diff-node-line a > span,
+.call-diff-node-select > span {
   flex: none;
   color: var(--faint);
   font-family: var(--font-mono);
   font-size: 9px;
+}
+
+.call-diff-node-source {
+  display: flex;
+  align-items: center;
+  color: var(--faint);
+}
+
+.call-diff-node-source:hover {
+  color: var(--text);
 }
 
 .call-diff-status {
@@ -3919,11 +3942,13 @@ button {
     padding: 0 8px;
   }
 
-  .call-diff-node-line > a {
+  .call-diff-node-line > a,
+  .call-diff-node-select {
     gap: 7px;
   }
 
-  .call-diff-node-line a > span {
+  .call-diff-node-line a > span,
+  .call-diff-node-select > span {
     max-width: 34vw;
     overflow: hidden;
     text-overflow: ellipsis;

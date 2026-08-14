@@ -1,11 +1,21 @@
 "use client";
 
-import { AlertCircle, GitCompareArrows, LoaderCircle, Network, RefreshCw } from "lucide-react";
+import { AlertCircle, ExternalLink, GitCompareArrows, LoaderCircle, Network, RefreshCw } from "lucide-react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { CallDiffDocument, CallDiffNode } from "@/types/call-diff";
 
 type CallDiffViewerProps = {
+  onSelect?: (selection: CallDiffSelection) => void;
   source: string[];
+};
+
+export type CallDiffSelection = {
+  file: string;
+  line: number;
+  text: string;
+  x: number;
+  y: number;
 };
 
 type CallDiffState =
@@ -20,24 +30,43 @@ function sourceLocationUrl(source: string[], ref: string, file: string, line: nu
   return `/${repository}/blob/${encodeURIComponent(ref)}/${path}#L${line}`;
 }
 
-/** Renders one recursive call-flow node with a direct link into the corresponding revision. */
-function CallDiffNodeRow({ fromRef, node, source, toRef }: { fromRef: string; node: CallDiffNode; source: string[]; toRef: string }) {
+/** Renders one recursive call-flow node with source navigation and selection actions. */
+function CallDiffNodeRow({ fromRef, node, onSelect, source, toRef }: { fromRef: string; node: CallDiffNode; onSelect?: (selection: CallDiffSelection) => void; source: string[]; toRef: string }) {
   const ref = node.status === "removed" ? fromRef : toRef;
   const location = `${node.file}:${node.line}`;
+
+  /** Places one Call Flow source line into the existing annotation and Ask Diffs selection flow. */
+  function selectNode(event: ReactMouseEvent<HTMLButtonElement>): void {
+    onSelect?.({
+      file: node.file,
+      line: node.line,
+      text: node.snippet,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
 
   return (
     <li className={`call-diff-node ${node.kind} ${node.status}`}>
       <div className="call-diff-node-line">
         <span aria-label={node.status === "same" ? "unchanged call" : `${node.status} call`} className="call-diff-status" />
-        <a href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
-          <code>{node.label}</code>
-          <span>{location}</span>
-        </a>
+        {onSelect ? (
+          <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
+            <code>{node.label}</code>
+            <span>{location}</span>
+          </button>
+        ) : (
+          <a href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
+            <code>{node.label}</code>
+            <span>{location}</span>
+          </a>
+        )}
+        {onSelect && <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}><ExternalLink size={12} /></a>}
       </div>
       {node.children.length > 0 && (
         <ol>
           {node.children.map((child, index) => (
-            <CallDiffNodeRow fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} source={source} toRef={toRef} />
+            <CallDiffNodeRow fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} onSelect={onSelect} source={source} toRef={toRef} />
           ))}
         </ol>
       )}
@@ -45,8 +74,8 @@ function CallDiffNodeRow({ fromRef, node, source, toRef }: { fromRef: string; no
   );
 }
 
-/** Shows the lazy changed-file call-flow analysis without retaining repository source in the browser. */
-export function CallDiffViewer({ source }: CallDiffViewerProps) {
+/** Shows lazy call-flow analysis and exposes one bounded source line for each selected node. */
+export function CallDiffViewer({ onSelect, source }: CallDiffViewerProps) {
   const sourcePath = useMemo(() => source.map(encodeURIComponent).join("/"), [source]);
   const [state, setState] = useState<CallDiffState>({ status: "loading" });
   const [retry, setRetry] = useState(0);
@@ -96,13 +125,13 @@ export function CallDiffViewer({ source }: CallDiffViewerProps) {
         <div className="call-diff-summary"><GitCompareArrows size={14} /><span>{summary}</span>{limits && <small>{limits}</small>}</div>
       </header>
 
-      <div className="call-diff-legend" aria-label="Call flow legend"><span className="added">Added</span><span className="removed">Removed</span><span>Click any call to open its exact revision.</span></div>
+      <div className="call-diff-legend" aria-label="Call flow legend"><span className="added">Added</span><span className="removed">Removed</span><span>{onSelect ? "Click a call to ask or annotate." : "Click any call to open its exact revision."}</span></div>
 
       {document.entries.length ? (
         <div className="call-diff-entry-list">
           {document.entries.map((entry) => (
             <article className="call-diff-entry" key={entry.key}>
-              <ol className="call-diff-tree"><CallDiffNodeRow fromRef={document.fromRef} node={entry.tree} source={source} toRef={document.toRef} /></ol>
+              <ol className="call-diff-tree"><CallDiffNodeRow fromRef={document.fromRef} node={entry.tree} onSelect={onSelect} source={source} toRef={document.toRef} /></ol>
             </article>
           ))}
         </div>

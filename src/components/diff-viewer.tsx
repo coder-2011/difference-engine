@@ -13,10 +13,11 @@ import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
-import { CallDiffViewer } from "./call-diff-viewer";
+import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
 import type { RepositoryFile } from "@/types/github";
+import type { ProgrammaticSelection } from "./selection-question";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
 const SelectionQuestion = dynamic(
@@ -97,6 +98,7 @@ export function DiffViewer({
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
+  const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
 
@@ -159,10 +161,30 @@ export function DiffViewer({
 
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
   const revealSelection = useCallback((location: CodeLocation) => {
-    const end = location.endLineNumber ?? location.lineNumber;
-    const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
-    viewerRef.current?.setSelectedLines({ id: location.id, range });
-    viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+    /** Reveals a saved Call Flow reference in Files Changed after the selected tab has mounted. */
+    function selectCode(): void {
+      const end = location.endLineNumber ?? location.lineNumber;
+      const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
+      viewerRef.current?.setSelectedLines({ id: location.id, range });
+      viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+    }
+
+    if (reviewView === "call-flow") {
+      setReviewView("files");
+      window.requestAnimationFrame(selectCode);
+      return;
+    }
+    selectCode();
+  }, [reviewView]);
+
+  /** Converts one Call Flow click into the same source-anchored selection used by Ask Diffs. */
+  const selectCallFlowNode = useCallback((selection: CallDiffSelection) => {
+    setCallFlowSelection({
+      location: { id: selection.file, lineNumber: selection.line },
+      text: selection.text,
+      x: selection.x,
+      y: selection.y,
+    });
   }, []);
 
   /** Opens a repository search result and writes its file and line into the URL. */
@@ -330,21 +352,20 @@ export function DiffViewer({
     }
   }
 
-  if (showingCallDiff) {
-    return <section className={workspaceClass}>{reviewTabs}<div aria-labelledby="call-flow-review-tab" id="call-flow-review" role="tabpanel"><CallDiffViewer source={source} /></div></section>;
-  }
-
-  if (error) {
+  if (error && !showingCallDiff) {
     return <section className={workspaceClass}>{reviewTabs}<div className="diff-error" id="files-review" role="tabpanel"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div></section>;
   }
 
-  if (repository ? !repositoryFiles : !parsedFiles) {
+  if (!showingCallDiff && (repository ? !repositoryFiles : !parsedFiles)) {
     return <section className={workspaceClass}>{reviewTabs}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
   }
 
   return (
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
+      {showingCallDiff ? (
+        <div aria-labelledby="call-flow-review-tab" id="call-flow-review" role="tabpanel"><CallDiffViewer onSelect={openAIConnected ? selectCallFlowNode : undefined} source={source} /></div>
+      ) : <>
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
@@ -397,9 +418,10 @@ export function DiffViewer({
             onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
             options={codeViewOptions}
           />
-          {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} source={source} />}
         </div>
       </div>
+      </>}
+      {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />}
     </section>
   );
 }
