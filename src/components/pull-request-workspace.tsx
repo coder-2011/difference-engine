@@ -438,7 +438,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                   </div>
                 </details>
               )}
-              {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
+              {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Mark ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">
                   <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button">{MERGE_METHOD_LABELS[mergeMethod]}</button>

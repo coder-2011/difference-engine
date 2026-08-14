@@ -2017,6 +2017,7 @@ button {
 .pr-action-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
 }
 
@@ -2146,10 +2147,12 @@ button {
 }
 
 .ready-review-button {
+  flex: 0 0 auto;
   height: 30px;
   padding: 0 10px;
   background: #4f3a90;
   color: #eeeaff;
+  white-space: nowrap;
 }
 
 .ready-review-button:hover {
