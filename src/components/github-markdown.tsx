@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
@@ -45,15 +46,19 @@ function markGitHubAlerts(node: unknown): void {
   markdownNode.children?.forEach(markGitHubAlerts);
 }
 
+// Reuse Markdown configuration so memoized messages have stable rendering inputs.
+const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre };
+const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
+
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
-export function GitHubMarkdown({ children }: GitHubMarkdownProps) {
+export const GitHubMarkdown = memo(function GitHubMarkdown({ children }: GitHubMarkdownProps) {
   return (
     <ReactMarkdown
-      components={{ code: HighlightedCode, pre: MarkdownPre }}
-      remarkPlugins={[remarkGfm, githubAlerts]}
+      components={MARKDOWN_COMPONENTS}
+      remarkPlugins={MARKDOWN_PLUGINS}
       skipHtml
     >
       {children}
     </ReactMarkdown>
   );
-}
+});
