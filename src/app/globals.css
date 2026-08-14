@@ -3674,7 +3674,7 @@ button {
 .question-panel form {
   display: grid;
   flex: none;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 8px;
   padding: 11px;
   border-top: 1px solid var(--line);
@@ -3748,6 +3748,36 @@ button {
 
 .attachment-picker {
   display: none;
+}
+
+.chat-zoom-controls {
+  align-self: end;
+  display: flex;
+  gap: 2px;
+}
+
+.chat-zoom-controls button {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #35343a;
+  border-radius: 6px;
+  background: transparent;
+  color: #958e9d;
+  cursor: pointer;
+}
+
+.chat-zoom-controls button:hover:not(:disabled) {
+  border-color: #5e556e;
+  background: #211d27;
+  color: #c4b2ee;
+}
+
+.chat-zoom-controls button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .attach-file {

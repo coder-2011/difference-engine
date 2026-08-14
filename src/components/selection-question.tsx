@@ -2,7 +2,7 @@
 
 import { getSharedHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
 import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFiletypeFromFileName";
-import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
@@ -18,6 +18,7 @@ import {
 const DEFAULT_QUESTION = "What does this code do?";
 const DEFAULT_CHAT_FONT_SIZE = 12;
 const MAX_CHAT_FONT_SIZE = 22;
+const MIN_CHAT_FONT_SIZE = 10;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
 const STREAM_CHARS_PER_TICK = 24;
@@ -925,6 +926,11 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     void submitQuestion(question);
   }
 
+  /** Changes only the Ask Diffs text scale within its readable bounds. */
+  function adjustChatFontSize(amount: number): void {
+    setChatFontSize((size) => Math.min(MAX_CHAT_FONT_SIZE, Math.max(MIN_CHAT_FONT_SIZE, size + amount)));
+  }
+
   /** Fills the visible placeholder and leaves the cursor ready to edit it. */
   function fillPlaceholder(): void {
     const placeholder = turns.length ? suggestion : DEFAULT_QUESTION;
@@ -1094,6 +1100,10 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
               </div>
             )}
             {attachmentError && <p className="attachment-error">{attachmentError}</p>}
+            <div aria-label="Chat text size" className="chat-zoom-controls">
+              <button aria-label="Decrease chat text size" disabled={chatFontSize === MIN_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(-1)} type="button"><Minus size={12} /></button>
+              <button aria-label="Increase chat text size" disabled={chatFontSize === MAX_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(1)} type="button"><Plus size={12} /></button>
+            </div>
             <div className="question-input">
               {!question && !isGeneratingSuggestion && suggestedQuestion && (
                 <span className="question-suggestion" aria-hidden="true">
