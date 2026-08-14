@@ -296,6 +296,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const resizeRef = useRef<ResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
+  const chatSelectionRangeRef = useRef<Range>();
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const annotationCounterRef = useRef(0);
@@ -317,6 +318,26 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   }, [sourceKey]);
 
   useEffect(() => {
+    if (!selection?.open) {
+      chatSelectionRangeRef.current = undefined;
+      return;
+    }
+    if (chatSelectionRangeRef.current === selection.range) return;
+
+    // A newly highlighted range makes every visible turn and pending answer stale.
+    chatSelectionRangeRef.current = selection.range;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    followsConversationRef.current = true;
+    setLoading(false);
+    setQuestion("");
+    setTurns([]);
+    setSuggestion("");
+    setAttachments([]);
+    setAttachmentError("");
+  }, [selection]);
+
+  useEffect(() => {
     /** Captures a non-empty diff selection and replaces the chat's current code context. */
     function captureSelection(pointer?: Point, origin?: EventTarget): void {
       const browserSelection = window.getSelection();
@@ -336,10 +357,14 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
       const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
-      if (!triggerAnchor) return setSelection(null);
+      if (!triggerAnchor) {
+        setSelection((current) => current?.open ? current : null);
+        return;
+      }
 
       const maxX = Math.max(window.innerWidth - 238, 8);
-      const maxY = Math.max(window.innerHeight - 39, 8);
+      // Keep the contextual controls clear of the persistent bottom-left actions.
+      const maxY = Math.max(window.innerHeight - 86, 8);
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
@@ -357,7 +382,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Captures keyboard-created code selections while ignoring typing inside the chat or annotation composer. */
     function captureAfterKeyUp(event: KeyboardEvent): void {
-      if (event.target instanceof Element && event.target.closest(".annotation-composer, .annotation-list, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-composer, .annotation-list, .question-panel, .selection-actions")) return;
       captureSelection(undefined, event.composedPath()[0]);
     }
 
@@ -944,9 +969,11 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
       {!selection?.open && (
         <div className="ai-chat-actions">
-          <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
-            <Sparkles size={14} /> Ask Diffs
-          </button>
+          {!triggerSelection && (
+            <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
+              <Sparkles size={14} /> Ask Diffs
+            </button>
+          )}
           <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
             <ClipboardCopy size={14} /> Copy Annotations
           </button>
