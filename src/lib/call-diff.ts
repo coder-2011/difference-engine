@@ -61,7 +61,7 @@ function lineForNode(sourceFile: TsSourceFile, node: TsNode): number {
 }
 
 /** Detects an export modifier without treating default or ambient declarations specially. */
-function isExported(ts: TypeScript, node: TsNode): boolean {
+function isExported(ts: TypeScript, node: import("typescript").HasModifiers): boolean {
   return Boolean(ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
 }
 
