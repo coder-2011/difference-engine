@@ -176,12 +176,17 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const lineAttribute = line?.getAttribute("data-line");
   if (!id || typeof lineAttribute !== "string") return undefined;
 
-  // A range ending at the next line's first character does not select that line.
+  // Only a range ending before the line's content excludes that line.
   if (range.endOffset === 0 && endLine) {
-    const lineRoot = root instanceof ShadowRoot ? root : document;
-    const lines = Array.from(lineRoot.querySelectorAll("[data-line]"));
-    const endIndex = lines.indexOf(endLine);
-    if (endIndex > 0) endLine = lines[endIndex - 1];
+    const lineStart = document.createRange();
+    lineStart.selectNodeContents(endLine);
+    lineStart.collapse(true);
+    if (range.compareBoundaryPoints(Range.END_TO_START, lineStart) === 0) {
+      const lineRoot = root instanceof ShadowRoot ? root : document;
+      const lines = Array.from(lineRoot.querySelectorAll("[data-line]"));
+      const endIndex = lines.indexOf(endLine);
+      if (endIndex > 0) endLine = lines[endIndex - 1];
+    }
   }
 
   const lineNumber = Number(lineAttribute);
