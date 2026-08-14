@@ -181,7 +181,7 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
     const lineStart = document.createRange();
     lineStart.selectNodeContents(endLine);
     lineStart.collapse(true);
-    if (range.compareBoundaryPoints(Range.END_TO_START, lineStart) === 0) {
+    if (range.compareBoundaryPoints(Range.START_TO_END, lineStart) === 0) {
       const lineRoot = root instanceof ShadowRoot ? root : document;
       const lines = Array.from(lineRoot.querySelectorAll("[data-line]"));
       const endIndex = lines.indexOf(endLine);
@@ -273,7 +273,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
 export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
-  const sourceKey = source.join("/");
+  const sourceKey = JSON.stringify(source);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
