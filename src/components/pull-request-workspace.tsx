@@ -86,10 +86,10 @@ function workflowRunTone(status: string, conclusion: string | null): "failed" | 
   return conclusion === "success" ? "success" : "failed";
 }
 
-/** Explains an open pull request's GitHub state without implying unavailable actions will succeed. */
-function openPullRequestState(workspace: PullRequestWorkspace): string {
+/** Explains an open pull request's GitHub state without repeating an available merge action. */
+function openPullRequestState(workspace: PullRequestWorkspace): string | undefined {
   if (workspace.draft) return "Not yet ready for review.";
-  if (workspace.canMerge) return "Ready to merge.";
+  if (workspace.canMerge) return undefined;
   if (workspace.canManageMerge) return "GitHub is checking merge requirements.";
   if (workspace.hasGitHubAccess) return "You cannot merge this pull request.";
   return "Sign in with GitHub to manage this pull request.";
@@ -322,7 +322,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         {workspace.state === "open" && (
           <div className="pr-state">
             <span className={`pr-state-pill ${workspace.draft ? "draft" : "open"}`}>{workspace.draft ? "Draft" : "Open"}</span>
-            <span>{openState}</span>
+            {openState && <span>{openState}</span>}
           </div>
         )}
 
