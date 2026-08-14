@@ -2448,8 +2448,51 @@ button {
   border-radius: 7px;
 }
 
+.call-flow-body .call-diff-viewer {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.call-flow-body .call-diff-toolbar {
+  flex: none;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.call-flow-body .call-diff-entry-list {
+  min-height: 0;
+  flex: 1;
+  padding: 14px;
+  overflow: auto;
+}
+
+.call-flow-body .call-diff-empty,
+.call-flow-body .call-diff-loading,
+.call-flow-body .call-diff-error {
+  flex: 1;
+  min-height: 0;
+}
+
 .call-diff-limits {
   color: var(--faint);
+}
+
+.call-diff-file-filter {
+  max-width: 260px;
+}
+
+.call-diff-file-filter span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .call-diff-entry-list {
