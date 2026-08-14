@@ -567,7 +567,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: `OpenAI could not answer this question (${upstream.status}).` }, { status: 502 });
   }
 
-  // Annotation extraction runs alongside the answer so an explicit note request does not add a second visible turn.
+  // Annotation extraction and response reading run alongside the answer so the request cannot expire before its body is consumed.
   const annotationRequest = requestsAnnotation(question, annotationSelection)
     ? requestModel(
       headers,
@@ -579,6 +579,9 @@ export async function POST(request: Request): Promise<Response> {
       AbortSignal.timeout(10_000),
     ).catch(() => null)
     : Promise.resolve(null);
+  const annotationOutput = annotationRequest
+    .then(async (response) => response?.ok ? (await readAnswer(response)).answer : "")
+    .catch(() => "");
 
   // Instant runs alongside Terra so the next-question placeholder adds no answer latency.
   const followupRequest = requestModel(
@@ -661,11 +664,7 @@ export async function POST(request: Request): Promise<Response> {
           : "";
         controller.enqueue(encodeEvent({ text: parseFollowup(followupOutput), type: "suggestion" }));
 
-        const annotationResponse = await annotationRequest;
-        const annotationOutput = annotationResponse?.ok
-          ? await readAnswer(annotationResponse).then((response) => response.answer).catch(() => "")
-          : "";
-        const annotation = parseAnnotation(annotationOutput);
+        const annotation = parseAnnotation(await annotationOutput);
         if (annotation) controller.enqueue(encodeEvent({ text: annotation, type: "annotation" }));
       } catch (error) {
         if (githubCommentUrl) {
