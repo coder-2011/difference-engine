@@ -285,7 +285,10 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const annotationCounterRef = useRef(0);
 
   useEffect(() => {
-    // Notes belong to the current repository view and cannot be reused against a new source.
+    // Notes and active requests belong to the current repository view and cannot be reused against a new source.
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setLoading(false);
     setAnnotations([]);
     setAnnotationDraft(null);
     setCopyStatus("");
@@ -829,6 +832,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
       while (true) {
         const { done, value } = await reader.read();
+        if (controller.signal.aborted) return;
         buffer += value ?? "";
         if (done) buffer += "\n";
         const lines = buffer.split("\n");
