@@ -107,33 +107,50 @@ export function DiffViewer({
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
-    let cancelled = false;
+    let grammarPreloadStarted = false;
 
-    /** Preloads the initial target grammar without blocking the review on every file type. */
-    async function showFiles<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[], show: (files: T[]) => void): Promise<void> {
+    setError("");
+    setParsedFiles(undefined);
+    setRepositoryFiles(undefined);
+
+    /** Starts the first needed grammar load without delaying already-parsed files. */
+    function preloadInitialGrammar<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[]): void {
+      if (grammarPreloadStarted) return;
+
       const target = (filePath ? files.find((file) => file.name === filePath) : undefined) ?? files[0];
-      if (target) {
-        try {
-          await preloadHighlighter({
-            langs: [target.lang ?? getFiletypeFromFileName(target.name)],
-            preferredHighlighter: "shiki-wasm",
-            themes: ["pierre-dark"],
-          });
-        } catch {
-          // CodeView still renders plain code if the initial grammar cannot preload.
-        }
+      if (!target) return;
+
+      grammarPreloadStarted = true;
+      void preloadHighlighter({
+        langs: [target.lang ?? getFiletypeFromFileName(target.name)],
+        preferredHighlighter: "shiki-wasm",
+        themes: ["pierre-dark"],
+      }).catch(() => {
+        // CodeView still renders plain code if the initial grammar cannot preload.
+      });
+    }
+
+    /** Appends source-ordered streamed diff files and completes an empty patch. */
+    function appendParsedFiles(files: FileDiffMetadata[], complete: boolean): void {
+      if (files.length) {
+        preloadInitialGrammar(files);
+        setParsedFiles((previous) => previous === undefined ? files : [...previous, ...files]);
+        return;
       }
-      if (!cancelled) show(files);
+
+      if (complete) setParsedFiles((previous) => previous ?? []);
     }
 
     /** Receives parsed files without blocking the main browser thread. */
-    function handleMessage(event: MessageEvent<{ error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
+    function handleMessage(event: MessageEvent<{ complete?: boolean; error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
       if (event.data.error) {
         setError(event.data.error);
       } else if (repository) {
-        void showFiles(event.data.repositoryFiles ?? [], setRepositoryFiles);
+        const files = event.data.repositoryFiles ?? [];
+        preloadInitialGrammar(files);
+        setRepositoryFiles(files);
       } else {
-        void showFiles(event.data.files ?? [], setParsedFiles);
+        appendParsedFiles(event.data.files ?? [], event.data.complete ?? false);
       }
     }
 
@@ -147,7 +164,6 @@ export function DiffViewer({
     worker.postMessage({ cacheKey: source.join("/"), repository, url: `/api/diff/${path}` });
 
     return () => {
-      cancelled = true;
       worker.terminate();
     };
   }, [filePath, repository, source]);
