@@ -262,12 +262,15 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   }
 
   return (
-    <section className={`pr-workspace ${visibleBody ? "has-description" : ""}`}>
-      {visibleBody && (
-        <details className="pr-description" open>
-          <summary>Pull request description</summary>
-          <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>
-        </details>
+    <section className={`pr-workspace ${visibleBody || workspace.canEditBody ? "has-description" : ""}`}>
+      {(visibleBody || workspace.canEditBody) && (
+        <section className="pr-description">
+          <div className="pr-description-heading">
+            <span>Pull request description</span>
+            {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
+          </div>
+          {visibleBody && <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>}
+        </section>
       )}
 
       {bodyDraft !== undefined && (
@@ -376,10 +379,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
         {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
-              {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
+            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">

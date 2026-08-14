@@ -1105,15 +1105,27 @@ button {
   background: #0f0f0d;
 }
 
-.pr-description summary {
+.pr-description summary,
+.pr-description-heading {
   padding: 12px 15px;
   color: #adadb2;
-  cursor: pointer;
   font-size: 11px;
   font-weight: 540;
 }
 
-.pr-description[open] summary {
+.pr-description summary {
+  cursor: pointer;
+}
+
+.pr-description-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pr-description[open] summary,
+.pr-description-heading {
   border-bottom: 1px solid var(--line-soft);
 }
 
