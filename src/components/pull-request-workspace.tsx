@@ -29,7 +29,6 @@ type ActionMessage = {
   text: string;
 };
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en", { day: "numeric", month: "short" });
 const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
@@ -65,9 +64,21 @@ const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "30ms", drift: "16px", duration: "2720ms", left: "97%", size: 9 },
 ];
 
-/** Formats a GitHub timestamp in the compact form used inside conversation rows. */
+/** Formats a GitHub timestamp as a compact elapsed time for conversation rows. */
 function commentDate(value: string): string {
-  return DATE_FORMAT.format(new Date(value));
+  const minutes = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
 }
 
 /** Keeps multiline commit bodies readable in the compact PR conversation timeline. */
