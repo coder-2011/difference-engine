@@ -307,9 +307,9 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
       window.requestAnimationFrame(() => captureSelection(pointer, origin));
     }
 
-    /** Captures keyboard-created code selections while ignoring typing inside the chat. */
+    /** Captures keyboard-created code selections while ignoring typing inside the chat or annotation composer. */
     function captureAfterKeyUp(event: KeyboardEvent): void {
-      if (event.target instanceof Element && event.target.closest(".question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".annotation-composer, .question-panel")) return;
       captureSelection(undefined, event.composedPath()[0]);
     }
 
