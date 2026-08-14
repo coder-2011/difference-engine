@@ -106,7 +106,8 @@ type SnippetToken = {
 function formattedAnnotations(annotations: Annotation[]): string {
   return annotations.map((annotation) => {
     const location = annotation.selection.location;
-    const reference = location ? `\`${location.id}:${location.lineNumber}\` ` : "";
+    const side = location?.side ? ` (${location.side})` : "";
+    const reference = location ? `\`${location.id}:${location.lineNumber}${side}\` ` : "";
     return `- ${reference}${annotation.text}`;
   }).join("\n");
 }
@@ -706,7 +707,8 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
     const taskContext = selection.context.map((codeSelection) => codeSelection.text).join("\n\n");
-    const annotationSelection = selection.context.at(-1);
+    // An automatic note needs one unambiguous source range; multi-selection tasks remain manually annotatable.
+    const annotationSelection = selection.context.length === 1 ? selection.context[0] : undefined;
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -782,6 +784,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           attachments: uploadedAttachments,
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
+          annotationSelection: annotationSelection?.text,
           selection: taskContext,
           source,
         }),
@@ -896,7 +899,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
         <form
           className="annotation-composer"
           onSubmit={saveAnnotation}
-          style={{ left: annotationDraft.selection.x, top: annotationDraft.selection.y }}
+          style={{ left: annotationDraft.x, top: annotationDraft.y }}
         >
           <textarea
             aria-label="Annotation"
