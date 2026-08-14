@@ -35,6 +35,8 @@ type CodeSelection = Point & {
 };
 
 type CodeSelectionLocation = {
+  endLineNumber?: number;
+  endSide?: "additions" | "deletions";
   id: string;
   lineNumber: number;
   side?: "additions" | "deletions";
@@ -107,7 +109,10 @@ function formattedAnnotations(annotations: Annotation[]): string {
   return annotations.map((annotation) => {
     const location = annotation.selection.location;
     const side = location?.side ? ` (${location.side})` : "";
-    const reference = location ? `\`${location.id}:${location.lineNumber}${side}\` ` : "";
+    const hasRange = location && location.endLineNumber !== undefined
+      && (location.endLineNumber !== location.lineNumber || location.endSide !== location.side);
+    const end = hasRange ? `-${location.endLineNumber}${location.endSide ? ` (${location.endSide})` : ""}` : "";
+    const reference = location ? `\`${location.id}:${location.lineNumber}${side}${end}\` ` : "";
     return `- ${reference}${annotation.text}`;
   }).join("\n");
 }
@@ -161,15 +166,25 @@ function selectedRange(browserSelection: Selection, origin?: EventTarget): Range
 function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const root = range.startContainer.getRootNode();
   const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
   const line = element?.closest("[data-line]");
+  const endLine = endElement?.closest("[data-line]");
   const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
   const lineNumber = Number(line?.getAttribute("data-line"));
   if (!id || !Number.isInteger(lineNumber)) return undefined;
 
+  const endLineNumber = Number(endLine?.getAttribute("data-line"));
   const lineType = line?.getAttribute("data-line-type");
-  if (lineType === "change-addition") return { id, lineNumber, side: "additions" };
-  if (lineType === "change-deletion") return { id, lineNumber, side: "deletions" };
-  return { id, lineNumber };
+  const endLineType = endLine?.getAttribute("data-line-type");
+  const side = lineType === "change-addition" ? "additions" : lineType === "change-deletion" ? "deletions" : undefined;
+  const endSide = endLineType === "change-addition" ? "additions" : endLineType === "change-deletion" ? "deletions" : undefined;
+  return {
+    endLineNumber: Number.isInteger(endLineNumber) ? endLineNumber : undefined,
+    endSide,
+    id,
+    lineNumber,
+    side,
+  };
 }
 
 /** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
