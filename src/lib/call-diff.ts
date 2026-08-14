@@ -15,10 +15,12 @@ type CallStep = {
 };
 
 type FunctionInfo = {
+  className?: string;
   exported: boolean;
   file: string;
   id: string;
   line: number;
+  localOwner?: string;
   scope: string;
   steps: CallStep[];
   symbol: string;
@@ -27,6 +29,7 @@ type FunctionInfo = {
 type FunctionIndex = {
   byFile: Map<string, Map<string, FunctionInfo>>;
   byId: Map<string, FunctionInfo>;
+  byOwner: Map<string, Map<string, FunctionInfo>>;
   bySymbol: Map<string, FunctionInfo[]>;
 };
 
@@ -49,7 +52,7 @@ function functionId(scope: string, symbol: string): string {
 
 /** Formats functions and constructor calls consistently in the call-flow tree. */
 function functionLabel(symbol: string): string {
-  return symbol.startsWith("new ") ? symbol : `${symbol}()`;
+  return `${symbol}()`;
 }
 
 /** Extracts the source line used by both entry headers and deep-link targets. */
@@ -74,9 +77,10 @@ function callSymbol(ts: TypeScript, sourceFile: TsSourceFile, expression: import
   return expression.getText(sourceFile).replace(/\s+/g, "");
 }
 
-/** Reads a JSX tag as a call-like element while keeping its source spelling visible. */
-function jsxSymbol(sourceFile: TsSourceFile, tagName: import("typescript").JsxTagNameExpression): string {
-  return tagName.getText(sourceFile).replace(/\s+/g, "");
+/** Reads a component tag while excluding intrinsic HTML elements from the call graph. */
+function jsxSymbol(sourceFile: TsSourceFile, tagName: import("typescript").JsxTagNameExpression): string | undefined {
+  const symbol = tagName.getText(sourceFile).replace(/\s+/g, "");
+  return /^[A-Z]/.test(symbol) || symbol.includes(".") ? symbol : undefined;
 }
 
 /** Collects calls in source order while keeping conditional arms as distinct tree branches. */
@@ -84,13 +88,13 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
   const steps: CallStep[] = [];
 
   /** Adds one conditional arm without descending into a nested function declaration. */
-  function addBranch(label: string, node: TsNode): void {
+  function addBranch(label: string, node: TsNode, anchor = node): void {
     steps.push({
       children: collectSteps(ts, sourceFile, node, className),
       file: sourceFile.fileName,
       key: `branch:${label}`,
       label,
-      line: lineForNode(sourceFile, node),
+      line: lineForNode(sourceFile, anchor),
       type: "branch",
     });
   }
@@ -99,7 +103,7 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
   function addIfStatement(node: import("typescript").IfStatement, prefix = "if"): void {
     const condition = node.expression.getText(sourceFile).replace(/\s+/g, " ").trim();
     steps.push(...collectSteps(ts, sourceFile, node.expression, className));
-    addBranch(`${prefix} (${condition})`, node.thenStatement);
+    addBranch(`${prefix} (${condition})`, node.thenStatement, node);
     if (!node.elseStatement) return;
     if (ts.isIfStatement(node.elseStatement)) {
       addIfStatement(node.elseStatement, "else if");
@@ -137,7 +141,7 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
         children: [],
         file: sourceFile.fileName,
         key: symbol,
-        label: symbol,
+        label: functionLabel(symbol),
         line: lineForNode(sourceFile, node),
         type: "call",
       });
@@ -147,13 +151,15 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
 
     if (ts.isJsxSelfClosingElement(node)) {
       const symbol = jsxSymbol(sourceFile, node.tagName);
-      steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol} />`, line: lineForNode(sourceFile, node), type: "call" });
+      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol} />`, line: lineForNode(sourceFile, node), type: "call" });
+      ts.forEachChild(node.attributes, visit);
       return;
     }
 
     if (ts.isJsxElement(node)) {
       const symbol = jsxSymbol(sourceFile, node.openingElement.tagName);
-      steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol}>`, line: lineForNode(sourceFile, node), type: "call" });
+      if (symbol) steps.push({ children: [], file: sourceFile.fileName, key: symbol, label: `<${symbol}>`, line: lineForNode(sourceFile, node), type: "call" });
+      ts.forEachChild(node.openingElement.attributes, visit);
       node.children.forEach(visit);
       return;
     }
@@ -165,17 +171,43 @@ function collectSteps(ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, cl
   return steps;
 }
 
-/** Adds a function declaration to the changed-file index with one canonical source location. */
-function addFunction(functions: FunctionInfo[], ts: TypeScript, sourceFile: TsSourceFile, scope: string, symbol: string, body: TsNode, exported: boolean): void {
-  functions.push({
+/** Adds a parsed function to the changed-file index with its declaration source location. */
+function addFunction(functions: FunctionInfo[], ts: TypeScript, sourceFile: TsSourceFile, scope: string, symbol: string, definition: TsNode, body: TsNode, exported: boolean, className?: string, localOwner?: string): FunctionInfo {
+  const info = {
+    className,
     exported,
     file: sourceFile.fileName,
-    id: functionId(scope, symbol),
-    line: lineForNode(sourceFile, body),
+    id: functionId(localOwner ?? scope, symbol),
+    line: lineForNode(sourceFile, definition),
+    localOwner,
     scope,
-    steps: collectSteps(ts, sourceFile, body, symbol.includes(".") ? symbol.split(".")[0] : undefined),
+    steps: collectSteps(ts, sourceFile, body, className),
     symbol,
-  });
+  };
+  functions.push(info);
+  return info;
+}
+
+/** Indexes named nested helpers so calls resolve to their lexical implementation. */
+function addLocalFunctions(functions: FunctionInfo[], ts: TypeScript, sourceFile: TsSourceFile, body: TsNode, parent: FunctionInfo): void {
+  /** Records a nested declaration and descends into it without attributing its body to the parent. */
+  function visit(node: TsNode): void {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      const local = addFunction(functions, ts, sourceFile, parent.scope, node.name.text, node, node.body, false, parent.className, parent.id);
+      addLocalFunctions(functions, ts, sourceFile, node.body, local);
+      return;
+    }
+
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+      const local = addFunction(functions, ts, sourceFile, parent.scope, node.name.text, node, node.initializer.body, false, parent.className, parent.id);
+      addLocalFunctions(functions, ts, sourceFile, node.initializer.body, local);
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  ts.forEachChild(body, visit);
 }
 
 /** Parses top-level functions, callable variables, and class members from one source snapshot. */
@@ -185,7 +217,8 @@ function parseFunctions(ts: TypeScript, path: string, text: string, scope: strin
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) {
-      addFunction(functions, ts, sourceFile, scope, statement.name.text, statement.body, isExported(ts, statement));
+      const info = addFunction(functions, ts, sourceFile, scope, statement.name.text, statement, statement.body, isExported(ts, statement));
+      addLocalFunctions(functions, ts, sourceFile, statement.body, info);
       continue;
     }
 
@@ -194,7 +227,8 @@ function parseFunctions(ts: TypeScript, path: string, text: string, scope: strin
       for (const declaration of statement.declarationList.declarations) {
         if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
         if (!ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer)) continue;
-        addFunction(functions, ts, sourceFile, scope, declaration.name.text, declaration.initializer.body, exported);
+        const info = addFunction(functions, ts, sourceFile, scope, declaration.name.text, declaration, declaration.initializer.body, exported);
+        addLocalFunctions(functions, ts, sourceFile, declaration.initializer.body, info);
       }
       continue;
     }
@@ -204,16 +238,19 @@ function parseFunctions(ts: TypeScript, path: string, text: string, scope: strin
     const exported = isExported(ts, statement);
     for (const member of statement.members) {
       if (ts.isConstructorDeclaration(member) && member.body) {
-        addFunction(functions, ts, sourceFile, scope, `new ${className}`, member.body, exported);
+        const info = addFunction(functions, ts, sourceFile, scope, `new ${className}`, member, member.body, exported, className);
+        addLocalFunctions(functions, ts, sourceFile, member.body, info);
         continue;
       }
       if (ts.isMethodDeclaration(member) && member.body && member.name) {
-        addFunction(functions, ts, sourceFile, scope, `${className}.${member.name.getText(sourceFile)}`, member.body, exported);
+        const info = addFunction(functions, ts, sourceFile, scope, `${className}.${member.name.getText(sourceFile)}`, member, member.body, exported, className);
+        addLocalFunctions(functions, ts, sourceFile, member.body, info);
         continue;
       }
       if (!ts.isPropertyDeclaration(member) || !member.name || !member.initializer) continue;
       if (!ts.isArrowFunction(member.initializer) && !ts.isFunctionExpression(member.initializer)) continue;
-      addFunction(functions, ts, sourceFile, scope, `${className}.${member.name.getText(sourceFile)}`, member.initializer.body, exported);
+      const info = addFunction(functions, ts, sourceFile, scope, `${className}.${member.name.getText(sourceFile)}`, member, member.initializer.body, exported, className);
+      addLocalFunctions(functions, ts, sourceFile, member.initializer.body, info);
     }
   }
 
@@ -224,10 +261,20 @@ function parseFunctions(ts: TypeScript, path: string, text: string, scope: strin
 function createFunctionIndex(functions: FunctionInfo[]): FunctionIndex {
   const byFile = new Map<string, Map<string, FunctionInfo>>();
   const byId = new Map<string, FunctionInfo>();
+  const byOwner = new Map<string, Map<string, FunctionInfo>>();
   const bySymbol = new Map<string, FunctionInfo[]>();
 
   for (const info of functions) {
     byId.set(info.id, info);
+    if (info.localOwner) {
+      let local = byOwner.get(info.localOwner);
+      if (!local) {
+        local = new Map();
+        byOwner.set(info.localOwner, local);
+      }
+      local.set(info.symbol, info);
+      continue;
+    }
     let inFile = byFile.get(info.scope);
     if (!inFile) {
       inFile = new Map();
@@ -239,11 +286,21 @@ function createFunctionIndex(functions: FunctionInfo[]): FunctionIndex {
     else bySymbol.set(info.symbol, [info]);
   }
 
-  return { byFile, byId, bySymbol };
+  return { byFile, byId, byOwner, bySymbol };
 }
 
 /** Resolves a call to its file-local definition first, then to an unambiguous changed-file definition. */
 function resolveCall(step: CallStep, owner: FunctionInfo, index: FunctionIndex): FunctionInfo | undefined {
+  const nested = index.byOwner.get(owner.id)?.get(step.key);
+  if (nested) return nested;
+
+  // A nested helper can call its immediately enclosing helper by name.
+  const parent = owner.localOwner ? index.byId.get(owner.localOwner) : undefined;
+  if (parent?.symbol === step.key) return parent;
+
+  const sibling = owner.localOwner ? index.byOwner.get(owner.localOwner)?.get(step.key) : undefined;
+  if (sibling) return sibling;
+
   const local = index.byFile.get(owner.scope)?.get(step.key);
   if (local) return local;
 
@@ -281,7 +338,7 @@ function buildCallTree(info: FunctionInfo, index: FunctionIndex): CallTreeNode {
       visiting.add(callee.id);
       const children = expandSteps(callee.steps, callee, depth + 1, visiting);
       visiting.delete(callee.id);
-      return { children, file: step.file, kind: "call", key: step.key, label: callee.symbol.startsWith("new ") ? callee.symbol : functionLabel(callee.symbol), line: step.line };
+      return { children, file: step.file, kind: "call", key: step.key, label: functionLabel(callee.symbol), line: step.line };
     });
   }
 
@@ -300,30 +357,24 @@ function markTree(node: CallTreeNode, status: Exclude<CallDiffStatus, "same">): 
   return { ...node, children: node.children.map((child) => markTree(child, status)), status };
 }
 
-/** Compares structural call steps without serializing temporary JSON for every function. */
-function sameSteps(before: CallStep[], after: CallStep[]): boolean {
-  if (before.length !== after.length) return false;
-
-  for (let index = 0; index < before.length; index += 1) {
-    const beforeStep = before[index]!;
-    const afterStep = after[index]!;
-    if (beforeStep.key !== afterStep.key || beforeStep.type !== afterStep.type || !sameSteps(beforeStep.children, afterStep.children)) return false;
-  }
-
-  return true;
-}
-
-/** Compares two functions by the structural fields that define their visible call flow. */
-function sameFunctionShape(before: FunctionInfo | undefined, after: FunctionInfo | undefined): boolean {
-  return before === after || Boolean(before && after && sameSteps(before.steps, after.steps));
-}
-
 /** Checks whether an LCS diff can retain the fully aligned child sequence without a matrix. */
 function haveAlignedKeys(before: CallTreeNode[], after: CallTreeNode[]): boolean {
   if (before.length !== after.length) return false;
 
   for (let index = 0; index < before.length; index += 1) {
     if (before[index]!.key !== after[index]!.key) return false;
+  }
+
+  return true;
+}
+
+/** Compares expanded trees before diffing so unchanged source locations do not create review entries. */
+function sameCallTree(before: CallTreeNode | undefined, after: CallTreeNode | undefined): boolean {
+  if (!before || !after) return before === after;
+  if (before.kind !== after.kind || before.key !== after.key || before.children.length !== after.children.length) return false;
+
+  for (let index = 0; index < before.children.length; index += 1) {
+    if (!sameCallTree(before.children[index], after.children[index])) return false;
   }
 
   return true;
@@ -390,8 +441,11 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
   for (const id of functionIds) {
     const beforeInfo = before.byId.get(id);
     const afterInfo = after.byId.get(id);
-    if (sameFunctionShape(beforeInfo, afterInfo)) continue;
-    const tree = diffTree(beforeInfo && buildCallTree(beforeInfo, before), afterInfo && buildCallTree(afterInfo, after));
+    if (beforeInfo?.localOwner || afterInfo?.localOwner) continue;
+    const beforeTree = beforeInfo && buildCallTree(beforeInfo, before);
+    const afterTree = afterInfo && buildCallTree(afterInfo, after);
+    if (sameCallTree(beforeTree, afterTree)) continue;
+    const tree = diffTree(beforeTree, afterTree);
     if (!treeHasChanges(tree)) continue;
     entries.push({ exported: Boolean(beforeInfo?.exported || afterInfo?.exported), key: id, tree });
   }
