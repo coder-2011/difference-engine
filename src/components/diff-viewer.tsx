@@ -1,10 +1,12 @@
 "use client";
 
-import type { CodeViewLineSelection } from "@pierre/diffs";
-import type { CodeViewHandle, CodeViewItem, FileDiffMetadata } from "@pierre/diffs/react";
+import type { CodeViewLineSelection, CodeViewOptions } from "@/vendor/pierre-diffs/dist/components/CodeView";
+import type { CodeViewHandle } from "@/vendor/pierre-diffs/dist/react/CodeView";
+import type { CodeViewItem, FileDiffMetadata } from "@/vendor/pierre-diffs/dist/types";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
-import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
-import { CodeView } from "@pierre/diffs/react";
+import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFiletypeFromFileName";
+import { preloadHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
+import { CodeView } from "@/vendor/pierre-diffs/dist/react/CodeView";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -101,13 +103,19 @@ export function DiffViewer({
     const path = source.map(encodeURIComponent).join("/");
     let cancelled = false;
 
-    /** Preloads every file grammar so the viewer's first visible render is syntax-highlighted. */
+    /** Preloads the initial target grammar without blocking the review on every file type. */
     async function showFiles<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[], show: (files: T[]) => void): Promise<void> {
-      const langs = [...new Set(files.map((file) => file.lang ?? getFiletypeFromFileName(file.name)))];
-      try {
-        await preloadHighlighter({ langs, preferredHighlighter: "shiki-wasm", themes: ["pierre-dark"] });
-      } catch {
-        // CodeView still renders plain code if a grammar fails to preload.
+      const target = (filePath ? files.find((file) => file.name === filePath) : undefined) ?? files[0];
+      if (target) {
+        try {
+          await preloadHighlighter({
+            langs: [target.lang ?? getFiletypeFromFileName(target.name)],
+            preferredHighlighter: "shiki-wasm",
+            themes: ["pierre-dark"],
+          });
+        } catch {
+          // CodeView still renders plain code if the initial grammar cannot preload.
+        }
       }
       if (!cancelled) show(files);
     }
@@ -136,7 +144,7 @@ export function DiffViewer({
       cancelled = true;
       worker.terminate();
     };
-  }, [repository, source]);
+  }, [filePath, repository, source]);
 
   const diffFiles = parsedFiles ?? EMPTY_FILES;
   const codeFiles = repositoryFiles ?? EMPTY_REPOSITORY_FILES;
@@ -270,6 +278,18 @@ export function DiffViewer({
       : diffFiles.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
     [codeFiles, collapsed, diffFiles, repository],
   );
+  const codeViewOptions = useMemo<CodeViewOptions<undefined>>(() => ({
+    diffStyle: split ? "split" : "unified",
+    diffIndicators: "bars",
+    enableLineSelection: repository,
+    hunkSeparators: "line-info",
+    lineDiffType: "word-alt",
+    overflow: "scroll",
+    preferredHighlighter: "shiki-wasm",
+    stickyHeaders: true,
+    theme: "pierre-dark",
+    themeType: "dark",
+  }), [repository, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
 
   /** Fetches and copies the unparsed GitHub patch as plain text. */
@@ -348,18 +368,7 @@ export function DiffViewer({
             ref={viewerRef}
             items={items}
             onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
-            options={{
-              diffStyle: split ? "split" : "unified",
-              diffIndicators: "bars",
-              enableLineSelection: repository,
-              hunkSeparators: "line-info",
-              lineDiffType: "word-alt",
-              overflow: "scroll",
-              preferredHighlighter: "shiki-wasm",
-              stickyHeaders: true,
-              theme: "pierre-dark",
-              themeType: "dark",
-            }}
+            options={codeViewOptions}
           />
           {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} source={source} />}
         </div>

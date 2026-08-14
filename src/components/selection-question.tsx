@@ -1,6 +1,7 @@
 "use client";
 
-import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
+import { getSharedHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
+import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFiletypeFromFileName";
 import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
