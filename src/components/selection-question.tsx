@@ -258,6 +258,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
 export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
+  const sourceKey = source.join("/");
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -282,6 +283,13 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const annotationCounterRef = useRef(0);
+
+  useEffect(() => {
+    // Notes belong to the current repository view and cannot be reused against a new source.
+    setAnnotations([]);
+    setAnnotationDraft(null);
+    setCopyStatus("");
+  }, [sourceKey]);
 
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
