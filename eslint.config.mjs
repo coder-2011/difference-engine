@@ -5,5 +5,5 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextCoreWebVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "next-env.d.ts", "src/vendor/pierre-diffs/**"]),
+  globalIgnores([".next/**", "next-env.d.ts"]),
 ]);

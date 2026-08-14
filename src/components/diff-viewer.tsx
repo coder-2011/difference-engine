@@ -1,12 +1,10 @@
 "use client";
 
-import type { CodeViewLineSelection, CodeViewOptions } from "@/vendor/pierre-diffs/dist/components/CodeView";
-import type { CodeViewHandle } from "@/vendor/pierre-diffs/dist/react/CodeView";
-import type { CodeViewItem, FileDiffMetadata } from "@/vendor/pierre-diffs/dist/types";
+import type { CodeViewItem, CodeViewLineSelection, CodeViewOptions, FileDiffMetadata } from "@pierre/diffs";
+import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
-import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFiletypeFromFileName";
-import { preloadHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
-import { CodeView } from "@/vendor/pierre-diffs/dist/react/CodeView";
+import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
+import { CodeView } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";

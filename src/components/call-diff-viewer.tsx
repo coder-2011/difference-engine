@@ -4,8 +4,7 @@ import { AlertCircle, ChevronDown, ChevronRight, ClipboardCopy, ExternalLink, Fi
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { CallDiffDocument, CallDiffNode } from "@/types/call-diff";
-import { getSharedHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
-import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFiletypeFromFileName";
+import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 
 type CallDiffViewerProps = {
   activeFile?: string;

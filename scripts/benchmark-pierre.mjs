@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { areOptionsEqual } from "../src/vendor/pierre-diffs/dist/utils/areOptionsEqual.js";
-import { parsePatchFiles } from "../src/vendor/pierre-diffs/dist/utils/parsePatchFiles.js";
+import { areOptionsEqual, parsePatchFiles } from "@pierre/diffs";
 
 const PARSER_SAMPLES = 15;
 const PARSER_ITERATIONS = 4;

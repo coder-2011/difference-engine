@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
-import type { FileDiffMetadata } from "@/vendor/pierre-diffs/dist/types";
-import { parsePatchFiles, processFile } from "@/vendor/pierre-diffs/dist/utils/parsePatchFiles";
+import type { FileDiffMetadata } from "@pierre/diffs";
+import { parsePatchFiles, processFile } from "@pierre/diffs";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 import type { RepositoryFile } from "@/types/github";
 

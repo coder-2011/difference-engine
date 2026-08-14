@@ -55,7 +55,7 @@ type MarkdownCodeBlockProps = {
 
 /** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
 async function highlightCode(source: string, language: SupportedLanguage): Promise<string> {
-  const { getSharedHighlighter } = await import("@/vendor/pierre-diffs/dist/highlighter/shared_highlighter");
+  const { getSharedHighlighter } = await import("@pierre/diffs");
   const highlighter = await getSharedHighlighter({
     langs: [language],
     preferredHighlighter: "shiki-wasm",
