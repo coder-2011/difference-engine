@@ -289,6 +289,12 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     requestRef.current?.abort();
     requestRef.current = null;
     setLoading(false);
+    setSelection(null);
+    setQuestion("");
+    setTurns([]);
+    setSuggestion("");
+    setAttachments([]);
+    setAttachmentError("");
     setAnnotations([]);
     setAnnotationDraft(null);
     setCopyStatus("");
