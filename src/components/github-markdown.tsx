@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import type { ComponentPropsWithoutRef } from "react";
 import remarkGfm from "remark-gfm";
@@ -55,7 +56,7 @@ const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre, table: Ma
 const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
 
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
-export function GitHubMarkdown({ children }: GitHubMarkdownProps) {
+export const GitHubMarkdown = memo(function GitHubMarkdown({ children }: GitHubMarkdownProps) {
   return (
     <ReactMarkdown
       components={MARKDOWN_COMPONENTS}
@@ -65,4 +66,4 @@ export function GitHubMarkdown({ children }: GitHubMarkdownProps) {
       {children}
     </ReactMarkdown>
   );
-}
+});
