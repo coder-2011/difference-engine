@@ -113,7 +113,9 @@ function formattedAnnotations(annotations: Annotation[]): string {
       && (location.endLineNumber !== location.lineNumber || location.endSide !== location.side);
     const end = hasRange ? `-${location.endLineNumber}${location.endSide ? ` (${location.endSide})` : ""}` : "";
     const reference = location ? `\`${location.id}:${location.lineNumber}${side}${end}\` ` : "";
-    return `- ${reference}${annotation.text}`;
+    // Continuations must remain part of their source-anchored list item.
+    const text = annotation.text.replace(/\r?\n/g, "\n  ");
+    return `- ${reference}${text}`;
   }).join("\n");
 }
 
