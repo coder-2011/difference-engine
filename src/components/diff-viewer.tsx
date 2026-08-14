@@ -312,8 +312,8 @@ export function DiffViewer({
             </div>
           )}
           {!repository && (
-            <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff as .txt">
-              <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw .txt"}
+            <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">
+              <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw diff"}
             </button>
           )}
           <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title="Toggle file tree">
