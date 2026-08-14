@@ -381,7 +381,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
           {workspace.commitsUnavailable && <p className="pr-conversation-note">Commit history may be incomplete.</p>}
           {conversationItems.length || reviewThreads.length ? conversationItems.map((item) => {
             if (item.kind === "event") {
-              return <p className="pr-timeline-event" key={item.key}><time dateTime={item.event.createdAt}>{commentDate(item.event.createdAt)}</time>{item.event.text}</p>;
+              return <p className="pr-timeline-event" key={item.key}><time dateTime={item.event.createdAt} suppressHydrationWarning>{commentDate(item.event.createdAt)}</time>{item.event.text}</p>;
             }
 
             const entry = item.entry;
@@ -390,7 +390,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                 <article className="pr-comment">
                   <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
                   <div>
-                    <header><strong>{entry.author}</strong><time dateTime={entry.createdAt}>{commentDate(entry.createdAt)}</time>{entry.updatedAt !== entry.createdAt && <span>edited</span>}</header>
+                    <header><strong>{entry.author}</strong><time dateTime={entry.createdAt} suppressHydrationWarning>{commentDate(entry.createdAt)}</time>{entry.updatedAt !== entry.createdAt && <span>edited</span>}</header>
                     {entry.context && <span className="pr-comment-context">{entry.context}</span>}
                     {entry.body && <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>}
                   </div>
