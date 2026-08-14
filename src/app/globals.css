@@ -2770,7 +2770,7 @@ button {
 }
 
 /* Overlay controls are positioned independently from the scrollable diff content. */
-.code-view-shell > div:not(.question-panel):not(.selection-actions):not(.ai-chat-actions) {
+.code-view-shell > div:not(.question-panel):not(.selection-actions):not(.ai-chat-actions):not(.annotation-list) {
   height: 100%;
   overflow: auto;
 }
@@ -3086,17 +3086,28 @@ button {
 }
 
 .annotation-list {
-  flex: none;
-  max-height: 132px;
+  position: fixed;
+  z-index: 80;
+  bottom: 55px;
+  left: 12px;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(240px, calc(100vh - 70px));
   overflow-y: auto;
-  border-bottom: 1px solid var(--line-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
   background: #121015;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.38);
+  --chat-font-size: 12px;
 }
 
 .annotation-list-title {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   display: flex;
   justify-content: space-between;
   padding: 7px 12px;
+  background: #121015;
   color: #a99dd0;
   font-size: calc(var(--chat-font-size) * 0.75);
   font-weight: 650;
@@ -3132,6 +3143,38 @@ button {
 
 .annotation-item > button:first-child:hover {
   color: #ece8f4;
+}
+
+.annotation-location,
+.annotation-code,
+.annotation-text {
+  display: block;
+}
+
+.annotation-location {
+  overflow: hidden;
+  color: #a99dd0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-code {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #aaa3b5;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.annotation-text {
+  margin-top: 4px;
 }
 
 .annotation-item > button:last-child {

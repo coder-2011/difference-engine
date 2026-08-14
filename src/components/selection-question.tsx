@@ -356,7 +356,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
-      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .selection-actions, .annotation-composer, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-list, .selection-actions, .annotation-composer, .question-panel")) return;
       const pointer = { x: event.clientX, y: event.clientY };
       const origin = event.composedPath()[0];
       window.requestAnimationFrame(() => captureSelection(pointer, origin));
@@ -364,7 +364,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Captures keyboard-created code selections while ignoring typing inside the chat or annotation composer. */
     function captureAfterKeyUp(event: KeyboardEvent): void {
-      if (event.target instanceof Element && event.target.closest(".annotation-composer, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".annotation-composer, .annotation-list, .question-panel")) return;
       captureSelection(undefined, event.composedPath()[0]);
     }
 
@@ -941,6 +941,26 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
   return (
     <>
+      {annotations.length > 0 && (
+        <div className="annotation-list">
+          <div className="annotation-list-title">Annotations <span>{annotations.length}</span></div>
+          {annotations.map((annotation) => (
+            <div className="annotation-item" key={annotation.id}>
+              <button onClick={() => showSelection(annotation.selection)} type="button">
+                <span className="annotation-location">
+                  {annotation.selection.location
+                    ? `${annotation.selection.location.id}:${annotation.selection.location.lineNumber}`
+                    : "Selected code"}
+                </span>
+                <span className="annotation-code">{annotation.selection.text}</span>
+                <span className="annotation-text">{annotation.text}</span>
+              </button>
+              <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {!selection?.open && (
         <div className="ai-chat-actions">
           <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
@@ -1031,20 +1051,6 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
                   key={`${codeSelection.text}-${index}`}
                   onShow={showSelection}
                 />
-              ))}
-            </div>
-          )}
-
-          {annotations.length > 0 && (
-            <div className="annotation-list">
-              <div className="annotation-list-title">Annotations <span>{annotations.length}</span></div>
-              {annotations.map((annotation) => (
-                <div className="annotation-item" key={annotation.id}>
-                  <button onClick={() => showSelection(annotation.selection)} type="button">
-                    {annotation.text}
-                  </button>
-                  <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
-                </div>
               ))}
             </div>
           )}
