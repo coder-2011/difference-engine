@@ -9,7 +9,9 @@ import type {
   PullRequestComment,
   PullRequestCommit,
   PullRequestMergeMethod,
+  PullRequestReviewThread,
   PullRequestSummary,
+  PullRequestTimelineEvent,
   PullRequestWorkflowRun,
   PullRequestWorkspace,
   RepositoryFile,
@@ -45,11 +47,17 @@ type PullRequestStatus = PullRequestSummary["status"];
 
 type PullRequestConversation = {
   comments: PullRequestComment[];
+  reviewThreads: PullRequestReviewThread[];
   unavailable: boolean;
 };
 
 type PullRequestCommitList = {
   commits: PullRequestCommit[];
+  unavailable: boolean;
+};
+
+type PullRequestTimeline = {
+  events: PullRequestTimelineEvent[];
   unavailable: boolean;
 };
 
@@ -76,6 +84,7 @@ type IssueComment = {
   body: string;
   created_at: string;
   id: number;
+  updated_at: string;
   user: GitHubUser;
 };
 
@@ -90,9 +99,62 @@ type PullRequestReview = {
 type PullRequestReviewComment = {
   body: string;
   created_at: string;
+  diff_hunk?: string;
+  html_url: string;
   id: number;
+  in_reply_to_id: number | null;
+  line: number | null;
+  original_line: number | null;
+  original_start_line: number | null;
   path: string;
+  pull_request_review_id: number | null;
+  side: "LEFT" | "RIGHT" | null;
+  start_line: number | null;
+  updated_at: string;
   user: GitHubUser;
+};
+
+type PullRequestReviewThreadMetadata = {
+  comments: { nodes: Array<{ url: string }> };
+  id: string;
+  isOutdated: boolean;
+  isResolved: boolean;
+  resolvedBy: { login: string } | null;
+  viewerCanReply: boolean;
+  viewerCanResolve: boolean;
+  viewerCanUnresolve: boolean;
+};
+
+type PullRequestReviewThreadConnection = {
+  nodes: PullRequestReviewThreadMetadata[];
+  pageInfo: { endCursor: string | null; hasNextPage: boolean };
+};
+
+type PullRequestReviewThreadQuery = {
+  repository: {
+    pullRequest: {
+      reviewThreads: PullRequestReviewThreadConnection;
+    } | null;
+  } | null;
+};
+
+type PullRequestReviewThreadNodeQuery = {
+  node: {
+    pullRequest: {
+      number: number;
+      repository: { nameWithOwner: string };
+    };
+  } | null;
+};
+
+type GitHubTimelineEvent = {
+  actor: GitHubUser | null;
+  assignee?: GitHubUser | null;
+  created_at: string | null;
+  event: string;
+  id: number | null;
+  label?: { name: string } | null;
+  requested_reviewer?: GitHubUser | null;
 };
 
 type PullRequestCommitRecord = {
@@ -313,21 +375,24 @@ export async function isGitHubConnected(token?: string): Promise<boolean> {
   }
 }
 
-/** Reads enough newest items from a chronological GitHub collection to fill the requested window. */
-async function githubNewestItems<T>(path: string, token: string | undefined, limit: number): Promise<T[]> {
-  const response = await githubResponse(path, token);
-  const lastPage = response.headers.get("link")?.match(/<([^>]+)>; rel="last"/)?.[1];
+/** Reads every page in a GitHub conversation collection so older discussion is not silently omitted. */
+async function githubAllItems<T>(path: string, token?: string): Promise<T[]> {
+  const items: T[] = [];
+  let nextPath: string | undefined = path;
 
-  if (!lastPage) return response.json() as Promise<T[]>;
+  while (nextPath) {
+    const response = await githubResponse(nextPath, token);
+    const page = await response.json() as T[];
+    items.push(...page);
+    const nextUrl = response.headers.get("link")?.match(/<([^>]+)>; rel="next"/)?.[1];
 
-  const url = new URL(lastPage, GITHUB_API);
-  const items = await githubRequest<T[]>(`${url.pathname}${url.search}`, token);
-  const page = Number(url.searchParams.get("page"));
-  if (items.length >= limit || !Number.isInteger(page) || page <= 1) return items.slice(-limit);
+    if (!nextUrl) break;
 
-  url.searchParams.set("page", String(page - 1));
-  const previousItems = await githubRequest<T[]>(`${url.pathname}${url.search}`, token);
-  return [...previousItems, ...items].slice(-limit);
+    const url = new URL(nextUrl, GITHUB_API);
+    nextPath = `${url.pathname}${url.search}`;
+  }
+
+  return items;
 }
 
 /** Sends one GitHub mutation whose successful response body is not needed locally. */
@@ -523,6 +588,7 @@ function summarizeComment(comment: IssueComment): PullRequestComment {
     body: comment.body,
     createdAt: comment.created_at,
     key: `comment-${comment.id}`,
+    updatedAt: comment.updated_at,
   };
 }
 
@@ -537,18 +603,100 @@ function summarizeReview(review: PullRequestReview): PullRequestComment {
     context: state,
     createdAt: review.submitted_at ?? "",
     key: `review-${review.id}`,
+    reviewId: review.id,
   };
 }
 
-/** Maps an inline diff comment into the top-level conversation with its source path. */
-function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestComment {
-  return {
+/** Maps GitHub's thread metadata to the REST root comment it enriches. */
+async function getPullRequestReviewThreadMetadata(parsed: ReturnType<typeof parseSource>, token: string): Promise<Map<string, PullRequestReviewThreadMetadata>> {
+  const [owner, repo] = parsed.repository.split("/");
+  const metadata = new Map<string, PullRequestReviewThreadMetadata>();
+  let cursor: string | null = null;
+
+  do {
+    const data: PullRequestReviewThreadQuery = await githubGraphql<PullRequestReviewThreadQuery>(token, `query PullRequestReviewThreads($owner: String!, $repo: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $after) {
+            nodes {
+              id
+              isOutdated
+              isResolved
+              resolvedBy { login }
+              viewerCanReply
+              viewerCanResolve
+              viewerCanUnresolve
+              comments(first: 1) { nodes { url } }
+            }
+            pageInfo { endCursor hasNextPage }
+          }
+        }
+      }
+    }`, { after: cursor, number: Number(parsed.value), owner, repo });
+    const threads: PullRequestReviewThreadConnection | undefined = data.repository?.pullRequest?.reviewThreads;
+    if (!threads) break;
+
+    for (const thread of threads.nodes) {
+      const rootUrl = thread.comments.nodes[0]?.url;
+      if (rootUrl) metadata.set(rootUrl, thread);
+    }
+    cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+  } while (cursor);
+
+  return metadata;
+}
+
+/** Confirms that an opaque review-thread ID belongs to the pull request named by the action route. */
+async function reviewThreadBelongsToPullRequest(parsed: ReturnType<typeof parseSource>, threadId: string, token: string): Promise<boolean> {
+  const data = await githubGraphql<PullRequestReviewThreadNodeQuery>(token, `query PullRequestReviewThread($threadId: ID!) {
+    node(id: $threadId) {
+      ... on PullRequestReviewThread {
+        pullRequest {
+          number
+          repository { nameWithOwner }
+        }
+      }
+    }
+  }`, { threadId });
+  const pullRequest = data.node?.pullRequest;
+
+  return pullRequest?.number === Number(parsed.value) && pullRequest.repository.nameWithOwner === parsed.repository;
+}
+
+/** Reconstructs one GitHub inline discussion from its root comment and direct replies. */
+function summarizeReviewThread(
+  root: PullRequestReviewComment,
+  replies: PullRequestReviewComment[],
+  metadata?: PullRequestReviewThreadMetadata,
+): PullRequestReviewThread {
+  const comments = [root, ...replies].map((comment) => ({
     author: comment.user.login,
     avatarUrl: comment.user.avatar_url,
     body: comment.body,
-    context: `review comment · ${comment.path}`,
     createdAt: comment.created_at,
-    key: `review-comment-${comment.id}`,
+    id: comment.id,
+    updatedAt: comment.updated_at,
+    url: comment.html_url,
+  }));
+
+  return {
+    canReply: metadata?.viewerCanReply ?? false,
+    canResolve: metadata?.viewerCanResolve ?? false,
+    canUnresolve: metadata?.viewerCanUnresolve ?? false,
+    comments,
+    diffHunk: root.diff_hunk,
+    id: metadata?.id,
+    isOutdated: metadata?.isOutdated ?? false,
+    isResolved: metadata?.isResolved ?? false,
+    line: root.line ?? undefined,
+    originalLine: root.original_line ?? undefined,
+    originalStartLine: root.original_start_line ?? undefined,
+    path: root.path,
+    resolvedBy: metadata?.resolvedBy?.login,
+    reviewId: root.pull_request_review_id ?? undefined,
+    side: root.side ?? undefined,
+    startLine: root.start_line ?? undefined,
+    statusKnown: Boolean(metadata),
   };
 }
 
@@ -561,35 +709,103 @@ function summarizePullRequestCommit(commit: PullRequestCommitRecord): PullReques
   };
 }
 
+/** Names the actor and target represented by one GitHub activity event. */
+function timelineEventText(event: GitHubTimelineEvent): string {
+  const actor = event.actor?.login ?? "GitHub";
+  const target = event.requested_reviewer?.login ?? event.assignee?.login;
+  const label = event.label?.name;
+
+  switch (event.event) {
+    case "assigned": return target ? `${actor} assigned ${target}` : `${actor} assigned a collaborator`;
+    case "unassigned": return target ? `${actor} unassigned ${target}` : `${actor} removed an assignee`;
+    case "labeled": return label ? `${actor} added the ${label} label` : `${actor} added a label`;
+    case "unlabeled": return label ? `${actor} removed the ${label} label` : `${actor} removed a label`;
+    case "review_requested": return target ? `${actor} requested a review from ${target}` : `${actor} requested a review`;
+    case "review_request_removed": return target ? `${actor} removed ${target} as a reviewer` : `${actor} removed a reviewer`;
+    case "deployed": return `${actor} deployed this pull request`;
+    case "ready_for_review": return `${actor} marked this pull request ready for review`;
+    case "converted_to_draft": return `${actor} converted this pull request to draft`;
+    case "head_ref_force_pushed": return `${actor} force-pushed the head branch`;
+    case "base_ref_force_pushed": return `${actor} force-pushed the base branch`;
+    case "merged": return `${actor} merged this pull request`;
+    case "closed": return `${actor} closed this pull request`;
+    case "reopened": return `${actor} reopened this pull request`;
+    case "locked": return `${actor} locked this conversation`;
+    case "unlocked": return `${actor} unlocked this conversation`;
+    default: return `${actor} ${event.event.replaceAll("_", " ")}`;
+  }
+}
+
+/** Converts GitHub's varied activity payloads into the one sentence shown in the compact timeline. */
+function summarizeTimelineEvent(event: GitHubTimelineEvent): PullRequestTimelineEvent | undefined {
+  if (!event.created_at || ["commented", "committed", "mentioned", "reviewed", "subscribed"].includes(event.event)) return undefined;
+
+  return {
+    createdAt: event.created_at,
+    key: `event-${event.id ?? `${event.event}-${event.created_at}`}`,
+    text: timelineEventText(event),
+  };
+}
+
 /** Loads the recent commit history without preventing the rest of the PR workspace from rendering. */
 async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestCommitList> {
   try {
-    const commits = await githubNewestItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token, 100);
+    const commits = await githubAllItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token);
     return { commits: commits.map(summarizePullRequestCommit), unavailable: false };
   } catch {
     return { commits: [], unavailable: true };
   }
 }
 
+/** Loads the non-comment activity records that GitHub places between conversation messages. */
+async function getPullRequestTimeline(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestTimeline> {
+  try {
+    const path = `${parsed.apiPath.replace("/pulls/", "/issues/")}/timeline?per_page=100`;
+    const events = await githubAllItems<GitHubTimelineEvent>(path, token);
+    return { events: events.flatMap((event) => {
+      const summary = summarizeTimelineEvent(event);
+      return summary ? [summary] : [];
+    }), unavailable: false };
+  } catch {
+    return { events: [], unavailable: true };
+  }
+}
+
 /** Loads the authenticated conversation records shown in the PR workspace. */
 async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestConversation> {
   // Preserve available records while telling the UI when GitHub could not provide the full conversation.
-  const [commentsResult, reviewsResult, reviewCommentsResult] = await Promise.allSettled([
-    githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token),
-    githubNewestItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, 100),
-    githubRequest<PullRequestReviewComment[]>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=desc`, token),
+  const [commentsResult, reviewsResult, reviewCommentsResult, threadMetadataResult] = await Promise.allSettled([
+    githubAllItems<IssueComment>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=asc`, token),
+    githubAllItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token),
+    githubAllItems<PullRequestReviewComment>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=asc`, token),
+    token ? getPullRequestReviewThreadMetadata(parsed, token) : Promise.resolve(new Map<string, PullRequestReviewThreadMetadata>()),
   ]);
   const comments = commentsResult.status === "fulfilled" ? commentsResult.value : [];
   const reviews = reviewsResult.status === "fulfilled" ? reviewsResult.value : [];
   const reviewComments = reviewCommentsResult.status === "fulfilled" ? reviewCommentsResult.value : [];
+  const threadMetadata = threadMetadataResult.status === "fulfilled" ? threadMetadataResult.value : new Map<string, PullRequestReviewThreadMetadata>();
+  const repliesByRoot = new Map<number, PullRequestReviewComment[]>();
+  const roots: PullRequestReviewComment[] = [];
+
+  for (const comment of reviewComments) {
+    if (comment.in_reply_to_id) {
+      const replies = repliesByRoot.get(comment.in_reply_to_id) ?? [];
+      replies.push(comment);
+      repliesByRoot.set(comment.in_reply_to_id, replies);
+    } else {
+      roots.push(comment);
+    }
+  }
 
   return {
     comments: [
       ...comments.map(summarizeComment),
-      ...reviews.filter((review) => Boolean(review.submitted_at && review.body.trim())).map(summarizeReview),
-      ...reviewComments.map(summarizeReviewComment),
-    ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-100),
-    unavailable: [commentsResult, reviewsResult, reviewCommentsResult].some((result) => result.status === "rejected"),
+      ...reviews.filter((review) => Boolean(review.submitted_at)).map(summarizeReview),
+    ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)),
+    reviewThreads: roots
+      .map((root) => summarizeReviewThread(root, repliesByRoot.get(root.id) ?? [], threadMetadata.get(root.html_url)))
+      .sort((left, right) => Date.parse(left.comments[0]?.createdAt ?? "") - Date.parse(right.comments[0]?.createdAt ?? "")),
+    unavailable: [commentsResult, reviewsResult, reviewCommentsResult, threadMetadataResult].some((result) => result.status === "rejected"),
   };
 }
 
@@ -695,9 +911,10 @@ function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequest
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
-  const [conversation, commits, { capabilities, workflowRuns }] = await Promise.all([
+  const [conversation, commits, timeline, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
     getPullRequestCommits(parsed, token),
+    getPullRequestTimeline(parsed, token),
     getPullRequestControls(parsed, pullRequest, token),
   ]);
   const state = pullRequest.merged ? "merged" : pullRequest.state;
@@ -710,14 +927,17 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
+    canReview: state === "open" && !pullRequest.locked && Boolean(token),
     comments: conversation.comments,
     commits: commits.commits,
     commitsUnavailable: commits.unavailable,
-    conversationUnavailable: conversation.unavailable,
+    conversationUnavailable: conversation.unavailable || timeline.unavailable,
     draft: pullRequest.draft,
     hasGitHubAccess: Boolean(token),
     mergeMethods: capabilities?.mergeMethods ?? [],
+    reviewThreads: conversation.reviewThreads,
     state,
+    timelineEvents: timeline.events,
     workflowRuns: workflowRuns.slice(0, 8).map(summarizeWorkflowRun),
   };
 }
@@ -753,6 +973,38 @@ export async function performPullRequestAction(source: string[], token: string |
     const body = action.body.trim();
     if (!body || body.length > 65_536) throw new GitHubError("Comments must be between 1 and 65,536 characters", 400);
     await githubMutation(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments`, accessToken, "POST", { body });
+    return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  if (action.action === "reply") {
+    const body = action.body.trim();
+    if (!Number.isInteger(action.commentId) || action.commentId < 1 || !body || body.length > 65_536) {
+      throw new GitHubError("Replies must target one comment and be between 1 and 65,536 characters", 400);
+    }
+    await githubMutation(`${parsed.apiPath}/comments/${action.commentId}/replies`, accessToken, "POST", { body });
+    return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  if (action.action === "resolve-thread" || action.action === "unresolve-thread") {
+    if (!await reviewThreadBelongsToPullRequest(parsed, action.threadId, accessToken)) {
+      throw new GitHubError("Review thread does not belong to this pull request", 400);
+    }
+    const mutation = action.action === "resolve-thread" ? "resolveReviewThread" : "unresolveReviewThread";
+    await githubGraphql(accessToken, `mutation ReviewThreadResolution($threadId: ID!) {
+      ${mutation}(input: { threadId: $threadId }) {
+        thread { id isResolved }
+      }
+    }`, { threadId: action.threadId });
+    return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
+  if (action.action === "review") {
+    const body = action.body.trim();
+    if (["COMMENT", "REQUEST_CHANGES"].includes(action.event) && !body) {
+      throw new GitHubError("GitHub requires a comment when requesting changes or leaving a review comment", 400);
+    }
+    if (body.length > 65_536) throw new GitHubError("Review comments must be at most 65,536 characters", 400);
+    await githubMutation(`${parsed.apiPath}/reviews`, accessToken, "POST", { body, event: action.event });
     return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
   }
 
@@ -1224,8 +1476,11 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
   let truncated: boolean;
 
   if (parsed.kind === "pull") {
-    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const candidates = await getPullRequestCallDiffFiles(parsed.apiPath, token);
+    // The pull metadata and changed-file list are independent GitHub requests.
+    const [pullRequest, candidates] = await Promise.all([
+      githubRequest<PullRequest>(parsed.apiPath, token),
+      getPullRequestCallDiffFiles(parsed.apiPath, token),
+    ]);
     fromRef = pullRequest.base.sha;
     toRef = pullRequest.head.sha;
     candidateFiles = candidates.files;

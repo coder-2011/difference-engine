@@ -13,10 +13,11 @@ import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
-import { CallDiffViewer } from "./call-diff-viewer";
+import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
 import type { RepositoryFile } from "@/types/github";
+import type { ProgrammaticSelection } from "./selection-question";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
 const SelectionQuestion = dynamic(
@@ -97,39 +98,59 @@ export function DiffViewer({
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
+  // Keep the completed lazy analysis mounted so tab changes never restart its GitHub request.
+  const [callFlowLoaded, setCallFlowLoaded] = useState(false);
+  const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
-    let cancelled = false;
+    let grammarPreloadStarted = false;
 
-    /** Preloads the initial target grammar without blocking the review on every file type. */
-    async function showFiles<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[], show: (files: T[]) => void): Promise<void> {
+    setError("");
+    setParsedFiles(undefined);
+    setRepositoryFiles(undefined);
+
+    /** Starts the first needed grammar load without delaying already-parsed files. */
+    function preloadInitialGrammar<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[]): void {
+      if (grammarPreloadStarted) return;
+
       const target = (filePath ? files.find((file) => file.name === filePath) : undefined) ?? files[0];
-      if (target) {
-        try {
-          await preloadHighlighter({
-            langs: [target.lang ?? getFiletypeFromFileName(target.name)],
-            preferredHighlighter: "shiki-wasm",
-            themes: ["pierre-dark"],
-          });
-        } catch {
-          // CodeView still renders plain code if the initial grammar cannot preload.
-        }
+      if (!target) return;
+
+      grammarPreloadStarted = true;
+      void preloadHighlighter({
+        langs: [target.lang ?? getFiletypeFromFileName(target.name)],
+        preferredHighlighter: "shiki-wasm",
+        themes: ["pierre-dark"],
+      }).catch(() => {
+        // CodeView still renders plain code if the initial grammar cannot preload.
+      });
+    }
+
+    /** Appends source-ordered streamed diff files and completes an empty patch. */
+    function appendParsedFiles(files: FileDiffMetadata[], complete: boolean): void {
+      if (files.length) {
+        preloadInitialGrammar(files);
+        setParsedFiles((previous) => previous === undefined ? files : [...previous, ...files]);
+        return;
       }
-      if (!cancelled) show(files);
+
+      if (complete) setParsedFiles((previous) => previous ?? []);
     }
 
     /** Receives parsed files without blocking the main browser thread. */
-    function handleMessage(event: MessageEvent<{ error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
+    function handleMessage(event: MessageEvent<{ complete?: boolean; error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
       if (event.data.error) {
         setError(event.data.error);
       } else if (repository) {
-        void showFiles(event.data.repositoryFiles ?? [], setRepositoryFiles);
+        const files = event.data.repositoryFiles ?? [];
+        preloadInitialGrammar(files);
+        setRepositoryFiles(files);
       } else {
-        void showFiles(event.data.files ?? [], setParsedFiles);
+        appendParsedFiles(event.data.files ?? [], event.data.complete ?? false);
       }
     }
 
@@ -143,7 +164,6 @@ export function DiffViewer({
     worker.postMessage({ cacheKey: source.join("/"), repository, url: `/api/diff/${path}` });
 
     return () => {
-      cancelled = true;
       worker.terminate();
     };
   }, [filePath, repository, source]);
@@ -159,10 +179,30 @@ export function DiffViewer({
 
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
   const revealSelection = useCallback((location: CodeLocation) => {
-    const end = location.endLineNumber ?? location.lineNumber;
-    const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
-    viewerRef.current?.setSelectedLines({ id: location.id, range });
-    viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+    /** Reveals a saved Call Flow reference in Files Changed after the selected tab has mounted. */
+    function selectCode(): void {
+      const end = location.endLineNumber ?? location.lineNumber;
+      const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
+      viewerRef.current?.setSelectedLines({ id: location.id, range });
+      viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+    }
+
+    if (reviewView === "call-flow") {
+      setReviewView("files");
+      window.requestAnimationFrame(selectCode);
+      return;
+    }
+    selectCode();
+  }, [reviewView]);
+
+  /** Converts one Call Flow click into the same source-anchored selection used by Ask Diffs. */
+  const selectCallFlowNode = useCallback((selection: CallDiffSelection) => {
+    setCallFlowSelection({
+      location: { id: selection.file, lineNumber: selection.line },
+      text: selection.text,
+      x: selection.x,
+      y: selection.y,
+    });
   }, []);
 
   /** Opens a repository search result and writes its file and line into the URL. */
@@ -284,6 +324,8 @@ export function DiffViewer({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository,
+    // A clicked unchanged-lines separator should reveal its entire collapsed range.
+    expansionLineCount: Number.POSITIVE_INFINITY,
     hunkSeparators: "line-info",
     lineDiffType: "word-alt",
     overflow: "scroll",
@@ -291,6 +333,15 @@ export function DiffViewer({
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",
+    // Pierre renders separators in a shadow root, so make each hidden range's disclosure state explicit there.
+    unsafeCSS: `
+      [data-expand-index] [data-expand-button] [data-icon] { display: none; }
+      [data-expand-index] [data-expand-button]::before {
+        content: "▸";
+        transition: transform 100ms ease-out;
+      }
+      [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
+    `,
   }), [repository, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
@@ -299,7 +350,7 @@ export function DiffViewer({
   const reviewTabs = callDiffAvailable && (
     <div aria-label="Review view" className="review-tabs" role="tablist">
       <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
-      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => setReviewView("call-flow")} role="tab" type="button"><Network size={13} /> Call flow</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { setCallFlowLoaded(true); setReviewView("call-flow"); }} role="tab" type="button"><Network size={13} /> Call flow</button>
     </div>
   );
 
@@ -319,21 +370,23 @@ export function DiffViewer({
     }
   }
 
-  if (showingCallDiff) {
-    return <section className={workspaceClass}>{reviewTabs}<div aria-labelledby="call-flow-review-tab" id="call-flow-review" role="tabpanel"><CallDiffViewer source={source} /></div></section>;
-  }
-
-  if (error) {
+  if (error && !showingCallDiff) {
     return <section className={workspaceClass}>{reviewTabs}<div className="diff-error" id="files-review" role="tabpanel"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div></section>;
   }
 
-  if (repository ? !repositoryFiles : !parsedFiles) {
+  if (!showingCallDiff && (repository ? !repositoryFiles : !parsedFiles)) {
     return <section className={workspaceClass}>{reviewTabs}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
   }
 
   return (
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
+      {callFlowLoaded && (
+        <div aria-labelledby="call-flow-review-tab" hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
+          <CallDiffViewer additions={additions} changedFiles={changedFiles} deletions={deletions} onSelect={openAIConnected ? selectCallFlowNode : undefined} source={source} />
+        </div>
+      )}
+      {!showingCallDiff && <>
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
@@ -386,9 +439,10 @@ export function DiffViewer({
             onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
             options={codeViewOptions}
           />
-          {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} source={source} />}
         </div>
       </div>
+      </>}
+      {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />}
     </section>
   );
 }

@@ -12,7 +12,11 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const [{ source }, accessToken] = await Promise.all([context.params, getGitHubAccessToken(request)]);
 
   try {
-    return NextResponse.json(await getCallDiffDocument(source, accessToken));
+    const document = await getCallDiffDocument(source, accessToken);
+    // Public revisions can share a brief edge cache, while private GitHub responses stay per-session.
+    return NextResponse.json(document, accessToken ? undefined : {
+      headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" },
+    });
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;
     const message = error instanceof Error ? error.message : "The call flow could not be loaded";
