@@ -9,6 +9,7 @@ import {
   GitHubError,
   postPullRequestAgentComment,
   readRepositoryFiles,
+  type RepositoryContext,
 } from "@/lib/github";
 import { isRecord } from "@/lib/json";
 import { getGitHubAccessToken } from "@/lib/session";
@@ -375,7 +376,7 @@ function functionCallOutput(callId: string, result: unknown): unknown {
 }
 
 /** Executes one repository read or user-authorized GitHub comment. */
-async function executeModelTool(call: ModelToolCall, source: string[], token?: string): Promise<ExecutedToolOutput> {
+async function executeModelTool(call: ModelToolCall, source: string[], repositoryContext: RepositoryContext, token?: string): Promise<ExecutedToolOutput> {
   if (call.name === "read_repository_files") {
     const paths = requestedPaths(call.arguments);
     if (!paths.length) {
@@ -383,7 +384,7 @@ async function executeModelTool(call: ModelToolCall, source: string[], token?: s
     }
 
     try {
-      const result = await readRepositoryFiles(source, paths, token);
+      const result = await readRepositoryFiles(source, paths, token, repositoryContext.snapshot);
       return { output: functionCallOutput(call.callId, result) };
     } catch {
       return { output: functionCallOutput(call.callId, { error: "Repository files could not be read." }) };
@@ -445,6 +446,7 @@ async function executeModelTool(call: ModelToolCall, source: string[], token?: s
 async function modelToolOutputs(
   calls: ModelToolCall[],
   source: string[],
+  repositoryContext: RepositoryContext,
   token: string | undefined,
   existingCommentUrl: string,
 ): Promise<{ commentError?: string; githubCommentUrl: string; outputs: unknown[] }> {
@@ -462,7 +464,7 @@ async function modelToolOutputs(
       continue;
     }
 
-    const result = await executeModelTool(call, source, token);
+    const result = await executeModelTool(call, source, repositoryContext, token);
     outputs.push(result.output);
     commentError = result.commentError ?? commentError;
     githubCommentUrl = result.githubCommentUrl ?? githubCommentUrl;
@@ -507,7 +509,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let githubToken: string | undefined;
-  let repositoryContext: string;
+  let repositoryContext: RepositoryContext;
 
   try {
     githubToken = await getGitHubAccessToken(request);
@@ -528,7 +530,7 @@ export async function POST(request: Request): Promise<Response> {
     `<conversation_history>\n${history.map((turn) => `Selected code: ${turn.selection}\nUser: ${turn.question}\nAssistant: ${turn.answer}`).join("\n\n") || "No previous turns."}\n</conversation_history>`,
     `<question>\n${question}\n</question>`,
     `<selected_code>\n${selection}\n</selected_code>`,
-    `<repository_context>\n${repositoryContext}\n</repository_context>`,
+    `<repository_context>\n${repositoryContext.text}\n</repository_context>`,
   ].join("\n\n");
   const model = process.env.OPENAI_OAUTH_MODEL ?? "gpt-5.6-terra";
   // GitHub writes are never available outside a numeric pull-request route.
@@ -626,7 +628,7 @@ export async function POST(request: Request): Promise<Response> {
           const calls = modelToolCalls(answer.output);
           if (!calls.length) break;
 
-          const toolResults = await modelToolOutputs(calls, source, githubToken, githubCommentUrl);
+          const toolResults = await modelToolOutputs(calls, source, repositoryContext, githubToken, githubCommentUrl);
           githubCommentUrl = toolResults.githubCommentUrl;
           if (toolResults.commentError && !githubCommentUrl) throw new Error(toolResults.commentError);
           if (githubCommentUrl) break;
