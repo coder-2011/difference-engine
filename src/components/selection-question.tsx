@@ -105,7 +105,7 @@ type SnippetToken = {
   content: string;
 };
 
-/** Formats source-anchored annotations as Markdown ready to paste into a review. */
+/** Formats source-anchored annotations and their selected code as Markdown ready to paste into a review. */
 function formattedAnnotations(annotations: Annotation[]): string {
   return annotations.map((annotation) => {
     const location = annotation.selection.location;
@@ -116,7 +116,9 @@ function formattedAnnotations(annotations: Annotation[]): string {
     const reference = location ? `\`${location.id}:${location.lineNumber}${side}${end}\` ` : "";
     // Continuations must remain part of their source-anchored list item.
     const text = annotation.text.replace(/\r?\n/g, "\n  ");
-    return `- ${reference}${text}`;
+    const code = annotation.selection.text.replace(/\r?\n/g, "\n");
+    const copiedLines = code.split("\n").map((line) => `  ${line}`);
+    return [`- ${reference}${text}`, "", "  ```", ...copiedLines, "  ```"].join("\n");
   }).join("\n");
 }
 
@@ -487,17 +489,30 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     setAnnotations((current) => current.filter((annotation) => annotation.id !== annotationId));
   }
 
-  /** Copies every source reference and annotation in one Markdown-ready clipboard payload. */
+  /** Copies every source reference, selected code block, and annotation in one Markdown-ready clipboard payload. */
   async function copyAnnotations(): Promise<void> {
     if (!annotations.length) return;
 
+    const copiedText = formattedAnnotations(annotations);
     try {
-      await navigator.clipboard.writeText(formattedAnnotations(annotations));
-      setCopyStatus("Copied");
-      window.setTimeout(() => setCopyStatus(""), 2_000);
+      await navigator.clipboard.writeText(copiedText);
     } catch {
-      setCopyStatus("Copy failed");
+      // This preserves copying in browser contexts that deny the asynchronous Clipboard API.
+      const clipboardFallback = document.createElement("textarea");
+      clipboardFallback.value = copiedText;
+      clipboardFallback.style.position = "fixed";
+      document.body.append(clipboardFallback);
+      clipboardFallback.select();
+      const copied = document.execCommand("copy");
+      clipboardFallback.remove();
+      if (!copied) {
+        setCopyStatus("Copy failed");
+        return;
+      }
     }
+
+    setCopyStatus("Copied");
+    window.setTimeout(() => setCopyStatus(""), 2_000);
   }
 
   /** Scrolls back to a saved code range and highlights it again in the diff. */
