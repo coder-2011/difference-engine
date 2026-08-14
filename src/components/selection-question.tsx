@@ -1,7 +1,7 @@
 "use client";
 
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
-import { CornerDownLeft, GripHorizontal, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
@@ -35,9 +35,22 @@ type CodeSelection = Point & {
 };
 
 type CodeSelectionLocation = {
+  endLineNumber?: number;
+  endSide?: "additions" | "deletions";
   id: string;
   lineNumber: number;
   side?: "additions" | "deletions";
+};
+
+type Annotation = {
+  id: string;
+  selection: CodeSelection;
+  text: string;
+};
+
+type AnnotationDraft = Point & {
+  selection: CodeSelection;
+  text: string;
 };
 
 type SelectionState = CodeSelection & {
@@ -91,6 +104,21 @@ type SnippetToken = {
   content: string;
 };
 
+/** Formats source-anchored annotations as Markdown ready to paste into a review. */
+function formattedAnnotations(annotations: Annotation[]): string {
+  return annotations.map((annotation) => {
+    const location = annotation.selection.location;
+    const side = location?.side ? ` (${location.side})` : "";
+    const hasRange = location && location.endLineNumber !== undefined
+      && (location.endLineNumber !== location.lineNumber || location.endSide !== location.side);
+    const end = hasRange ? `-${location.endLineNumber}${location.endSide ? ` (${location.endSide})` : ""}` : "";
+    const reference = location ? `\`${location.id}:${location.lineNumber}${side}${end}\` ` : "";
+    // Continuations must remain part of their source-anchored list item.
+    const text = annotation.text.replace(/\r?\n/g, "\n  ");
+    return `- ${reference}${text}`;
+  }).join("\n");
+}
+
 /** Renders a readable prompt preview that expands only when it exceeds two lines. */
 function PromptPreview({ question }: PromptPreviewProps) {
   const [expanded, setExpanded] = useState(false);
@@ -119,8 +147,10 @@ function PromptPreview({ question }: PromptPreviewProps) {
 
 /** Returns the actual range inside Pierre's shadow root instead of the document-level host boundary. */
 function selectedRange(browserSelection: Selection, origin?: EventTarget): Range | undefined {
-  const node = origin instanceof Node ? origin : browserSelection.anchorNode;
-  const root = node?.getRootNode();
+  const originNode = origin instanceof Node ? origin : undefined;
+  const anchorRoot = browserSelection.anchorNode?.getRootNode();
+  const originRoot = originNode?.getRootNode();
+  const root = anchorRoot instanceof ShadowRoot ? anchorRoot : originRoot;
   if (!(root instanceof ShadowRoot)) {
     return browserSelection.rangeCount ? browserSelection.getRangeAt(0).cloneRange() : undefined;
   }
@@ -138,15 +168,43 @@ function selectedRange(browserSelection: Selection, origin?: EventTarget): Range
 function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const root = range.startContainer.getRootNode();
   const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
   const line = element?.closest("[data-line]");
+  let endLine = endElement?.closest("[data-line]");
   const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
-  const lineNumber = Number(line?.getAttribute("data-line"));
-  if (!id || !Number.isInteger(lineNumber)) return undefined;
+  // A missing data-line attribute must not coerce to line zero.
+  const lineAttribute = line?.getAttribute("data-line");
+  if (!id || typeof lineAttribute !== "string") return undefined;
 
+  // Only a range ending before the line's content excludes that line.
+  if (range.endOffset === 0 && endLine) {
+    const lineStart = document.createRange();
+    lineStart.selectNodeContents(endLine);
+    lineStart.collapse(true);
+    if (range.compareBoundaryPoints(Range.START_TO_END, lineStart) === 0) {
+      const lineRoot = root instanceof ShadowRoot ? root : document;
+      const lines = Array.from(lineRoot.querySelectorAll("[data-line]"));
+      const endIndex = lines.indexOf(endLine);
+      if (endIndex > 0) endLine = lines[endIndex - 1];
+    }
+  }
+
+  const lineNumber = Number(lineAttribute);
+  if (!Number.isInteger(lineNumber)) return undefined;
+
+  const endLineAttribute = endLine?.getAttribute("data-line");
+  const endLineNumber = typeof endLineAttribute === "string" ? Number(endLineAttribute) : undefined;
   const lineType = line?.getAttribute("data-line-type");
-  if (lineType === "change-addition") return { id, lineNumber, side: "additions" };
-  if (lineType === "change-deletion") return { id, lineNumber, side: "deletions" };
-  return { id, lineNumber };
+  const endLineType = endLine?.getAttribute("data-line-type");
+  const side = lineType === "change-addition" ? "additions" : lineType === "change-deletion" ? "deletions" : undefined;
+  const endSide = endLineType === "change-addition" ? "additions" : endLineType === "change-deletion" ? "deletions" : undefined;
+  return {
+    endLineNumber: Number.isInteger(endLineNumber) ? endLineNumber : undefined,
+    endSide,
+    id,
+    lineNumber,
+    side,
+  };
 }
 
 /** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
@@ -215,6 +273,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
 export function SelectionQuestion({ onRevealSelection, source }: SelectionQuestionProps) {
+  const sourceKey = JSON.stringify(source);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -225,7 +284,11 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
   const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const annotationInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -234,6 +297,23 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const requestRef = useRef<AbortController | null>(null);
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
+  const annotationCounterRef = useRef(0);
+
+  useEffect(() => {
+    // Notes and active requests belong to the current repository view and cannot be reused against a new source.
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setLoading(false);
+    setSelection(null);
+    setQuestion("");
+    setTurns([]);
+    setSuggestion("");
+    setAttachments([]);
+    setAttachmentError("");
+    setAnnotations([]);
+    setAnnotationDraft(null);
+    setCopyStatus("");
+  }, [sourceKey]);
 
   useEffect(() => {
     /** Captures a non-empty selection only when it originated inside the diff renderer. */
@@ -260,7 +340,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) return setSelection(null);
 
-      const maxX = Math.max(window.innerWidth - 154, 8);
+      const maxX = Math.max(window.innerWidth - 238, 8);
       const maxY = Math.max(window.innerHeight - 39, 8);
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
@@ -273,15 +353,15 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
-      if (event.target instanceof Element && event.target.closest(".ai-chat-launch, .selection-trigger, .question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .selection-actions, .annotation-composer, .question-panel")) return;
       const pointer = { x: event.clientX, y: event.clientY };
       const origin = event.composedPath()[0];
       window.requestAnimationFrame(() => captureSelection(pointer, origin));
     }
 
-    /** Captures keyboard-created code selections while ignoring typing inside the chat. */
+    /** Captures keyboard-created code selections while ignoring typing inside the chat or annotation composer. */
     function captureAfterKeyUp(event: KeyboardEvent): void {
-      if (event.target instanceof Element && event.target.closest(".question-panel")) return;
+      if (event.target instanceof Element && event.target.closest(".annotation-composer, .question-panel")) return;
       captureSelection(undefined, event.composedPath()[0]);
     }
 
@@ -369,6 +449,54 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     followsConversationRef.current = true;
     setSelection({ context: [], open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /** Opens a compact composer for a note attached to the current highlighted code. */
+  function openAnnotationComposer(codeSelection: CodeSelection): void {
+    const x = Math.min(codeSelection.x, Math.max(window.innerWidth - 328, 8));
+    const y = Math.min(codeSelection.y, Math.max(window.innerHeight - 144, 8));
+    setAnnotationDraft({ selection: codeSelection, text: "", x, y });
+    window.setTimeout(() => annotationInputRef.current?.focus(), 0);
+  }
+
+  /** Adds one non-empty annotation while retaining the exact code range it describes. */
+  function addAnnotation(codeSelection: CodeSelection, value: string): void {
+    const text = value.trim();
+    if (!text) return;
+
+    annotationCounterRef.current += 1;
+    setAnnotations((current) => [...current, {
+      id: `annotation-${annotationCounterRef.current}`,
+      selection: codeSelection,
+      text,
+    }]);
+  }
+
+  /** Saves the manual annotation draft and returns the selection controls to their normal state. */
+  function saveAnnotation(event: FormEvent): void {
+    event.preventDefault();
+    if (!annotationDraft) return;
+
+    addAnnotation(annotationDraft.selection, annotationDraft.text);
+    setAnnotationDraft(null);
+  }
+
+  /** Removes an annotation without changing the underlying highlighted code selection. */
+  function removeAnnotation(annotationId: string): void {
+    setAnnotations((current) => current.filter((annotation) => annotation.id !== annotationId));
+  }
+
+  /** Copies every source reference and annotation in one Markdown-ready clipboard payload. */
+  async function copyAnnotations(): Promise<void> {
+    if (!annotations.length) return;
+
+    try {
+      await navigator.clipboard.writeText(formattedAnnotations(annotations));
+      setCopyStatus("Copied");
+      window.setTimeout(() => setCopyStatus(""), 2_000);
+    } catch {
+      setCopyStatus("Copy failed");
+    }
   }
 
   /** Scrolls back to a saved code range and highlights it again in the diff. */
@@ -631,6 +759,8 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     const submittedQuestion = value.trim();
     if (!selection || !submittedQuestion || requestRef.current) return;
     const taskContext = selection.context.map((codeSelection) => codeSelection.text).join("\n\n");
+    // An automatic note needs one unambiguous source range; multi-selection tasks remain manually annotatable.
+    const annotationSelection = selection.context.length === 1 ? selection.context[0] : undefined;
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -706,6 +836,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           attachments: uploadedAttachments,
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
+          annotationSelection: annotationSelection?.text,
           selection: taskContext,
           source,
         }),
@@ -722,6 +853,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
 
       while (true) {
         const { done, value } = await reader.read();
+        if (controller.signal.aborted) return;
         buffer += value ?? "";
         if (done) buffer += "\n";
         const lines = buffer.split("\n");
@@ -732,6 +864,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
           if (event.type === "delta" && event.text) queueDelta(event.text);
           if (event.type === "suggestion" && event.text) streamedSuggestion = event.text;
+          if (event.type === "annotation" && event.text && annotationSelection) addAnnotation(annotationSelection, event.text);
           if (event.type === "error") throw new Error(event.message);
         }
 
@@ -793,27 +926,54 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   return (
     <>
       {!selection?.open && (
-        <button aria-label="Open AI chat" className="ai-chat-launch" onClick={openChat} type="button">
-          <Sparkles size={14} /> AI chat
-        </button>
+        <div className="ai-chat-actions">
+          <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
+            <Sparkles size={14} /> Ask Diffs
+          </button>
+          <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
+            <ClipboardCopy size={14} /> Copy Annotations
+          </button>
+          {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
+        </div>
       )}
 
-      {triggerSelection && (
-        <button
-          className="selection-trigger"
-          style={{ left: triggerSelection.x, top: triggerSelection.y }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={addsToTask ? addSelectionToTask : openPanel}
+      {triggerSelection && !annotationDraft && (
+        <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
+          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={addsToTask ? addSelectionToTask : openPanel} type="button">
+            <Plus size={13} /> {addsToTask ? "Add to task" : "Ask Diffs"}
+          </button>
+          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
+            <MessageSquarePlus size={13} /> Annotate
+          </button>
+        </div>
+      )}
+
+      {annotationDraft && (
+        <form
+          className="annotation-composer"
+          onSubmit={saveAnnotation}
+          style={{ left: annotationDraft.x, top: annotationDraft.y }}
         >
-          <Plus size={13} /> {addsToTask ? "Add to task" : "Ask Diffs"}
-        </button>
+          <textarea
+            aria-label="Annotation"
+            onChange={(event) => setAnnotationDraft((current) => current ? { ...current, text: event.target.value } : current)}
+            placeholder="Add a short annotation"
+            ref={annotationInputRef}
+            rows={3}
+            value={annotationDraft.text}
+          />
+          <div>
+            <button onClick={() => setAnnotationDraft(null)} type="button">Cancel</button>
+            <button disabled={!annotationDraft.text.trim()} type="submit">Add annotation</button>
+          </div>
+        </form>
       )}
 
       {selection?.open && (
         <aside
           ref={panelRef}
           className={`question-panel${isDraggingFiles ? " dragging-files" : ""}`}
-          aria-label={selection.context.length ? "Ask about selected code" : "AI chat"}
+          aria-label={selection.context.length ? "Ask about selected code" : "Ask Diffs"}
           onDragEnter={beginFileDrag}
           onDragLeave={endFileDrag}
           onDragOver={(event) => event.preventDefault()}
@@ -827,7 +987,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
             onPointerUp={stopDragging}
             onPointerCancel={stopDragging}
           >
-            <span><Sparkles size={14} /> {selection.context.length ? "Ask Diffs" : "AI chat"} <GripHorizontal className="drag-hint" size={13} /></span>
+            <span><Sparkles size={14} /> Ask Diffs <GripHorizontal className="drag-hint" size={13} /></span>
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 
@@ -849,6 +1009,20 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
                   key={`${codeSelection.text}-${index}`}
                   onShow={showSelection}
                 />
+              ))}
+            </div>
+          )}
+
+          {annotations.length > 0 && (
+            <div className="annotation-list">
+              <div className="annotation-list-title">Annotations <span>{annotations.length}</span></div>
+              {annotations.map((annotation) => (
+                <div className="annotation-item" key={annotation.id}>
+                  <button onClick={() => showSelection(annotation.selection)} type="button">
+                    {annotation.text}
+                  </button>
+                  <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+                </div>
               ))}
             </div>
           )}

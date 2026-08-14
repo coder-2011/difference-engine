@@ -34,6 +34,7 @@ type DiffViewerProps = {
 
 type CodeLocation = {
   endLineNumber?: number;
+  endSide?: "additions" | "deletions";
   id: string;
   lineNumber: number;
   side?: "additions" | "deletions";
@@ -148,7 +149,7 @@ export function DiffViewer({
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
   const revealSelection = useCallback((location: CodeLocation) => {
     const end = location.endLineNumber ?? location.lineNumber;
-    const range = { start: location.lineNumber, end, side: location.side, endSide: location.side };
+    const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
     viewerRef.current?.setSelectedLines({ id: location.id, range });
     viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
   }, []);

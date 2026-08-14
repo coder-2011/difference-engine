@@ -2463,7 +2463,8 @@ button {
   background: #0d0d0a;
 }
 
-.code-view-shell > div:not(.question-panel) {
+/* Overlay controls are positioned independently from the scrollable diff content. */
+.code-view-shell > div:not(.question-panel):not(.selection-actions):not(.ai-chat-actions) {
   height: 100%;
   overflow: auto;
 }
@@ -2498,9 +2499,8 @@ button {
 }
 
 .selection-trigger,
-.ai-chat-launch {
-  position: fixed;
-  z-index: 80;
+.ai-chat-launch,
+.copy-annotations {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2517,17 +2517,91 @@ button {
 }
 
 .selection-trigger:hover,
-.ai-chat-launch:hover {
+.ai-chat-launch:hover,
+.copy-annotations:hover:not(:disabled) {
   background: #29282c;
 }
 
-.selection-trigger {
+.selection-actions,
+.ai-chat-actions {
+  position: fixed;
+  display: flex;
+  gap: 7px;
+}
+
+.selection-actions {
   z-index: 100;
 }
 
-.ai-chat-launch {
+.ai-chat-actions {
+  z-index: 80;
   bottom: 16px;
   left: 16px;
+}
+
+.copy-annotations:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.annotation-copy-status {
+  position: absolute;
+  right: 0;
+  bottom: 38px;
+  color: #b9d9c4;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.annotation-composer {
+  position: fixed;
+  z-index: 101;
+  width: min(320px, calc(100vw - 16px));
+  padding: 9px;
+  border: 1px solid #4c4658;
+  border-radius: 8px;
+  background: #171519;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.48);
+}
+
+.annotation-composer textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #393541;
+  border-radius: 5px;
+  outline: 0;
+  background: #0d0d0f;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.annotation-composer > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.annotation-composer button {
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9e98a9;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.annotation-composer button[type="submit"] {
+  background: #eeeef0;
+  color: #111112;
+  font-weight: 620;
+}
+
+.annotation-composer button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .question-panel {
@@ -2703,6 +2777,69 @@ button {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
+}
+
+.annotation-list {
+  flex: none;
+  max-height: 132px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line-soft);
+  background: #121015;
+}
+
+.annotation-list-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 12px;
+  color: #a99dd0;
+  font-size: calc(var(--chat-font-size) * 0.75);
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.annotation-list-title span {
+  color: #746b87;
+}
+
+.annotation-item {
+  display: flex;
+  align-items: flex-start;
+  border-top: 1px solid #211f25;
+}
+
+.annotation-item > button:first-child {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: #c7c1d0;
+  cursor: pointer;
+  font-size: calc(var(--chat-font-size) * 0.84);
+  line-height: 1.4;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-item > button:first-child:hover {
+  color: #ece8f4;
+}
+
+.annotation-item > button:last-child {
+  display: grid;
+  width: 27px;
+  height: 29px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #77717f;
+  cursor: pointer;
+}
+
+.annotation-item > button:last-child:hover {
+  color: #dc949a;
 }
 
 .openai-session-error {
