@@ -284,6 +284,8 @@ export function DiffViewer({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository,
+    // A clicked unchanged-lines separator should reveal its entire collapsed range.
+    expansionLineCount: Number.POSITIVE_INFINITY,
     hunkSeparators: "line-info",
     lineDiffType: "word-alt",
     overflow: "scroll",
