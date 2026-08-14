@@ -293,6 +293,15 @@ export function DiffViewer({
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",
+    // Pierre renders separators in a shadow root, so make each hidden range's disclosure state explicit there.
+    unsafeCSS: `
+      [data-expand-index] [data-expand-button] [data-icon] { display: none; }
+      [data-expand-index] [data-expand-button]::before {
+        content: "▸";
+        transition: transform 100ms ease-out;
+      }
+      [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
+    `,
   }), [repository, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
