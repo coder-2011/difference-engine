@@ -19,6 +19,7 @@ const DEFAULT_QUESTION = "What does this code do?";
 const DEFAULT_CHAT_FONT_SIZE = 12;
 const MAX_CHAT_FONT_SIZE = 22;
 const MIN_CHAT_FONT_SIZE = 10;
+const MAX_PRIOR_HIGHLIGHTS = 3;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
 const STREAM_CHARS_PER_TICK = 24;
@@ -298,6 +299,8 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
   const chatSelectionRangeRef = useRef<Range>();
+  const activeChatSelectionRef = useRef<CodeSelection>();
+  const priorHighlightsRef = useRef<string[]>([]);
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const annotationCounterRef = useRef(0);
@@ -316,17 +319,28 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     setAnnotations([]);
     setAnnotationDraft(null);
     setCopyStatus("");
+    activeChatSelectionRef.current = undefined;
+    priorHighlightsRef.current = [];
   }, [sourceKey]);
 
   useEffect(() => {
     if (!selection?.open) {
       chatSelectionRangeRef.current = undefined;
+      activeChatSelectionRef.current = undefined;
+      priorHighlightsRef.current = [];
       return;
     }
     if (chatSelectionRangeRef.current === selection.range) return;
 
+    const priorHighlight = activeChatSelectionRef.current?.text.trim();
+    // Keep earlier highlights private until the next question directly refers to one.
+    if (priorHighlight && priorHighlight !== selection.text) {
+      priorHighlightsRef.current = [...priorHighlightsRef.current.filter((highlight) => highlight !== priorHighlight), priorHighlight]
+        .slice(-MAX_PRIOR_HIGHLIGHTS);
+    }
     // A newly highlighted range makes every visible turn and pending answer stale.
     chatSelectionRangeRef.current = selection.range;
+    activeChatSelectionRef.current = selection;
     requestRef.current?.abort();
     requestRef.current = null;
     followsConversationRef.current = true;
@@ -553,6 +567,8 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
     setSuggestion("");
     setAttachments([]);
     setAttachmentError("");
+    activeChatSelectionRef.current = undefined;
+    priorHighlightsRef.current = [];
   }
 
   /** Places the panel inside the viewport and returns its clamped coordinates. */
@@ -861,6 +877,7 @@ export function SelectionQuestion({ onRevealSelection, source }: SelectionQuesti
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
           annotationSelection: annotationSelection?.text,
+          priorHighlights: priorHighlightsRef.current,
           selection: selectedCode,
           source,
         }),
