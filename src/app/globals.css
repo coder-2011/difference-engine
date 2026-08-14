@@ -1820,6 +1820,10 @@ button {
   text-align: left;
 }
 
+.merge-method-option > span {
+  grid-column: 2;
+}
+
 .merge-method-option[aria-checked="true"] {
   outline: 1px solid #1f6feb;
   outline-offset: -1px;
