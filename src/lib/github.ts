@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
+import { CALL_DIFF_ANONYMOUS_FILE_LIMIT, CALL_DIFF_FILE_LIMIT, CALL_DIFF_FILE_SIZE_LIMIT, isCallDiffSourcePath } from "@/lib/call-diff-files";
 import { extract } from "tar-stream";
 import type {
   DiffDocument,
@@ -54,7 +55,7 @@ type PullRequestCommitList = {
 
 type PullRequest = {
   additions: number;
-  base: { label: string };
+  base: { label: string; sha: string };
   body: string | null;
   changed_files: number;
   draft: boolean;
@@ -179,7 +180,7 @@ type PullRequestFile = {
 type Compare = {
   ahead_by: number;
   behind_by: number;
-  files?: unknown[];
+  files?: PullRequestFile[];
   html_url: string;
   status: string;
 };
@@ -207,6 +208,18 @@ type Repository = {
 type GitBlob = {
   content: string;
   encoding: string;
+};
+
+export type CallDiffSource = {
+  files: Array<{
+    after?: { path: string; text: string };
+    before?: { path: string; text: string };
+    key: string;
+  }>;
+  fromRef: string;
+  ignoredFiles: number;
+  toRef: string;
+  truncated: boolean;
 };
 
 type GitTreeEntry = {
@@ -1136,6 +1149,121 @@ export async function getDiffResponse(source: string[], token?: string): Promise
   }
 
   throw new GitHubError("The diff could not be loaded", response.status);
+}
+
+/** Encodes a repository path segment-by-segment for GitHub's contents endpoint. */
+function encodeRepositoryPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Reads one bounded text file at a specific revision, treating absent or oversized files as unavailable. */
+async function getCallDiffFileText(encodedRepository: string, path: string, ref: string, token?: string): Promise<string | undefined> {
+  try {
+    const file = await githubRequest<{ content?: string; encoding?: string; size?: number }>(
+      `/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`,
+      token,
+    );
+    if ((file.size ?? 0) > CALL_DIFF_FILE_SIZE_LIMIT || file.encoding !== "base64" || typeof file.content !== "string") return undefined;
+
+    const text = Buffer.from(file.content.replaceAll("\n", ""), "base64").toString("utf8");
+    return text.length <= CALL_DIFF_FILE_SIZE_LIMIT && !text.includes("\0") ? text : undefined;
+  } catch (error) {
+    if (error instanceof GitHubError && [404, 409, 422].includes(error.status)) return undefined;
+    throw error;
+  }
+}
+
+/** Pages through changed PR files until the bounded source-analysis budget is full. */
+async function getPullRequestCallDiffFiles(apiPath: string, token?: string): Promise<{ files: PullRequestFile[]; ignoredFiles: number; truncated: boolean }> {
+  const files: PullRequestFile[] = [];
+  let ignoredFiles = 0;
+  const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
+
+  for (let page = 1; page <= 30; page += 1) {
+    const batch = await githubRequest<PullRequestFile[]>(`${apiPath}/files?per_page=100&page=${page}`, token);
+    for (const file of batch) {
+      if (!isCallDiffSourcePath(file.filename) && !isCallDiffSourcePath(file.previous_filename ?? "")) {
+        ignoredFiles += 1;
+        continue;
+      }
+      if (files.length === fileLimit) return { files, ignoredFiles, truncated: true };
+      files.push(file);
+    }
+    if (batch.length < 100) return { files, ignoredFiles, truncated: false };
+  }
+
+  return { files, ignoredFiles, truncated: true };
+}
+
+/** Chooses bounded TypeScript-parseable files from GitHub's non-paginated comparison payload. */
+function getCompareCallDiffFiles(comparison: Compare, token?: string): { files: PullRequestFile[]; ignoredFiles: number; truncated: boolean } {
+  const sourceFiles = comparison.files ?? [];
+  const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
+  const files: PullRequestFile[] = [];
+  let ignoredFiles = 0;
+
+  for (const file of sourceFiles) {
+    if (!isCallDiffSourcePath(file.filename) && !isCallDiffSourcePath(file.previous_filename ?? "")) {
+      ignoredFiles += 1;
+      continue;
+    }
+    if (files.length === fileLimit) return { files, ignoredFiles, truncated: true };
+    files.push(file);
+  }
+
+  return { files, ignoredFiles, truncated: sourceFiles.length === 300 };
+}
+
+/** Fetches the two revision snapshots required for a changed-file call-flow comparison. */
+export async function getCallDiffSource(source: string[], token?: string): Promise<CallDiffSource> {
+  const parsed = parseSource(source);
+  let fromRef: string;
+  let toRef: string;
+  let candidateFiles: PullRequestFile[];
+  let ignoredFiles: number;
+  let truncated: boolean;
+
+  if (parsed.kind === "pull") {
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+    const candidates = await getPullRequestCallDiffFiles(parsed.apiPath, token);
+    fromRef = pullRequest.base.sha;
+    toRef = pullRequest.head.sha;
+    candidateFiles = candidates.files;
+    ignoredFiles = candidates.ignoredFiles;
+    truncated = candidates.truncated;
+  } else if (parsed.kind === "compare") {
+    const comparison = await githubRequest<Compare>(parsed.apiPath, token);
+    const candidates = getCompareCallDiffFiles(comparison, token);
+    const [from, to] = parsed.value.split("...");
+    fromRef = from ?? "";
+    toRef = to ?? "";
+    candidateFiles = candidates.files;
+    ignoredFiles = candidates.ignoredFiles;
+    truncated = candidates.truncated;
+  } else {
+    throw new GitHubError("Call flow is available for pull requests and comparisons", 400);
+  }
+
+  const snapshots = await Promise.all(candidateFiles.map(async (file) => {
+    const beforePath = file.status === "added" ? undefined : file.previous_filename ?? file.filename;
+    const afterPath = file.status === "removed" ? undefined : file.filename;
+    const [before, after] = await Promise.all([
+      beforePath ? getCallDiffFileText(parsed.encodedRepository, beforePath, fromRef, token) : undefined,
+      afterPath ? getCallDiffFileText(parsed.encodedRepository, afterPath, toRef, token) : undefined,
+    ]);
+    return {
+      after: after && afterPath ? { path: afterPath, text: after } : undefined,
+      before: before && beforePath ? { path: beforePath, text: before } : undefined,
+      key: afterPath ?? beforePath ?? file.filename,
+    };
+  }));
+
+  const files = snapshots.filter((file) => {
+    if (file.before || file.after) return true;
+    ignoredFiles += 1;
+    return false;
+  });
+  return { files, fromRef, ignoredFiles, toRef, truncated };
 }
 
 /** Reconstructs an oversized private PR from GitHub's paginated file patches. */

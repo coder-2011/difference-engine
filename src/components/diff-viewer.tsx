@@ -8,11 +8,12 @@ import { getFiletypeFromFileName } from "@/vendor/pierre-diffs/dist/utils/getFil
 import { preloadHighlighter } from "@/vendor/pierre-diffs/dist/highlighter/shared_highlighter";
 import { CodeView } from "@/vendor/pierre-diffs/dist/react/CodeView";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
+import { CallDiffViewer } from "./call-diff-viewer";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
 import type { RepositoryFile } from "@/types/github";
@@ -95,6 +96,7 @@ export function DiffViewer({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
+  const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
 
@@ -291,6 +293,15 @@ export function DiffViewer({
     themeType: "dark",
   }), [repository, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
+  const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
+  const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
+  const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
+  const reviewTabs = callDiffAvailable && (
+    <div aria-label="Review view" className="review-tabs" role="tablist">
+      <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => setReviewView("call-flow")} role="tab" type="button"><Network size={13} /> Call flow</button>
+    </div>
+  );
 
   /** Fetches and copies the unparsed GitHub patch as plain text. */
   async function copyRawDiff(): Promise<void> {
@@ -308,16 +319,21 @@ export function DiffViewer({
     }
   }
 
+  if (showingCallDiff) {
+    return <section className={workspaceClass}>{reviewTabs}<div aria-labelledby="call-flow-review-tab" id="call-flow-review" role="tabpanel"><CallDiffViewer source={source} /></div></section>;
+  }
+
   if (error) {
-    return <div className="diff-error"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div>;
+    return <section className={workspaceClass}>{reviewTabs}<div className="diff-error" id="files-review" role="tabpanel"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div></section>;
   }
 
   if (repository ? !repositoryFiles : !parsedFiles) {
-    return <div className="diff-loading"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div>;
+    return <section className={workspaceClass}>{reviewTabs}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
   }
 
   return (
-    <section className="diff-workspace" ref={workspaceRef}>
+    <section className={workspaceClass} ref={workspaceRef}>
+      {reviewTabs}
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
@@ -352,7 +368,7 @@ export function DiffViewer({
         </div>
       </div>
 
-      <div className={`viewer-body ${sidebarOpen ? "" : "sidebar-closed"}`}>
+      <div aria-labelledby="files-review-tab" className={`viewer-body ${sidebarOpen ? "" : "sidebar-closed"}`} id="files-review" role="tabpanel">
         {sidebarOpen && (
           <aside className="file-sidebar">
             <div className="file-sidebar-title">{repository ? "Files" : "Changed files"} <span>{files.length}</span></div>
