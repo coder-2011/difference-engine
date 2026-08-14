@@ -1,12 +1,20 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
-import { useDeferredValue, useEffect, useState } from "react";
+import { Children, cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
 
 const LANGUAGE_ALIASES = {
   bash: "bash",
+  c: "c",
+  "c++": "cpp",
+  cpp: "cpp",
   css: "css",
+  cu: "cpp",
+  cuh: "cpp",
+  cuda: "cpp",
+  go: "go",
   html: "html",
+  java: "java",
   javascript: "javascript",
   js: "javascript",
   json: "json",
@@ -15,8 +23,11 @@ const LANGUAGE_ALIASES = {
   md: "markdown",
   python: "python",
   py: "python",
+  rs: "rust",
+  rust: "rust",
   shell: "bash",
   sh: "bash",
+  sql: "sql",
   ts: "typescript",
   tsx: "tsx",
   typescript: "typescript",
@@ -28,47 +39,29 @@ const LANGUAGE_ALIASES = {
 const MAX_HIGHLIGHT_LENGTH = 20_000;
 
 type SupportedLanguage = typeof LANGUAGE_ALIASES[keyof typeof LANGUAGE_ALIASES];
-type CodeProps = ComponentPropsWithoutRef<"code">;
+type CodeProps = ComponentPropsWithoutRef<"code"> & {
+  block?: boolean;
+};
+type HighlightedResult = {
+  html: string;
+  language: SupportedLanguage;
+  source: string;
+};
+type MarkdownCodeBlockProps = {
+  children: React.ReactNode;
+  className?: string;
+  source: string;
+};
 
-let highlighterPromise: ReturnType<typeof loadHighlighter> | undefined;
-const languagePromises: Partial<Record<SupportedLanguage, Promise<void>>> = {};
-
-/** Defers the Shiki engine and every grammar until Markdown contains a supported fence. */
-async function loadHighlighter() {
-  const [{ createBundledHighlighter }, { createOnigurumaEngine }] = await Promise.all([
-    import("shiki/core"),
-    import("shiki/engine/oniguruma"),
-  ]);
-  const createHighlighter = createBundledHighlighter({
-    engine: () => createOnigurumaEngine(() => import("shiki/wasm")),
-    langs: {
-      bash: () => import("@shikijs/langs/bash"),
-      css: () => import("@shikijs/langs/css"),
-      html: () => import("@shikijs/langs/html"),
-      javascript: () => import("@shikijs/langs/javascript"),
-      json: () => import("@shikijs/langs/json"),
-      jsx: () => import("@shikijs/langs/jsx"),
-      markdown: () => import("@shikijs/langs/markdown"),
-      python: () => import("@shikijs/langs/python"),
-      tsx: () => import("@shikijs/langs/tsx"),
-      typescript: () => import("@shikijs/langs/typescript"),
-      xml: () => import("@shikijs/langs/xml"),
-      yaml: () => import("@shikijs/langs/yaml"),
-    },
-    themes: { "github-dark": () => import("@shikijs/themes/github-dark") },
+/** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
+async function highlightCode(source: string, language: SupportedLanguage): Promise<string> {
+  const { getSharedHighlighter } = await import("@pierre/diffs");
+  const highlighter = await getSharedHighlighter({
+    langs: [language],
+    preferredHighlighter: "shiki-wasm",
+    themes: ["pierre-dark"],
   });
-  return createHighlighter({ langs: [], themes: ["github-dark"] });
-}
-
-/** Shares one lazy highlighter and defers grammar modules until a fence requests one. */
-function getHighlighter() {
-  highlighterPromise ??= loadHighlighter();
-  return highlighterPromise;
-}
-
-/** Loads one grammar once so simultaneous code blocks do not fetch it more than once. */
-function loadLanguage(highlighter: Awaited<ReturnType<typeof loadHighlighter>>, language: SupportedLanguage): Promise<void> {
-  return languagePromises[language] ??= highlighter.loadLanguage(language);
+  return highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });
 }
 
 /** Maps a fenced-Markdown class name to a bundled grammar, if one exists. */
@@ -84,33 +77,71 @@ function codeText(children: CodeProps["children"]): string {
   return String(children).replace(/\n$/, "");
 }
 
+/** Wraps code in a fence longer than any backtick run already inside it. */
+function fencedMarkdown(source: string, className?: string): string {
+  const language = className?.match(/language-([^\s]+)/)?.[1] ?? "";
+  let fenceLength = 3;
+
+  for (const match of source.matchAll(/`+/g)) {
+    fenceLength = Math.max(fenceLength, match[0].length + 1);
+  }
+
+  const fence = "`".repeat(fenceLength);
+  return `${fence}${language}\n${source}\n${fence}`;
+}
+
+/** Renders one fenced block with a control that copies valid Markdown source. */
+function MarkdownCodeBlock({ children, className, source }: MarkdownCodeBlockProps) {
+  /** Writes the original code and language fence instead of rendered DOM text. */
+  async function copyMarkdown(): Promise<void> {
+    if (!navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(fencedMarkdown(source, className));
+    } catch {
+      // Clipboard permission can be denied without affecting the rendered code.
+    }
+  }
+
+  return (
+    <div className="markdown-code-block">
+      <button
+        aria-label="Copy code as Markdown"
+        className="markdown-code-copy"
+        onClick={() => void copyMarkdown()}
+        type="button"
+      >
+        Copy
+      </button>
+      {children}
+    </div>
+  );
+}
+
 /** Renders inline code normally and fenced code with an asynchronously loaded Shiki grammar. */
-export function HighlightedCode({ children, className, ...props }: CodeProps) {
+export function HighlightedCode({ block = false, children, className, ...props }: CodeProps) {
   const language = supportedLanguage(className);
   const source = codeText(children);
   const deferredSource = useDeferredValue(source);
-  const [highlighted, setHighlighted] = useState("");
+  const [highlighted, setHighlighted] = useState<HighlightedResult | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const highlightedLanguage = language;
 
-    if (!language || deferredSource.length > MAX_HIGHLIGHT_LENGTH) {
-      setHighlighted("");
+    if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) {
+      setHighlighted(null);
       return () => {
         cancelled = true;
       };
     }
 
-    void getHighlighter()
-      .then(async (highlighter) => {
-        await loadLanguage(highlighter, language);
-        return highlighter.codeToHtml(deferredSource, { lang: language, theme: "github-dark" });
-      })
+    void highlightCode(deferredSource, highlightedLanguage)
       .then((html) => {
-        if (!cancelled) setHighlighted(html);
+        if (!cancelled) setHighlighted({ html, language: highlightedLanguage, source: deferredSource });
       })
       .catch(() => {
-        if (!cancelled) setHighlighted("");
+        if (!cancelled) setHighlighted(null);
       });
 
     return () => {
@@ -118,14 +149,24 @@ export function HighlightedCode({ children, className, ...props }: CodeProps) {
     };
   }, [deferredSource, language]);
 
-  if (!language || source.length > MAX_HIGHLIGHT_LENGTH || !highlighted) {
-    return <code className={className} {...props}>{children}</code>;
+  if (!language || source.length > MAX_HIGHLIGHT_LENGTH || source !== deferredSource || !highlighted || highlighted.language !== language || highlighted.source !== source) {
+    const code = <code className={className} {...props}>{children}</code>;
+    return block ? <MarkdownCodeBlock className={className} source={source}><pre>{code}</pre></MarkdownCodeBlock> : code;
   }
 
-  return <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: highlighted }} />;
+  return (
+    <MarkdownCodeBlock className={className} source={source}>
+      <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+    </MarkdownCodeBlock>
+  );
 }
 
-/** Removes React Markdown's wrapper so highlighted code can supply its own preformatted element. */
+/** Passes block context to code renderers while preserving ordinary preformatted content. */
 export function MarkdownPre({ children }: ComponentPropsWithoutRef<"pre">) {
-  return <>{children}</>;
+  const code = Children.toArray(children)[0];
+  if (isValidElement<CodeProps>(code)) {
+    return cloneElement(code, { block: true });
+  }
+
+  return <pre>{children}</pre>;
 }

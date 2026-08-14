@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 import { Brand } from "@/components/brand";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestList } from "@/components/pull-request-list";
-import { listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
+import { isGitHubConnected, listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 import { login, logout, openSource } from "./actions";
@@ -21,10 +21,12 @@ export default async function Home({ searchParams }: HomeProps) {
     getGitHubAccessToken(),
     isOpenAIConnected(),
   ]);
-  const [pullRequests, recentPullRequests] = accessToken
+  const githubConnected = await isGitHubConnected(accessToken);
+  const githubToken = githubConnected ? accessToken : undefined;
+  const [pullRequests, recentPullRequests] = githubToken
     ? await Promise.all([
-        listOpenPullRequests(accessToken).catch(() => []),
-        listRecentPullRequests(accessToken).catch(() => []),
+        listOpenPullRequests(githubToken).catch(() => []),
+        listRecentPullRequests(githubToken).catch(() => []),
       ])
     : [[], []];
 
@@ -34,7 +36,7 @@ export default async function Home({ searchParams }: HomeProps) {
         <Brand />
         <div className="nav-auth-actions">
           <OpenAIConnection initiallyConnected={openAIConnected} />
-          {session?.user ? (
+          {session?.user && githubConnected ? (
             <div className="account-cluster">
               {session.user.image && (
                 <Image className="avatar" src={session.user.image} alt="" width={26} height={26} />
@@ -44,7 +46,10 @@ export default async function Home({ searchParams }: HomeProps) {
             </div>
           ) : (
             <form action={login}>
-              <button className="github-button"><Github size={15} /> Sign in with GitHub</button>
+              <button className="github-button">
+                <Github size={15} />
+                {session?.user ? "GitHub signed out · Sign in" : "Sign in with GitHub"}
+              </button>
             </form>
           )}
         </div>
@@ -70,7 +75,7 @@ export default async function Home({ searchParams }: HomeProps) {
         </div>
       </section>
 
-      {session?.user ? (
+      {session?.user && githubConnected ? (
         <>
           <section className="pull-section">
             <div className="section-heading">

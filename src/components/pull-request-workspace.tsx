@@ -1,9 +1,9 @@
 "use client";
 
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, GitPullRequestClosed, Send, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
@@ -29,7 +29,20 @@ type ActionMessage = {
   text: string;
 };
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en", { day: "numeric", month: "short" });
+const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
+  close: "Pull request closed on GitHub.",
+  comment: "Comment posted to GitHub.",
+  "edit-body": "Pull request body updated on GitHub.",
+  "edit-title": "Pull request title updated on GitHub.",
+  merge: "Pull request merged on GitHub.",
+  ready: "Pull request marked ready for review on GitHub.",
+};
+const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge commit",
+  rebase: "Rebase and merge",
+  squash: "Squash and merge",
+};
+const PR_STATES_BLOCK = /<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/;
 const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "0ms", drift: "-30px", duration: "2680ms", left: "4%", size: 9 },
   { color: "#79aeb0", delay: "120ms", drift: "24px", duration: "2820ms", left: "9%", size: 10 },
@@ -51,9 +64,26 @@ const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "30ms", drift: "16px", duration: "2720ms", left: "97%", size: 9 },
 ];
 
-/** Formats a GitHub timestamp in the compact form used inside conversation rows. */
+/** Formats a GitHub timestamp as a compact elapsed time for conversation rows. */
 function commentDate(value: string): string {
-  return DATE_FORMAT.format(new Date(value));
+  const minutes = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+/** Keeps multiline commit bodies readable in the compact PR conversation timeline. */
+function commitSummary(message: string): string {
+  return message.split("\n", 1)[0] ?? "Untitled commit";
 }
 
 /** Selects the first GitHub-enabled merge method, preferring the common squash flow. */
@@ -67,18 +97,35 @@ function workflowRunTone(status: string, conclusion: string | null): "failed" | 
   return conclusion === "success" ? "success" : "failed";
 }
 
+/** Explains an open pull request's GitHub state without repeating an available merge action. */
+function openPullRequestState(workspace: PullRequestWorkspace): string | undefined {
+  if (workspace.draft) return "Not yet ready for review.";
+  if (workspace.canMerge) return undefined;
+  if (workspace.canManageMerge) return "GitHub is checking merge requirements.";
+  if (workspace.hasGitHubAccess) return "You cannot merge this pull request.";
+  return "Sign in with GitHub to manage this pull request.";
+}
+
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
-export function PullRequestWorkspace({ description, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
+export function PullRequestWorkspace({ description: initialBody, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [body, setBody] = useState(initialBody ?? "");
+  const [bodyDraft, setBodyDraft] = useState<string>();
   const [comment, setComment] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
+  const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
   const [message, setMessage] = useState<ActionMessage>();
   const [celebrating, setCelebrating] = useState(false);
+  const mergeMenuRef = useRef<HTMLDivElement>(null);
+  const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
   // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
   const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
   const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
   const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
+  const openState = openPullRequestState(workspace);
+  // Hide automation metadata in rendered prose while retaining it in the editable GitHub body.
+  const visibleBody = body.replace(PR_STATES_BLOCK, "").trim();
 
   useEffect(() => {
     if (!celebrating) return;
@@ -86,6 +133,78 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
     const timer = window.setTimeout(() => setCelebrating(false), 3_500);
     return () => window.clearTimeout(timer);
   }, [celebrating]);
+
+  useEffect(() => {
+    if (!mergeMenuOpen) return;
+
+    /** Closes the merge-method menu when the user clicks anywhere outside it. */
+    function closeMergeMenu(event: PointerEvent): void {
+      if (event.target instanceof Node && !mergeMenuRef.current?.contains(event.target)) setMergeMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeMergeMenu);
+    return () => document.removeEventListener("pointerdown", closeMergeMenu);
+  }, [mergeMenuOpen]);
+
+  /** Opens the menu from an arrow key or closes it from its focused trigger. */
+  function handleMergeTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
+    if (event.key === "Escape" && mergeMenuOpen) {
+      event.preventDefault();
+      setMergeMenuOpen(false);
+      return;
+    }
+
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
+    const opensUp = event.key === "ArrowUp";
+    event.preventDefault();
+    setMergeMenuOpen(true);
+    window.setTimeout(() => {
+      const options = mergeMenuRef.current?.querySelectorAll<HTMLButtonElement>(".merge-method-option");
+      const selected = mergeMenuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]');
+      const fallback = opensUp ? options?.item((options?.length ?? 1) - 1) : options?.item(0);
+      (selected ?? fallback)?.focus();
+    }, 0);
+  }
+
+  /** Moves focus through the custom merge options and closes the menu on Escape. */
+  function navigateMergeMenu(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key === "Tab") {
+      setMergeMenuOpen(false);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMergeMenuOpen(false);
+      mergeMethodTriggerRef.current?.focus();
+      return;
+    }
+
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+
+    event.preventDefault();
+    const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".merge-method-option"));
+    const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+    if (!options.length) return;
+
+    let nextIndex = 0;
+    if (event.key === "End" || (event.key === "ArrowUp" && currentIndex < 0)) {
+      nextIndex = options.length - 1;
+    } else if (event.key === "ArrowDown" && currentIndex >= 0) {
+      nextIndex = (currentIndex + 1) % options.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + options.length) % options.length;
+    }
+    options[nextIndex]?.focus();
+  }
+
+  /** Applies one merge method, closes the menu, and returns focus to its trigger. */
+  function chooseMergeMethod(method: PullRequestMergeMethod): void {
+    setMergeMethod(method);
+    setMergeMenuOpen(false);
+    mergeMethodTriggerRef.current?.focus();
+  }
 
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
@@ -111,7 +230,7 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
       if (result.celebrate) setCelebrating(true);
       setMessage({
         error: false,
-        text: action.action === "comment" ? "Comment posted to GitHub." : action.action === "close" ? "Pull request closed on GitHub." : "Pull request merged on GitHub.",
+        text: ACTION_MESSAGES[action.action],
       });
       return true;
     } catch (error) {
@@ -130,13 +249,61 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
     if (await runAction({ action: "comment", body: comment })) setComment("");
   }
 
+  /** Saves the complete Markdown body to GitHub and updates the rendered description only after confirmation. */
+  async function submitBody(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (bodyDraft === undefined || bodyDraft === body || pendingAction) return;
+
+    const savedBody = bodyDraft;
+    if (!await runAction({ action: "edit-body", body: savedBody })) return;
+
+    setBody(savedBody);
+    setBodyDraft(undefined);
+  }
+
   return (
-    <section className={`pr-workspace ${description ? "has-description" : ""}`}>
-      {description && (
+    <section className={`pr-workspace ${visibleBody ? "has-description" : ""}`}>
+      {visibleBody && (
         <details className="pr-description" open>
           <summary>Pull request description</summary>
-          <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
+          <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>
         </details>
+      )}
+
+      {bodyDraft !== undefined && (
+        <div aria-labelledby="pr-body-editor-title" aria-modal="true" className="pr-body-editor" role="dialog">
+          <form onSubmit={submitBody}>
+            <header className="pr-body-editor-header">
+              <div>
+                <strong id="pr-body-editor-title">Edit pull request body</strong>
+                <span>GitHub Markdown</span>
+              </div>
+              <div className="pr-body-editor-actions">
+                <button disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(undefined)} type="button">Cancel</button>
+                <button className="save" disabled={bodyDraft === body || Boolean(pendingAction)} type="submit">Save to GitHub</button>
+              </div>
+            </header>
+            <div className="pr-body-editor-panes">
+              <label className="pr-body-editor-pane">
+                <span>Markdown</span>
+                <textarea
+                  aria-label="Pull request body Markdown"
+                  autoFocus
+                  disabled={Boolean(pendingAction)}
+                  onChange={(event) => setBodyDraft(event.target.value)}
+                  spellCheck
+                  value={bodyDraft}
+                />
+              </label>
+              <section aria-label="Markdown preview" className="pr-body-editor-pane pr-body-editor-preview">
+                <span>Preview</span>
+                <div className="markdown-body">
+                  {bodyDraft ? <GitHubMarkdown>{bodyDraft}</GitHubMarkdown> : <p className="pr-body-editor-empty">Nothing to preview.</p>}
+                </div>
+              </section>
+            </div>
+          </form>
+        </div>
       )}
 
       <aside className="pr-conversation" aria-label="Pull request conversation">
@@ -159,11 +326,28 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           </div>
         )}
 
-        <header className="pr-conversation-heading">
-          <span>Conversation</span>
-        </header>
+        {workspace.state === "open" && (
+          <header className="pr-conversation-heading">
+            <div className="pr-state">
+              <span className={`pr-state-pill ${workspace.draft ? "draft" : "open"}`}>{workspace.draft ? "Draft" : "Open"}</span>
+              {openState && <span>{openState}</span>}
+            </div>
+          </header>
+        )}
 
         <div className="pr-comment-list">
+          {workspace.commits.length > 0 && (
+            <details className="pr-commit-list" open>
+              <summary><GitCommitHorizontal size={13} /> <span>{workspace.commits.length === 1 ? "1 commit" : `${workspace.commits.length} commits`}</span></summary>
+              {workspace.commits.map((commit) => (
+                <article className="pr-commit" key={commit.sha}>
+                  <span className="pr-commit-message" title={commit.message}>{commitSummary(commit.message)}</span>
+                  <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}</span>
+                </article>
+              ))}
+            </details>
+          )}
+          {workspace.commitsUnavailable && <p className="pr-conversation-note">Commit history may be incomplete.</p>}
           {workspace.comments.length ? workspace.comments.map((entry) => (
             <article className="pr-comment" key={entry.key}>
               <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
@@ -190,19 +374,50 @@ export function PullRequestWorkspace({ description, source, workspace: initialWo
           </form>
         )}
 
-        {!workspace.canComment && <p className="pr-signin-note">Conversation locked on GitHub.</p>}
+        {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canMerge || workspace.canClose) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canMerge || workspace.canClose) && <div className="pr-action-row">
-              {workspace.canMerge && (
+            {(workspace.canEditBody || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
+              {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
+              {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Ready for review</button>}
+              {workspace.canManageMerge && (
                 <div className="merge-control">
+                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button">Merge pull request</button>
                   {workspace.mergeMethods.length > 1 && (
-                    <select aria-label="Merge method" disabled={Boolean(pendingAction)} onChange={(event) => setMergeMethod(event.target.value as PullRequestMergeMethod)} value={mergeMethod}>
-                      {workspace.mergeMethods.map((method) => <option key={method} value={method}>{method}</option>)}
-                    </select>
+                    <div className="merge-method-dropdown" ref={mergeMenuRef}>
+                      <button
+                        aria-expanded={mergeMenuOpen}
+                        aria-haspopup="menu"
+                        aria-label={`Merge method: ${MERGE_METHOD_LABELS[mergeMethod]}`}
+                        className="merge-method-trigger"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => setMergeMenuOpen((open) => !open)}
+                        onKeyDown={handleMergeTriggerKeyDown}
+                        ref={mergeMethodTriggerRef}
+                        type="button"
+                      >
+                        <ChevronDown aria-hidden="true" size={13} />
+                      </button>
+                      {mergeMenuOpen && (
+                        <div aria-label="Merge method" className="merge-method-menu" onKeyDown={navigateMergeMenu} role="menu">
+                          {workspace.mergeMethods.map((method) => (
+                            <button
+                              aria-checked={method === mergeMethod}
+                              className="merge-method-option"
+                              key={method}
+                              onClick={() => chooseMergeMethod(method)}
+                              role="menuitemradio"
+                              type="button"
+                            >
+                              {method === mergeMethod && <Check aria-hidden="true" size={12} />}
+                              <span>{MERGE_METHOD_LABELS[method]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  <button className="merge-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "merge", method: mergeMethod })} type="button"><Sparkles size={13} /> Merge</button>
                 </div>
               )}
               {workspace.canClose && <button className="close-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "close" })} type="button"><GitPullRequestClosed size={13} /> Close</button>}

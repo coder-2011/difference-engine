@@ -19,6 +19,16 @@ function parsePullRequestAction(value: unknown): PullRequestAction | null {
 
   if (value.action === "close") return { action: "close" };
 
+  if (value.action === "edit-title" && typeof value.title === "string") {
+    return { action: "edit-title", title: value.title };
+  }
+
+  if (value.action === "edit-body" && typeof value.body === "string") {
+    return { action: "edit-body", body: value.body };
+  }
+
+  if (value.action === "ready") return { action: "ready" };
+
   if (value.action === "merge" && (value.method === "merge" || value.method === "rebase" || value.method === "squash")) {
     return { action: "merge", method: value.method as PullRequestMergeMethod };
   }

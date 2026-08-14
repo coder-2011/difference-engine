@@ -18,12 +18,15 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.3.1",
+    "tar-stream": "^3.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@types/tar-stream": "^3.1.4",
     "eslint": "^9.17.0",
     "eslint-config-next": "16.2.10",
     "typescript": "^5.7.2"

@@ -62,9 +62,15 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
   return paths.has(viewerPath) ? viewerPath : null;
 }
 
-/** Starts GitHub OAuth and returns the user to their pull-request dashboard. */
-export async function login(): Promise<void> {
-  await signIn("github", { redirectTo: "/" });
+/** Restricts the post-login destination to an internal application path. */
+function callbackPath(value: FormDataEntryValue | null): string {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
+}
+
+/** Starts GitHub OAuth and returns the user to the requested Diffs page. */
+export async function login(formData: FormData): Promise<void> {
+  await signIn("github", { redirectTo: callbackPath(formData.get("callbackUrl")) });
 }
 
 /** Ends the current session without leaving the dashboard. */

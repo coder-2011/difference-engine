@@ -1,11 +1,17 @@
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
+import { extract } from "tar-stream";
 import type {
   DiffDocument,
   PullRequestAction,
   PullRequestComment,
+  PullRequestCommit,
   PullRequestMergeMethod,
   PullRequestSummary,
   PullRequestWorkflowRun,
   PullRequestWorkspace,
+  RepositoryFile,
 } from "@/types/github";
 
 const GITHUB_API = "https://api.github.com";
@@ -38,6 +44,11 @@ type PullRequestStatus = PullRequestSummary["status"];
 
 type PullRequestConversation = {
   comments: PullRequestComment[];
+  unavailable: boolean;
+};
+
+type PullRequestCommitList = {
+  commits: PullRequestCommit[];
   unavailable: boolean;
 };
 
@@ -83,6 +94,15 @@ type PullRequestReviewComment = {
   user: GitHubUser;
 };
 
+type PullRequestCommitRecord = {
+  author: GitHubUser | null;
+  commit: {
+    author: { name: string } | null;
+    message: string;
+  };
+  sha: string;
+};
+
 type WorkflowRun = {
   conclusion: string | null;
   created_at: string;
@@ -103,14 +123,21 @@ type WorkflowRuns = {
 type PullRequestCapabilities = {
   mergeMethods: PullRequestMergeMethod[];
   mergeStateStatus: "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
+  pullRequestId: string;
   viewerCanClose: boolean;
+  viewerCanUpdate: boolean;
   viewerCanWrite: boolean;
 };
 
 type PullRequestCapabilityQuery = {
   repository: {
     mergeCommitAllowed: boolean;
-    pullRequest: { mergeStateStatus: PullRequestCapabilities["mergeStateStatus"]; viewerCanClose: boolean } | null;
+    pullRequest: {
+      id: string;
+      mergeStateStatus: PullRequestCapabilities["mergeStateStatus"];
+      viewerCanClose: boolean;
+      viewerCanUpdate: boolean;
+    } | null;
     rebaseMergeAllowed: boolean;
     squashMergeAllowed: boolean;
     viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE" | null;
@@ -120,6 +147,26 @@ type PullRequestCapabilityQuery = {
 type PullRequestMergeResult = {
   merged: boolean;
   message: string;
+};
+
+type PullRequestAgentComment =
+  | { body: string; type: "general" }
+  | {
+      body: string;
+      line: number;
+      path: string;
+      side: "LEFT" | "RIGHT";
+      startLine?: number;
+      startSide?: "LEFT" | "RIGHT";
+      type: "line";
+    };
+
+type PullRequestAgentCommentResult = {
+  line?: number;
+  path?: string;
+  side?: "LEFT" | "RIGHT";
+  type: PullRequestAgentComment["type"];
+  url: string;
 };
 
 type PullRequestFile = {
@@ -145,7 +192,16 @@ type Commit = {
   };
   files?: unknown[];
   html_url: string;
+  sha: string;
   stats?: { additions: number; deletions: number };
+};
+
+type Repository = {
+  default_branch: string;
+  description: string | null;
+  html_url: string;
+  name: string;
+  owner: GitHubUser;
 };
 
 type GitBlob = {
@@ -166,6 +222,7 @@ type GitTree = {
 };
 
 type RepositorySnapshot = {
+  encodedRepository: string;
   revision: string;
   tree: GitTree;
 };
@@ -181,6 +238,7 @@ const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
+const REPOSITORY_DATA_EXTENSIONS = new Set(["csv", "done", "jsonl", "log", "sha256"]);
 
 export class GitHubError extends Error {
   /** Captures a safe HTTP status for a failed GitHub request. */
@@ -228,6 +286,18 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   const response = await githubResponse(path, token);
 
   return response.json() as Promise<T>;
+}
+
+/** Confirms GitHub authentication while treating temporary API failures as an unknown, not a logout. */
+export async function isGitHubConnected(token?: string): Promise<boolean> {
+  if (!token) return false;
+
+  try {
+    await githubResponse("/user", token);
+    return true;
+  } catch (error) {
+    return !(error instanceof GitHubError && error.status === 401);
+  }
 }
 
 /** Reads enough newest items from a chronological GitHub collection to fill the requested window. */
@@ -365,25 +435,60 @@ function summarizePullRequest(pullRequest: SearchPullRequest, status: PullReques
 function parseSource(source: string[]): {
   apiPath: string;
   encodedRepository: string;
-  kind: "compare" | "commit" | "pull";
+  filePath?: string;
+  kind: "compare" | "commit" | "pull" | "repository";
   repository: string;
+  repositoryRef?: string;
   value: string;
 } {
-  const [owner, repo, kind, value] = source;
-  const validKind = kind === "pull" || kind === "compare" || kind === "commit";
+  const [owner, repo, kind, value, ...filePath] = source;
+  const parsedKind = kind === "pull" || kind === "compare" || kind === "commit" ? kind : undefined;
 
-  if (source.length !== 4 || !owner || !repo || !value || !validKind) {
-    throw new GitHubError("This GitHub URL is not supported", 400);
-  }
+  if (!owner || !repo) throw new GitHubError("This GitHub URL is not supported", 400);
 
   const repository = `${owner}/${repo}`;
   const encodedRepository = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  const collection = kind === "pull" ? "pulls" : kind === "commit" ? "commits" : "compare";
+  if (source.length === 2) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      kind: "repository",
+      repository,
+      value: "",
+    };
+  }
+  if (kind === "blob" && value && filePath.length) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      filePath: filePath.join("/"),
+      kind: "repository",
+      repository,
+      repositoryRef: value,
+      value: "",
+    };
+  }
+  // A trailing path without GitHub's /blob/<ref> prefix targets the default branch.
+  if (!parsedKind && source.length > 2) {
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      filePath: source.slice(2).join("/"),
+      kind: "repository",
+      repository,
+      value: "",
+    };
+  }
+  if (source.length !== 4 || !value || !parsedKind) {
+    throw new GitHubError("This GitHub URL is not supported", 400);
+  }
+
+  const collection = parsedKind === "pull" ? "pulls" : parsedKind === "commit" ? "commits" : "compare";
 
   return {
     apiPath: `/repos/${encodedRepository}/${collection}/${encodeURIComponent(value)}`,
     encodedRepository,
-    kind,
+    kind: parsedKind,
     repository,
     value,
   };
@@ -434,8 +539,27 @@ function summarizeReviewComment(comment: PullRequestReviewComment): PullRequestC
   };
 }
 
+/** Maps GitHub's nested commit response into the compact PR conversation record. */
+function summarizePullRequestCommit(commit: PullRequestCommitRecord): PullRequestCommit {
+  return {
+    author: commit.author?.login ?? commit.commit.author?.name ?? "Unknown author",
+    message: commit.commit.message,
+    sha: commit.sha,
+  };
+}
+
+/** Loads the recent commit history without preventing the rest of the PR workspace from rendering. */
+async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestCommitList> {
+  try {
+    const commits = await githubNewestItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token, 100);
+    return { commits: commits.map(summarizePullRequestCommit), unavailable: false };
+  } catch {
+    return { commits: [], unavailable: true };
+  }
+}
+
 /** Loads the authenticated conversation records shown in the PR workspace. */
-async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token: string): Promise<PullRequestConversation> {
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestConversation> {
   // Preserve available records while telling the UI when GitHub could not provide the full conversation.
   const [commentsResult, reviewsResult, reviewCommentsResult] = await Promise.allSettled([
     githubRequest<IssueComment[]>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=desc`, token),
@@ -490,17 +614,20 @@ function summarizeWorkflowRun(run: WorkflowRun): PullRequestWorkflowRun {
 }
 
 /** Loads the controls that only an open pull request can render or act on. */
-async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string) {
+async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string) {
   if (pullRequest.state !== "open" || pullRequest.merged) {
     return { capabilities: undefined, workflowRuns: [] };
   }
 
   const workflowRunsPath = `/repos/${parsed.encodedRepository}/actions/runs`;
+  const capabilitiesRequest = token
+    ? getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined)
+    : Promise.resolve(undefined);
   const [headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
     githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined),
+    capabilitiesRequest,
   ]);
 
   return {
@@ -519,8 +646,10 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
       squashMergeAllowed
       rebaseMergeAllowed
       pullRequest(number: $number) {
+        id
         mergeStateStatus
         viewerCanClose
+        viewerCanUpdate
       }
     }
   }`, { number, owner, repo });
@@ -537,7 +666,9 @@ async function getPullRequestCapabilities(parsed: ReturnType<typeof parseSource>
   return {
     mergeMethods,
     mergeStateStatus: repository.pullRequest.mergeStateStatus,
+    pullRequestId: repository.pullRequest.id,
     viewerCanClose: repository.pullRequest.viewerCanClose,
+    viewerCanUpdate: repository.pullRequest.viewerCanUpdate,
     viewerCanWrite,
   };
 }
@@ -550,19 +681,28 @@ function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequest
 }
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
-async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token: string): Promise<PullRequestWorkspace> {
-  const [conversation, { capabilities, workflowRuns }] = await Promise.all([
+async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
+  const [conversation, commits, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
+    getPullRequestCommits(parsed, token),
     getPullRequestControls(parsed, pullRequest, token),
   ]);
   const state = pullRequest.merged ? "merged" : pullRequest.state;
 
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
-    canComment: !pullRequest.locked,
+    canComment: Boolean(token) && !pullRequest.locked,
+    canEditBody: Boolean(capabilities?.viewerCanUpdate),
+    canEditTitle: Boolean(capabilities?.viewerCanUpdate),
+    canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
+    canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
     comments: conversation.comments,
+    commits: commits.commits,
+    commitsUnavailable: commits.unavailable,
     conversationUnavailable: conversation.unavailable,
+    draft: pullRequest.draft,
+    hasGitHubAccess: Boolean(token),
     mergeMethods: capabilities?.mergeMethods ?? [],
     state,
     workflowRuns: workflowRuns.slice(0, 8).map(summarizeWorkflowRun),
@@ -605,6 +745,22 @@ export async function performPullRequestAction(source: string[], token: string |
 
   const { capabilities, pullRequest } = await currentPullRequest(parsed, accessToken);
 
+  if (action.action === "edit-title") {
+    const title = action.title.trim();
+    if (!title || title.length > 256) throw new GitHubError("Pull request titles must be between 1 and 256 characters", 400);
+    if (!capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request title to be edited", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { title });
+  }
+
+  if (action.action === "edit-body") {
+    if (!capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request body to be edited", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { body: action.body });
+  }
+
   if (action.action === "close") {
     if (pullRequest.state !== "open" || pullRequest.merged || !capabilities?.viewerCanClose) {
       throw new GitHubError("GitHub does not allow this pull request to be closed", 403);
@@ -623,6 +779,18 @@ export async function performPullRequestAction(source: string[], token: string |
     return { celebrate: true, workspace: await getPullRequestWorkspace(source, accessToken) };
   }
 
+  if (action.action === "ready") {
+    if (pullRequest.state !== "open" || pullRequest.merged || !pullRequest.draft || !capabilities?.viewerCanUpdate) {
+      throw new GitHubError("GitHub does not allow this pull request to be marked ready for review", 403);
+    }
+
+    await githubGraphql<{ markPullRequestReadyForReview: { pullRequest: { id: string } } }>(accessToken, `mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+      markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+        pullRequest { id }
+      }
+    }`, { pullRequestId: capabilities.pullRequestId });
+  }
+
   return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
 }
 
@@ -630,6 +798,12 @@ export async function performPullRequestAction(source: string[], token: string |
 async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?: string): Promise<string> {
   if (parsed.kind === "commit") return parsed.value;
   if (parsed.kind === "compare") return parsed.value.split("...").at(-1) ?? parsed.value;
+  if (parsed.kind === "repository") {
+    const repository = await githubRequest<Repository>(parsed.apiPath, token);
+    const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
+    const commit = await githubRequest<Commit>(`${parsed.apiPath}/commits/${encodeURIComponent(repositoryRef)}`, token);
+    return commit.sha;
+  }
   const pullRequest = await githubRequest<PullRequest>(`${parsed.apiPath}?context=1`, token);
   return pullRequest.head.sha;
 }
@@ -638,7 +812,59 @@ async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?:
 async function getRepositorySnapshot(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositorySnapshot> {
   const revision = await getSourceRevision(parsed, token);
   const tree = await githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodeURIComponent(revision)}?recursive=1`, token);
-  return { revision, tree };
+  return { encodedRepository: parsed.encodedRepository, revision, tree };
+}
+
+/** Posts one model-authored comment to the current PR after validating its GitHub target. */
+export async function postPullRequestAgentComment(
+  source: string[],
+  token: string | undefined,
+  comment: PullRequestAgentComment,
+): Promise<PullRequestAgentCommentResult> {
+  const accessToken = requireGitHubToken(token);
+  const parsed = pullRequestSource(source);
+  const body = comment.body.trim();
+  if (!body || body.length > 65_536) throw new GitHubError("Comments must be between 1 and 65,536 characters", 400);
+
+  let response: Response;
+
+  if (comment.type === "general") {
+    const path = `${parsed.apiPath.replace("/pulls/", "/issues/")}/comments`;
+    response = await githubResponse(path, accessToken, "POST", { body });
+  } else {
+    const path = comment.path.trim();
+    const startLine = comment.startLine;
+    const validLine = Number.isInteger(comment.line) && comment.line > 0;
+    const hasRange = startLine !== undefined || comment.startSide !== undefined;
+    const validRange = !hasRange || (
+      Number.isInteger(startLine)
+      && (startLine ?? 0) > 0
+      && (startLine ?? 0) < comment.line
+      && comment.startSide === comment.side
+    );
+
+    if (!path || path.length > 1_024 || !validLine || !validRange) {
+      throw new GitHubError("The GitHub line-comment target is invalid", 400);
+    }
+
+    const commitId = await getSourceRevision(parsed, accessToken);
+    response = await githubResponse(`${parsed.apiPath}/comments`, accessToken, "POST", {
+      body,
+      commit_id: commitId,
+      line: comment.line,
+      path,
+      side: comment.side,
+      start_line: comment.startLine,
+      start_side: comment.startSide,
+    });
+  }
+
+  const created = await response.json() as { html_url?: unknown };
+  if (typeof created.html_url !== "string") throw new GitHubError("GitHub did not return the created comment", 502);
+
+  return comment.type === "general"
+    ? { type: "general", url: created.html_url }
+    : { line: comment.line, path: comment.path.trim(), side: comment.side, type: "line", url: created.html_url };
 }
 
 /** Extracts unique destination paths from a standard Git patch. */
@@ -654,12 +880,18 @@ function decodeGitBlob(blob: GitBlob): string {
   return content.includes("\0") ? "" : content;
 }
 
+/** Keeps source-like text files while excluding bulky benchmark and log artifacts. */
+function isRepositorySourceFile(path: string): boolean {
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  return !extension || !REPOSITORY_DATA_EXTENSIONS.has(extension);
+}
+
 /** Builds bounded repository-wide context and retains its exact revision for later file lookups. */
 export async function getRepositoryContext(source: string[], token?: string): Promise<RepositoryContext> {
   const parsed = parseSource(source);
   const [snapshot, diff] = await Promise.all([
     getRepositorySnapshot(parsed, token),
-    getDiffResponse(source, token).then((response) => response.text()),
+    parsed.kind === "repository" ? "" : getDiffResponse(source, token).then((response) => response.text()),
   ]);
   const { revision, tree } = snapshot;
   const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
@@ -737,7 +969,7 @@ export async function readRepositoryFiles(source: string[], paths: string[], tok
       continue;
     }
 
-    const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
+    const blob = await githubRequest<GitBlob>(`/repos/${repositorySnapshot.encodedRepository}/git/blobs/${entry.sha}`, token);
     const text = decodeGitBlob(blob).slice(0, remaining);
     if (!text) {
       files.push({ error: "File is binary or empty.", path });
@@ -755,9 +987,29 @@ export async function readRepositoryFiles(source: string[], paths: string[], tok
 export async function getDiffDocument(source: string[], token?: string, includePullRequestWorkspace = false): Promise<DiffDocument> {
   const parsed = parseSource(source);
 
+  if (parsed.kind === "repository") {
+    const repository = await githubRequest<Repository>(parsed.apiPath, token);
+    const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
+    const fileUrl = parsed.filePath
+      ? `/blob/${encodeURIComponent(repositoryRef)}/${parsed.filePath.split("/").map(encodeURIComponent).join("/")}`
+      : "";
+
+    return {
+      author: repository.owner.login,
+      avatarUrl: repository.owner.avatar_url,
+      defaultBranch: repository.default_branch,
+      description: repository.description ?? undefined,
+      filePath: parsed.filePath,
+      repository: parsed.repository,
+      repositoryRef,
+      sourceUrl: `${repository.html_url}${fileUrl}`,
+      title: repository.name,
+    };
+  }
+
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const workspace = includePullRequestWorkspace && token ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
+    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
 
     return {
       additions: pullRequest.additions,
@@ -817,9 +1069,45 @@ function diffResponse(body: BodyInit): Response {
   });
 }
 
+/** Downloads one repository snapshot and returns its requested file or every textual file. */
+async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositoryFile[]> {
+  const revision = await getSourceRevision(parsed, token);
+  const response = await githubResponse(`${parsed.apiPath}/tarball/${encodeURIComponent(revision)}`, token);
+  if (!response.body) throw new GitHubError("The repository could not be loaded", 502);
+
+  const archive = extract();
+  const extraction = pipeline(
+    Readable.from([Buffer.from(await response.arrayBuffer())]),
+    createGunzip(),
+    archive,
+  );
+  const files: RepositoryFile[] = [];
+
+  for await (const entry of archive) {
+    const name = entry.header.name.split("/").slice(1).join("/");
+    const requestedFile = !parsed.filePath || name === parsed.filePath;
+    if (entry.header.type !== "file" || !name || !requestedFile || !isRepositorySourceFile(name)) {
+      entry.resume();
+      continue;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of entry) chunks.push(Buffer.from(chunk));
+    const contents = Buffer.concat(chunks).toString("utf8");
+    if (!contents.includes("\0")) files.push({ contents, name });
+  }
+
+  await extraction;
+  if (parsed.filePath && !files.length) {
+    throw new GitHubError("The requested file was not found or cannot be displayed", 404);
+  }
+  return files.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 /** Streams the raw GitHub diff so large comparisons are not serialized through React. */
 export async function getDiffResponse(source: string[], token?: string): Promise<Response> {
   const parsed = parseSource(source);
+  if (parsed.kind === "repository") return Response.json(await getRepositoryFiles(parsed, token));
 
   const response = await fetch(`${GITHUB_API}${parsed.apiPath}`, {
     headers: githubHeaders("application/vnd.github.diff", token),
@@ -886,7 +1174,8 @@ function formatPullRequestFile(file: PullRequestFile): string {
 /** Converts a supported GitHub URL into this app's equivalent viewer path. */
 export function viewerPathFromUrl(value: string): string | null {
   try {
-    const url = new URL(value);
+    const bareSource = /^\/?[\w.-]+\/[\w.-]+(?:\/[^?#]+)*\/?(?:#L[1-9]\d*(?:-L[1-9]\d*)?)?$/.test(value);
+    const url = new URL(bareSource ? `https://github.com/${value.replace(/^\/+/, "")}` : value);
     const source = url.pathname.replace(/\.(diff|patch)$/, "").split("/").filter(Boolean);
 
     if (url.hostname !== "github.com") {
@@ -894,7 +1183,8 @@ export function viewerPathFromUrl(value: string): string | null {
     }
 
     parseSource(source);
-    return `/${source.join("/")}`;
+    const lineHash = /^#L[1-9]\d*(?:-L[1-9]\d*)?$/.test(url.hash) ? url.hash : "";
+    return `/${source.join("/")}${lineHash}`;
   } catch {
     return null;
   }

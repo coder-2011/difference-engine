@@ -18,13 +18,21 @@ export type DiffDocument = {
   avatarUrl: string;
   baseLabel?: string;
   changedFiles?: number;
+  defaultBranch?: string;
   deletions?: number;
   description?: string;
+  filePath?: string;
   headLabel?: string;
   repository: string;
+  repositoryRef?: string;
   pullRequest?: PullRequestWorkspace;
   sourceUrl: string;
   title: string;
+};
+
+export type RepositoryFile = {
+  contents: string;
+  name: string;
 };
 
 export type PullRequestComment = {
@@ -34,6 +42,12 @@ export type PullRequestComment = {
   context?: string;
   createdAt: string;
   key: string;
+};
+
+export type PullRequestCommit = {
+  author: string;
+  message: string;
+  sha: string;
 };
 
 export type PullRequestMergeMethod = "merge" | "rebase" | "squash";
@@ -49,9 +63,17 @@ export type PullRequestWorkflowRun = {
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
+  canEditBody: boolean;
+  canEditTitle: boolean;
+  canManageMerge: boolean;
+  canMarkReady: boolean;
   canMerge: boolean;
   comments: PullRequestComment[];
+  commits: PullRequestCommit[];
+  commitsUnavailable: boolean;
   conversationUnavailable: boolean;
+  draft: boolean;
+  hasGitHubAccess: boolean;
   mergeMethods: PullRequestMergeMethod[];
   state: "closed" | "merged" | "open";
   workflowRuns: PullRequestWorkflowRun[];
@@ -60,4 +82,7 @@ export type PullRequestWorkspace = {
 export type PullRequestAction =
   | { action: "comment"; body: string }
   | { action: "close" }
-  | { action: "merge"; method: PullRequestMergeMethod };
+  | { action: "edit-body"; body: string }
+  | { action: "edit-title"; title: string }
+  | { action: "merge"; method: PullRequestMergeMethod }
+  | { action: "ready" };

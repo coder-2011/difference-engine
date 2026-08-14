@@ -1,5 +1,6 @@
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
+import type { ComponentPropsWithoutRef } from "react";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
 
@@ -18,7 +19,7 @@ const GITHUB_ALERT = /^\[!(CAUTION|IMPORTANT|NOTE|TIP|WARNING)\]\s*\n?/;
 
 /** Adds alert classes to GitHub's blockquote markers before Markdown becomes HTML. */
 function githubAlerts() {
-  return (tree: unknown) => markGitHubAlerts(tree);
+  return markGitHubAlerts;
 }
 
 /** Walks Markdown nodes and replaces each GitHub alert marker with semantic styling data. */
@@ -46,8 +47,12 @@ function markGitHubAlerts(node: unknown): void {
   markdownNode.children?.forEach(markGitHubAlerts);
 }
 
-// Reuse Markdown configuration so memoized messages have stable rendering inputs.
-const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre };
+/** Preserves table layout while giving wide Markdown tables a contained horizontal viewport. */
+function MarkdownTable({ children, ...props }: ComponentPropsWithoutRef<"table">) {
+  return <div className="markdown-table"><table {...props}>{children}</table></div>;
+}
+
+const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre, table: MarkdownTable };
 const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
 
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */

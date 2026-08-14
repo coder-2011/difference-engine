@@ -2,13 +2,15 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows, Github } from "lucide-react";
+import { login } from "@/app/actions";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
+import { PullRequestTitle } from "@/components/pull-request-title";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
-import { getDiffDocument, GitHubError } from "@/lib/github";
+import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
@@ -35,11 +37,15 @@ export default async function DiffPage({ params }: DiffPageProps) {
     getGitHubAccessToken(),
     isOpenAIConnected(),
   ]);
+  const githubConnected = await isGitHubConnected(accessToken);
+  const githubSignedOut = Boolean(accessToken && !githubConnected);
+  const githubToken = githubConnected ? accessToken : undefined;
+  const callbackUrl = `/${source.map(encodeURIComponent).join("/")}`;
 
   let document;
 
   try {
-    document = await getDiffDocument(source, accessToken, Boolean(accessToken));
+    document = await getDiffDocument(source, githubToken, true);
   } catch (error) {
     if (error instanceof GitHubError && error.status < 500) notFound();
     throw error;
@@ -58,6 +64,15 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
         <div className="diff-nav-actions">
           <OpenAIConnection compact initiallyConnected={openAIConnected} />
+          {!githubToken && (
+            <form action={login}>
+              <input name="callbackUrl" type="hidden" value={callbackUrl} />
+              <button className="github-button" type="submit">
+                <Github size={15} />
+                {githubSignedOut ? "GitHub signed out · Sign in" : "Sign in with GitHub"}
+              </button>
+            </form>
+          )}
           <a className="source-link" href={document.sourceUrl} target="_blank" rel="noreferrer">
             Open on GitHub <ArrowUpRight size={14} />
           </a>
@@ -66,7 +81,9 @@ export default async function DiffPage({ params }: DiffPageProps) {
 
       <section className="pr-header">
         <div className="pr-repo"><FileCode2 size={14} /> {document.repository}</div>
-        <h1>{document.title}</h1>
+        {document.pullRequest?.canEditTitle
+          ? <PullRequestTitle initialTitle={document.title} source={source} />
+          : <h1>{document.title}</h1>}
         <div className="pr-byline">
           {document.avatarUrl && <Image className="avatar" src={document.avatarUrl} alt="" width={22} height={22} />}
           <strong>{document.author}</strong>
@@ -76,10 +93,10 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
 
         {document.pullRequest ? (
-          <PullRequestWorkspace key={source.join("/")} description={description} source={source} workspace={document.pullRequest} />
+          <PullRequestWorkspace key={source.join("/")} description={document.description} source={source} workspace={document.pullRequest} />
         ) : description && (
           <details className="pr-description" open>
-            <summary>Pull request description</summary>
+            <summary>{document.defaultBranch ? "Repository description" : "Pull request description"}</summary>
             <div className="markdown-body"><GitHubMarkdown>{description}</GitHubMarkdown></div>
           </details>
         )}
@@ -88,8 +105,11 @@ export default async function DiffPage({ params }: DiffPageProps) {
       <DiffViewer
         additions={document.additions}
         changedFiles={document.changedFiles}
+        defaultBranch={document.defaultBranch}
         deletions={document.deletions}
+        filePath={document.filePath}
         openAIConnected={openAIConnected}
+        repositoryRef={document.repositoryRef}
         source={source}
       />
     </main>
