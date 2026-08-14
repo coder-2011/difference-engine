@@ -70,7 +70,7 @@ export function PullRequestReviewThread({ onAction, pending, thread }: PullReque
             <Image className="avatar" src={comment.avatarUrl} alt="" width={20} height={20} />
             <div>
               <header><strong>{comment.author}</strong><time dateTime={comment.createdAt} suppressHydrationWarning>{new Date(comment.createdAt).toLocaleString()}</time>{comment.updatedAt !== comment.createdAt && <span>edited</span>}</header>
-              <GitHubMarkdown>{comment.body}</GitHubMarkdown>
+              <div className="pr-comment-markdown"><GitHubMarkdown>{comment.body}</GitHubMarkdown></div>
             </div>
           </article>
         ))}

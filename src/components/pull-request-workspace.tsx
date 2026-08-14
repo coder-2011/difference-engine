@@ -368,7 +368,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
         <div className="pr-comment-list">
           {workspace.commits.length > 0 && (
-            <details className="pr-commit-list" open>
+            <details className="pr-commit-list">
               <summary><GitCommitHorizontal size={13} /> <span>{workspace.commits.length === 1 ? "1 commit" : `${workspace.commits.length} commits`}</span></summary>
               {workspace.commits.map((commit) => (
                 <article className="pr-commit" key={commit.sha}>
