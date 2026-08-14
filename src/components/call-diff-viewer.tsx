@@ -91,12 +91,8 @@ export function CallDiffViewer({ source }: CallDiffViewerProps) {
   const limits = [document.ignoredFiles ? `${document.ignoredFiles} skipped` : "", document.truncated ? "bounded view" : ""].filter(Boolean).join(" · ");
 
   return (
-    <section className="call-diff-viewer" aria-labelledby="call-diff-title">
+    <section className="call-diff-viewer" aria-label="Call flow">
       <header className="call-diff-header">
-        <div className="call-diff-heading">
-          <span className="call-diff-icon"><Network size={17} /></span>
-          <div><h2 id="call-diff-title">Changed call flow</h2><p>Syntactic TypeScript and JavaScript analysis across the files changed by this review.</p></div>
-        </div>
         <div className="call-diff-summary"><GitCompareArrows size={14} /><span>{summary}</span>{limits && <small>{limits}</small>}</div>
       </header>
 

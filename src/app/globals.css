@@ -2442,43 +2442,9 @@ button {
 .call-diff-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 20px;
   margin-bottom: 15px;
-}
-
-.call-diff-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-}
-
-.call-diff-icon {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  place-items: center;
-  border: 1px solid #413a52;
-  border-radius: 8px;
-  background: #1a1720;
-  color: #cbb9f9;
-}
-
-.call-diff-heading h2 {
-  margin: 0;
-  color: #ededf0;
-  font-size: 16px;
-  font-weight: 570;
-  letter-spacing: -0.02em;
-}
-
-.call-diff-heading p {
-  max-width: 570px;
-  margin: 5px 0 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 .call-diff-summary {

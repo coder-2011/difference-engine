@@ -1,3 +1,4 @@
+import { isTypeScriptCallDiffSourcePath } from "@/lib/call-diff-files";
 import { getCallDiffSource } from "@/lib/github";
 import type { CallDiffDocument, CallDiffEntry, CallDiffNode, CallDiffStatus } from "@/types/call-diff";
 
@@ -34,6 +35,16 @@ type FunctionIndex = {
 };
 
 type CallTreeNode = Omit<CallDiffNode, "children" | "status"> & { children: CallTreeNode[] };
+
+type TextRange = {
+  end: number;
+  start: number;
+};
+
+type TextFunctionPattern = {
+  expression: RegExp;
+  paths: RegExp;
+};
 
 const CALL_DIFF_ENTRY_LIMIT = 12;
 const CALL_DIFF_MAX_DEPTH = 4;
@@ -211,7 +222,7 @@ function addLocalFunctions(functions: FunctionInfo[], ts: TypeScript, sourceFile
 }
 
 /** Parses top-level functions, callable variables, and class members from one source snapshot. */
-function parseFunctions(ts: TypeScript, path: string, text: string, scope: string): FunctionInfo[] {
+function parseTypeScriptFunctions(ts: TypeScript, path: string, text: string, scope: string): FunctionInfo[] {
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindForPath(ts, path));
   const functions: FunctionInfo[] = [];
 
@@ -255,6 +266,191 @@ function parseFunctions(ts: TypeScript, path: string, text: string, scope: strin
   }
 
   return functions;
+}
+
+const TEXT_FUNCTION_PATTERNS: TextFunctionPattern[] = [
+  { expression: /^\s*(?:pub(?:\([^)\n]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*(?:<[^>\n]*>)?\s*\(/gm, paths: /\.rs$/i },
+  { expression: /^\s*func\s+(?:\([^)\n]*\)\s*)?([A-Za-z_]\w*)\s*\(/gm, paths: /\.go$/i },
+  { expression: /^\s*def\s+([A-Za-z_]\w*[!?=]?)\b/gm, paths: /\.(?:bzl|ex|exs|py|pyi|pyw|rake|rb|sc|scala|star)$/i },
+  { expression: /^\s*(?:public|protected|private|internal|static|final|abstract|override|async|open|sealed|virtual|inline|mutating|nonmutating|class|lazy|partial|extern|unsafe|new|\s)*function\s+([A-Za-z_]\w*)\s*\(/gm, paths: /\.(?:php|phtml)$/i },
+  { expression: /^\s*(?:predicate)\s+([A-Za-z_]\w*[!?]?)\b/gm, paths: /\.ql$/i },
+  { expression: /^\s*(?:defp|defmacro|defguard)\s+([A-Za-z_]\w*[!?]?)\b/gm, paths: /\.(?:ex|exs)$/i },
+  { expression: /^\s*(?:local\s+)?function\s+([A-Za-z_][\w.:]*)\s*\(/gm, paths: /\.lua$/i },
+  { expression: /^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*(?:\{|$)/gm, paths: /\.(?:bash|sh|zsh)$/i },
+  { expression: /^\s*([A-Za-z.][\w.]*)\s*(?:<-|=)\s*function\s*\(/gm, paths: /\.r$/i },
+  { expression: /^\s*rpc\s+([A-Za-z_]\w*)\s*\(/gm, paths: /\.proto$/i },
+  { expression: /^\s*(?!(?:if|for|while|switch|catch|return|match)\b)(?:[A-Za-z_][\w:<>,~*&[\]\s]*\s+)?(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\s*\([^;{}\n]*\)\s*(?:const\s*)?(?:->\s*[^ {\n]+)?\s*\{/gm, paths: /\.(?:c|cc|cpp|cs|cxx|h|hh|hpp|java|swift)$/i },
+];
+
+const TEXT_CALL_PATTERN = /\b([A-Za-z_][\w.:]*)\s*\(/g;
+const TEXT_CALL_KEYWORDS = new Set(["case", "catch", "def", "defguard", "defmacro", "defp", "else", "fn", "for", "func", "function", "if", "loop", "match", "predicate", "return", "rpc", "sizeof", "switch", "while"]);
+
+/** Maps the generic languages with indentation-delimited bodies to their direct source range. */
+function usesIndentedTextBody(path: string): boolean {
+  return /\.(?:bzl|py|pyi|pyw|star)$/i.test(path);
+}
+
+/** Maps the generic languages with an `end` delimiter to their direct source range. */
+function usesEndDelimitedTextBody(path: string): boolean {
+  return /\.(?:ex|exs|lua|rake|rb)$/i.test(path);
+}
+
+/** Finds the closing brace of a function while ignoring quoted text and ordinary comments. */
+function closingBrace(text: string, opening: number): number | undefined {
+  let depth = 0;
+  let quote = "";
+
+  for (let index = opening; index < text.length; index += 1) {
+    const character = text[index]!;
+    const following = text[index + 1] ?? "";
+
+    if (quote) {
+      if (character === "\\") index += 1;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === "\"" || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "/" && following === "/") {
+      const lineEnd = text.indexOf("\n", index + 2);
+      index = lineEnd === -1 ? text.length : lineEnd;
+      continue;
+    }
+    if (character === "/" && following === "*") {
+      const commentEnd = text.indexOf("*/", index + 2);
+      index = commentEnd === -1 ? text.length : commentEnd + 1;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    if (character === "}") depth -= 1;
+    if (depth === 0) return index;
+  }
+}
+
+/** Stops an indentation-delimited function at the next peer or enclosing source line. */
+function indentedBody(text: string, declaration: number): TextRange {
+  const lineStart = text.lastIndexOf("\n", declaration - 1) + 1;
+  const indentation = text.slice(lineStart, declaration).match(/^\s*/)?.[0].length ?? 0;
+  const bodyLine = text.indexOf("\n", declaration);
+  const start = bodyLine === -1 ? text.length : bodyLine + 1;
+  let end = text.length;
+
+  for (let line = start; line < text.length;) {
+    const lineEnd = text.indexOf("\n", line);
+    const nextLine = lineEnd === -1 ? text.length : lineEnd + 1;
+    const content = text.slice(line, lineEnd === -1 ? text.length : lineEnd);
+    const leading = content.match(/^\s*/)?.[0].length ?? 0;
+    if (content.trim() && leading <= indentation) {
+      end = line;
+      break;
+    }
+    line = nextLine;
+  }
+
+  return { end, start };
+}
+
+/** Stops an `end`-delimited function at its matching indentation level. */
+function endDelimitedBody(text: string, declaration: number): TextRange {
+  const lineStart = text.lastIndexOf("\n", declaration - 1) + 1;
+  const indentation = text.slice(lineStart, declaration).match(/^\s*/)?.[0].length ?? 0;
+  const bodyLine = text.indexOf("\n", declaration);
+  const start = bodyLine === -1 ? text.length : bodyLine + 1;
+  let end = text.length;
+
+  for (let line = start; line < text.length;) {
+    const lineEnd = text.indexOf("\n", line);
+    const nextLine = lineEnd === -1 ? text.length : lineEnd + 1;
+    const content = text.slice(line, lineEnd === -1 ? text.length : lineEnd);
+    const leading = content.match(/^\s*/)?.[0].length ?? 0;
+    if (leading <= indentation && /^\s*end\b/.test(content)) {
+      end = line;
+      break;
+    }
+    line = nextLine;
+  }
+
+  return { end, start };
+}
+
+/** Selects one function body without pretending all supported languages share an AST shape. */
+function textFunctionBody(path: string, text: string, declaration: number): TextRange | undefined {
+  if (usesIndentedTextBody(path)) return indentedBody(text, declaration);
+  if (usesEndDelimitedTextBody(path)) return endDelimitedBody(text, declaration);
+
+  const opening = text.indexOf("{", declaration);
+  if (opening === -1) return undefined;
+  const closing = closingBrace(text, opening);
+  return closing === undefined ? undefined : { end: closing, start: opening + 1 };
+}
+
+/** Returns the one-based source line for a text offset without allocating a line array. */
+function lineForOffset(text: string, offset: number): number {
+  let line = 1;
+  let cursor = -1;
+
+  while (cursor < offset) {
+    cursor = text.indexOf("\n", cursor + 1);
+    if (cursor === -1 || cursor >= offset) break;
+    line += 1;
+  }
+
+  return line;
+}
+
+/** Collects direct identifier calls for languages that do not have the TypeScript parser path. */
+function collectTextSteps(path: string, text: string, body: TextRange): CallStep[] {
+  const steps: CallStep[] = [];
+  const source = text.slice(body.start, body.end);
+  TEXT_CALL_PATTERN.lastIndex = 0;
+
+  for (const match of source.matchAll(TEXT_CALL_PATTERN)) {
+    const symbol = match[1]!;
+    const offset = body.start + match.index;
+    const prefix = source.slice(Math.max(0, match.index - 16), match.index);
+    if (TEXT_CALL_KEYWORDS.has(symbol) || /\b(?:def|fn|func|function|predicate|rpc)\s*$/.test(prefix)) continue;
+    steps.push({ children: [], file: path, key: symbol, label: functionLabel(symbol), line: lineForOffset(text, offset), type: "call" });
+  }
+
+  return steps;
+}
+
+/** Extracts top-level callable declarations from the GitHub code-navigation language set. */
+function parseTextFunctions(path: string, text: string, scope: string): FunctionInfo[] {
+  const functions: FunctionInfo[] = [];
+  const declarations = new Map<number, string>();
+
+  for (const { expression, paths } of TEXT_FUNCTION_PATTERNS) {
+    if (!paths.test(path)) continue;
+    expression.lastIndex = 0;
+    for (const match of text.matchAll(expression)) declarations.set(match.index, match[1]!);
+  }
+
+  for (const [declaration, symbol] of [...declarations].sort(([left], [right]) => left - right)) {
+    const body = textFunctionBody(path, text, declaration);
+    if (!body) continue;
+    const declarationText = text.slice(declaration, body.start);
+    functions.push({
+      exported: /\b(?:export|pub|public)\b/.test(declarationText),
+      file: path,
+      id: functionId(scope, symbol),
+      line: lineForOffset(text, declaration),
+      scope,
+      steps: collectTextSteps(path, text, body),
+      symbol,
+    });
+  }
+
+  return functions;
+}
+
+/** Routes JavaScript-family files to TypeScript and every other supported language to the bounded text extractor. */
+function parseFunctions(ts: TypeScript, path: string, text: string, scope: string): FunctionInfo[] {
+  return isTypeScriptCallDiffSourcePath(path)
+    ? parseTypeScriptFunctions(ts, path, text, scope)
+    : parseTextFunctions(path, text, scope);
 }
 
 /** Builds direct local and unambiguous cross-file lookups for one snapshot. */
