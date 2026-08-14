@@ -169,7 +169,6 @@ function parseHistory(value: unknown): ChatTurn[] {
     .map((turn) => ({
       answer: typeof turn.answer === "string" ? turn.answer.slice(0, 12_000) : "",
       question: typeof turn.question === "string" ? turn.question.slice(0, 1_000) : "",
-      selection: typeof turn.selection === "string" ? turn.selection.slice(0, MAX_SELECTION_LENGTH) : "",
     }))
     .filter((turn) => turn.answer && turn.question)
     .slice(-MAX_CHAT_HISTORY_TURNS);
@@ -527,7 +526,7 @@ export async function POST(request: Request): Promise<Response> {
     "OpenAI-Beta": "responses=experimental",
   };
   const answerInput = [
-    `<conversation_history>\n${history.map((turn) => `Selected code: ${turn.selection}\nUser: ${turn.question}\nAssistant: ${turn.answer}`).join("\n\n") || "No previous turns."}\n</conversation_history>`,
+    `<conversation_history>\n${history.map((turn) => `User: ${turn.question}\nAssistant: ${turn.answer}`).join("\n\n") || "No previous turns."}\n</conversation_history>`,
     `<question>\n${question}\n</question>`,
     `<selected_code>\n${selection}\n</selected_code>`,
     `<repository_context>\n${repositoryContext.text}\n</repository_context>`,

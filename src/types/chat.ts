@@ -8,5 +8,4 @@ export type ChatTurn = {
   answer: string;
   attachments?: string[];
   question: string;
-  selection: string;
 };
