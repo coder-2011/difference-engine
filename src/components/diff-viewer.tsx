@@ -6,7 +6,7 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { ChevronDown, ChevronRight, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -92,6 +92,7 @@ export function DiffViewer({
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
+  const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
 
@@ -271,6 +272,22 @@ export function DiffViewer({
   );
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
 
+  /** Fetches and copies the unparsed GitHub patch as plain text. */
+  async function copyRawDiff(): Promise<void> {
+    const path = source.map(encodeURIComponent).join("/");
+
+    try {
+      const response = await fetch(`/api/diff/${path}`);
+      if (!response.ok) throw new Error("The diff could not be loaded");
+
+      await navigator.clipboard.writeText(await response.text());
+      setRawDiffCopyStatus("Copied");
+      window.setTimeout(() => setRawDiffCopyStatus(""), 2_000);
+    } catch {
+      setRawDiffCopyStatus("Copy failed");
+    }
+  }
+
   if (error) {
     return <div className="diff-error"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div>;
   }
@@ -293,6 +310,11 @@ export function DiffViewer({
               <RepositorySearch files={codeFiles} onOpenResult={revealRepositoryResult} />
               <RepositoryCompare currentRef={repositoryRef} defaultBranch={defaultBranch} repository={source.slice(0, 2).join("/")} />
             </div>
+          )}
+          {!repository && (
+            <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff as .txt">
+              <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw .txt"}
+            </button>
           )}
           <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title="Toggle file tree">
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
