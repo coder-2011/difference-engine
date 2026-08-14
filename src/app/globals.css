@@ -2463,7 +2463,8 @@ button {
   background: #0d0d0a;
 }
 
-.code-view-shell > div:not(.question-panel) {
+/* Overlay controls are positioned independently from the scrollable diff content. */
+.code-view-shell > div:not(.question-panel):not(.selection-actions):not(.ai-chat-actions) {
   height: 100%;
   overflow: auto;
 }
