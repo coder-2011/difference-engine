@@ -1476,8 +1476,11 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
   let truncated: boolean;
 
   if (parsed.kind === "pull") {
-    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const candidates = await getPullRequestCallDiffFiles(parsed.apiPath, token);
+    // The pull metadata and changed-file list are independent GitHub requests.
+    const [pullRequest, candidates] = await Promise.all([
+      githubRequest<PullRequest>(parsed.apiPath, token),
+      getPullRequestCallDiffFiles(parsed.apiPath, token),
+    ]);
     fromRef = pullRequest.base.sha;
     toRef = pullRequest.head.sha;
     candidateFiles = candidates.files;

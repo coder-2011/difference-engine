@@ -98,6 +98,8 @@ export function DiffViewer({
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
+  // Keep the completed lazy analysis mounted so tab changes never restart its GitHub request.
+  const [callFlowLoaded, setCallFlowLoaded] = useState(false);
   const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -332,7 +334,7 @@ export function DiffViewer({
   const reviewTabs = callDiffAvailable && (
     <div aria-label="Review view" className="review-tabs" role="tablist">
       <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
-      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => setReviewView("call-flow")} role="tab" type="button"><Network size={13} /> Call flow</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { setCallFlowLoaded(true); setReviewView("call-flow"); }} role="tab" type="button"><Network size={13} /> Call flow</button>
     </div>
   );
 
@@ -363,9 +365,12 @@ export function DiffViewer({
   return (
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
-      {showingCallDiff ? (
-        <div aria-labelledby="call-flow-review-tab" id="call-flow-review" role="tabpanel"><CallDiffViewer onSelect={openAIConnected ? selectCallFlowNode : undefined} source={source} /></div>
-      ) : <>
+      {callFlowLoaded && (
+        <div aria-labelledby="call-flow-review-tab" hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
+          <CallDiffViewer onSelect={openAIConnected ? selectCallFlowNode : undefined} source={source} />
+        </div>
+      )}
+      {!showingCallDiff && <>
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
