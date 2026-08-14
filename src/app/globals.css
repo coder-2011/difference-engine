@@ -1331,11 +1331,6 @@ button {
   font-weight: 550;
 }
 
-.pr-conversation-heading span:last-child {
-  color: var(--faint);
-  font-family: var(--font-mono);
-}
-
 .pr-comment-list {
   display: flex;
   min-height: 0;
@@ -1603,11 +1598,8 @@ button {
 
 .pr-state {
   display: flex;
-  flex: none;
   align-items: center;
   gap: 7px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
   font-size: 10px;
 }

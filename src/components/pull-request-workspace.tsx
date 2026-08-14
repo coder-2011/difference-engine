@@ -315,15 +315,13 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
           </div>
         )}
 
-        <header className="pr-conversation-heading">
-          <span>Conversation</span>
-        </header>
-
         {workspace.state === "open" && (
-          <div className="pr-state">
-            <span className={`pr-state-pill ${workspace.draft ? "draft" : "open"}`}>{workspace.draft ? "Draft" : "Open"}</span>
-            {openState && <span>{openState}</span>}
-          </div>
+          <header className="pr-conversation-heading">
+            <div className="pr-state">
+              <span className={`pr-state-pill ${workspace.draft ? "draft" : "open"}`}>{workspace.draft ? "Draft" : "Open"}</span>
+              {openState && <span>{openState}</span>}
+            </div>
+          </header>
         )}
 
         <div className="pr-comment-list">
