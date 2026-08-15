@@ -3995,9 +3995,12 @@ button {
 }
 
 .question-panel textarea {
+  height: 72px;
   min-height: 72px;
+  max-height: 72px;
   box-sizing: border-box;
   padding: 2px 0 30px;
+  overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
