@@ -202,7 +202,6 @@ export function CallDiffViewer({ activeFile, additions, changedFiles, deletions,
   const document = state.document;
   const changedLines = (additions ?? 0) + (deletions ?? 0);
   const hasLineCounts = additions !== undefined || deletions !== undefined;
-  const limits = [document.ignoredFiles ? `${document.ignoredFiles} skipped` : "", document.truncated ? "bounded view" : ""].filter(Boolean).join(" · ");
   const entries = activeFile
     ? document.entries.filter((entry) => treeTouchesFile(entry.tree, activeFile))
     : document.entries;
@@ -222,12 +221,10 @@ export function CallDiffViewer({ activeFile, additions, changedFiles, deletions,
     <section className="call-diff-viewer" aria-label="Call flow">
       <header className="call-diff-toolbar viewer-toolbar">
         <div className="change-stats">
-          <span><FileText size={13} /> {document.filesAnalyzed} source files</span>
-          {changedFiles !== undefined && <span>{changedFiles} changed files</span>}
+          <span><FileText size={13} /> {changedFiles ?? document.filesAnalyzed} files</span>
           {hasLineCounts && <span>{changedLines.toLocaleString()} LOC</span>}
           {additions !== undefined && <span className="additions">+{additions.toLocaleString()}</span>}
           {deletions !== undefined && <span className="deletions">−{deletions.toLocaleString()}</span>}
-          {limits && <span className="call-diff-limits">{limits}</span>}
         </div>
         <div className="viewer-actions">
           <button aria-label="Copy raw call diff as JSON" onClick={() => void copyRawCallDiff()} title="Copy raw call diff" type="button"><ClipboardCopy size={14} /> {rawCallDiffCopyStatus || "Copy raw call diff"}</button>

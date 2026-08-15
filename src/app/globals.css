@@ -2500,10 +2500,6 @@ button {
   min-height: 0;
 }
 
-.call-diff-limits {
-  color: var(--faint);
-}
-
 .call-diff-file-filter {
   max-width: 260px;
 }
