@@ -3012,6 +3012,10 @@ button {
   height: calc(100vh - 136px);
 }
 
+.diff-workspace.has-review-tabs .call-flow-body {
+  height: calc(100vh - 93px);
+}
+
 .viewer-body.sidebar-closed {
   grid-template-columns: minmax(0, 1fr);
 }
