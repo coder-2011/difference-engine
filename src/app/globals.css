@@ -2454,28 +2454,32 @@ button {
 }
 
 .call-flow-body .call-diff-viewer {
-  display: flex;
-  grid-area: content;
   width: 100%;
   min-width: 0;
-  min-height: 0;
-  flex-direction: column;
+  min-height: auto;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
-/* Keep Call Flow in the content track when responsive CSS hides the sidebar. */
 .call-flow-body {
-  grid-template-areas: "sidebar content";
+  display: grid;
+  grid-template-columns: 245px minmax(0, 1fr);
+  min-width: 0;
 }
 
-.call-flow-body .file-sidebar {
-  grid-area: sidebar;
+.call-flow-body[hidden] {
+  display: none;
 }
 
 .call-flow-body.sidebar-closed {
-  grid-template-areas: "content";
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.call-flow-body .file-sidebar {
+  position: sticky;
+  top: 0;
+  height: calc(100vh - 93px);
 }
 
 .call-flow-body .call-diff-toolbar {
@@ -2487,10 +2491,8 @@ button {
 }
 
 .call-flow-body .call-diff-entry-list {
-  min-height: 0;
-  flex: 1;
   padding: 14px;
-  overflow: auto;
+  overflow: visible;
 }
 
 .call-flow-body .call-diff-empty,
@@ -2498,16 +2500,6 @@ button {
 .call-flow-body .call-diff-error {
   flex: 1;
   min-height: 0;
-}
-
-.call-diff-file-filter {
-  max-width: 260px;
-}
-
-.call-diff-file-filter span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .call-diff-entry-list {
@@ -2520,6 +2512,51 @@ button {
   border: 1px solid var(--line);
   border-radius: 9px;
   background: #0f0f0d;
+}
+
+.call-diff-file-header {
+  display: flex;
+  min-width: 0;
+  height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 11px;
+  border-bottom: 1px solid var(--line);
+  background: #12120f;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.call-diff-file-header > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.call-diff-file-header code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #d9d9de;
+  font-family: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-diff-file-header > span {
+  flex: none;
+}
+
+.call-diff-file-header .additions {
+  color: var(--green);
+}
+
+.call-diff-file-header .deletions {
+  color: var(--red);
+}
+
+.call-diff-file-body {
+  padding: 5px 0;
 }
 
 .call-diff-tree,
@@ -2603,20 +2640,8 @@ button {
   color: var(--text);
 }
 
-.call-diff-status {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: #5b5b61;
-}
-
 .call-diff-node.added > .call-diff-node-line {
   background: rgb(74 222 128 / 0.045);
-}
-
-.call-diff-node.added > .call-diff-node-line .call-diff-status {
-  background: var(--green);
 }
 
 .call-diff-node.added > .call-diff-node-line code {
@@ -2627,20 +2652,12 @@ button {
   background: rgb(251 113 133 / 0.045);
 }
 
-.call-diff-node.removed > .call-diff-node-line .call-diff-status {
-  background: var(--red);
-}
-
 .call-diff-node.removed > .call-diff-node-line code {
   color: #e7abb5;
 }
 
 .call-diff-node.changed > .call-diff-node-line {
   background: linear-gradient(90deg, rgb(74 222 128 / 0.045), rgb(251 113 133 / 0.045));
-}
-
-.call-diff-node.changed > .call-diff-node-line .call-diff-status {
-  background: linear-gradient(135deg, var(--green) 0 50%, var(--red) 50%);
 }
 
 .call-diff-loading,
@@ -3008,19 +3025,22 @@ button {
   height: calc(100vh - 136px);
 }
 
-.diff-workspace.has-review-tabs .call-flow-body {
-  height: calc(100vh - 93px);
-}
-
 .viewer-body.sidebar-closed {
   grid-template-columns: minmax(0, 1fr);
 }
 
 .file-sidebar {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   min-width: 0;
   overflow: hidden;
   border-right: 1px solid var(--line);
   background: #0f0f0c;
+}
+
+.file-sidebar[hidden] {
+  display: none;
 }
 
 .file-sidebar-title {
@@ -3042,12 +3062,25 @@ button {
 
 .file-sidebar file-tree-container {
   width: 100%;
-  height: calc(100% - 34px);
+  min-height: 0;
+  height: auto;
+  flex: 1;
   --trees-bg-override: #0f0f0c;
   --trees-fg-override: #a8a8ad;
   --trees-border-color-override: #262628;
   --trees-selected-bg-override: #202023;
   --trees-selected-fg-override: #f0f0f2;
+}
+
+.annotation-sidebar {
+  height: 184px;
+  flex: none;
+  overflow: hidden;
+  border-top: 1px solid var(--line-soft);
+}
+
+.annotation-sidebar:empty {
+  display: none;
 }
 
 .code-view-shell {
@@ -3155,12 +3188,11 @@ button {
 }
 
 .annotation-copy-status {
-  position: absolute;
-  right: 0;
-  bottom: 38px;
+  display: block;
+  padding: 6px 12px;
+  border-top: 1px solid #211f25;
   color: #b9d9c4;
   font-size: 10px;
-  white-space: nowrap;
 }
 
 .annotation-composer {
@@ -3390,17 +3422,9 @@ button {
 }
 
 .annotation-list {
-  position: fixed;
-  z-index: 80;
-  bottom: 55px;
-  left: 12px;
-  width: min(320px, calc(100vw - 24px));
-  max-height: min(240px, calc(100vh - 70px));
+  height: 100%;
   overflow-y: auto;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
   background: #121015;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.38);
   --chat-font-size: 12px;
 }
 
@@ -3418,8 +3442,34 @@ button {
   text-transform: uppercase;
 }
 
-.annotation-list-title span {
+.annotation-list-title > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annotation-list-title b {
   color: #746b87;
+  font-weight: inherit;
+}
+
+.annotation-copy {
+  display: flex;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #37323f;
+  border-radius: 5px;
+  background: #1a1720;
+  color: #bfb3dc;
+  cursor: pointer;
+}
+
+.annotation-copy:hover {
+  background: #25202d;
+  color: #e8e1fa;
 }
 
 .annotation-item {
@@ -4152,10 +4202,6 @@ button {
 
   .viewer-body.sidebar-closed {
     grid-template-columns: minmax(620px, 1fr);
-  }
-
-  .call-flow-body {
-    grid-template-areas: "content";
   }
 
   .file-sidebar,

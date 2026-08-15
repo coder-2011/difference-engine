@@ -1,17 +1,12 @@
 "use client";
 
-import { AlertCircle, ChevronDown, ChevronRight, ClipboardCopy, ExternalLink, FileText, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, X } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, ClipboardCopy, ExternalLink, FileText, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, RefreshCw } from "lucide-react";
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { CallDiffDocument, CallDiffNode } from "@/types/call-diff";
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 
 type CallDiffViewerProps = {
-  activeFile?: string;
-  additions?: number;
-  changedFiles?: number;
-  deletions?: number;
-  onClearFile?: () => void;
   onSelect?: (selection: CallDiffSelection) => void;
   onToggleSidebar: () => void;
   sidebarOpen: boolean;
@@ -43,11 +38,6 @@ function sourceLocationUrl(source: string[], ref: string, file: string, line: nu
   const repository = source.slice(0, 2).map(encodeURIComponent).join("/");
   const path = file.split("/").map(encodeURIComponent).join("/");
   return `/${repository}/blob/${encodeURIComponent(ref)}/${path}#L${line}`;
-}
-
-/** Checks whether a call tree retains context from the selected changed file. */
-function treeTouchesFile(node: CallDiffNode, file: string): boolean {
-  return node.file === file || node.children.some((child) => treeTouchesFile(child, file));
 }
 
 /** Colors retained parents by the added and removed calls they contain. */
@@ -110,7 +100,7 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
 }
 
 /** Renders one recursive call-flow node with source navigation and selection actions. */
-function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: { collapsed: boolean; fromRef: string; node: CallDiffNode; onSelect?: (selection: CallDiffSelection) => void; source: string[]; toRef: string }) {
+function CallDiffNodeRow({ fromRef, node, onSelect, source, toRef }: { fromRef: string; node: CallDiffNode; onSelect?: (selection: CallDiffSelection) => void; source: string[]; toRef: string }) {
   const ref = node.status === "removed" ? fromRef : toRef;
   const location = `${node.file}:${node.line}`;
   const sourceLine = node.snippet.trim() || node.label;
@@ -131,7 +121,6 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
   return (
     <li className={`call-diff-node ${node.kind} ${status}`}>
       <div className="call-diff-node-line">
-        <span aria-label={status === "same" ? "unchanged call" : status === "changed" ? "added and removed calls" : `${status} call`} className="call-diff-status" />
         {onSelect ? (
           <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
             <HighlightedCallCode file={node.file} text={sourceLine} />
@@ -145,10 +134,10 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
         )}
         {onSelect && <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}><ExternalLink size={12} /></a>}
       </div>
-      {!collapsed && children.length > 0 && (
+      {children.length > 0 && (
         <ol>
           {children.map((child, index) => (
-            <CallDiffNodeRow collapsed={collapsed} fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} onSelect={onSelect} source={source} toRef={toRef} />
+            <CallDiffNodeRow fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} onSelect={onSelect} source={source} toRef={toRef} />
           ))}
         </ol>
       )}
@@ -157,7 +146,7 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
 }
 
 /** Shows lazy call-flow analysis and exposes one bounded source line for each selected node. */
-export function CallDiffViewer({ activeFile, additions, changedFiles, deletions, onClearFile, onSelect, onToggleSidebar, sidebarOpen, source }: CallDiffViewerProps) {
+export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source }: CallDiffViewerProps) {
   const sourcePath = useMemo(() => source.map(encodeURIComponent).join("/"), [source]);
   const [state, setState] = useState<CallDiffState>({ status: "loading" });
   const [retry, setRetry] = useState(0);
@@ -171,7 +160,8 @@ export function CallDiffViewer({ activeFile, additions, changedFiles, deletions,
     /** Reads the server-only analysis once and ignores a response from a superseded review. */
     async function loadCallDiff(): Promise<void> {
       try {
-        const response = await fetch(`/api/call-diff/${sourcePath}`, { signal: controller.signal });
+        // Bypass the prior document shape during the brief public edge-cache window after this view ships.
+        const response = await fetch(`/api/call-diff/${sourcePath}?v=2`, { signal: controller.signal });
         const result = await response.json() as CallDiffDocument & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "The call flow could not be loaded");
         setState({ document: result, status: "ready" });
@@ -200,11 +190,9 @@ export function CallDiffViewer({ activeFile, additions, changedFiles, deletions,
   }
 
   const document = state.document;
-  const changedLines = (additions ?? 0) + (deletions ?? 0);
-  const hasLineCounts = additions !== undefined || deletions !== undefined;
-  const entries = activeFile
-    ? document.entries.filter((entry) => treeTouchesFile(entry.tree, activeFile))
-    : document.entries;
+  const additions = document.files.reduce((total, file) => total + file.additions, 0);
+  const deletions = document.files.reduce((total, file) => total + file.deletions, 0);
+  const changedLines = additions + deletions;
 
   /** Copies the exact Call Flow API document so its intersection is available outside the viewer. */
   async function copyRawCallDiff(): Promise<void> {
@@ -221,34 +209,42 @@ export function CallDiffViewer({ activeFile, additions, changedFiles, deletions,
     <section className="call-diff-viewer" aria-label="Call flow">
       <header className="call-diff-toolbar viewer-toolbar">
         <div className="change-stats">
-          <span><FileText size={13} /> {changedFiles ?? document.filesAnalyzed} files</span>
-          {hasLineCounts && <span>{changedLines.toLocaleString()} LOC</span>}
-          {additions !== undefined && <span className="additions">+{additions.toLocaleString()}</span>}
-          {deletions !== undefined && <span className="deletions">−{deletions.toLocaleString()}</span>}
+          <span><FileText size={13} /> {document.files.length} files</span>
+          <span>{changedLines.toLocaleString()} LOC</span>
+          <span className="additions">+{additions.toLocaleString()}</span>
+          <span className="deletions">−{deletions.toLocaleString()}</span>
         </div>
         <div className="viewer-actions">
           <button aria-label="Copy raw call diff as JSON" onClick={() => void copyRawCallDiff()} title="Copy raw call diff" type="button"><ClipboardCopy size={14} /> {rawCallDiffCopyStatus || "Copy raw call diff"}</button>
-          {activeFile && <button aria-label="Show all call flows" className="call-diff-file-filter" onClick={onClearFile} title="Show all call flows" type="button"><FileText size={13} /><span>{activeFile}</span><X size={12} /></button>}
           <button className="sidebar-toggle" onClick={onToggleSidebar} title="Toggle file tree" type="button">
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           </button>
-          <button className="collapse-toggle" onClick={() => setCollapsed((value) => !value)} type="button">
+          <button aria-expanded={!collapsed} className="collapse-toggle" onClick={() => setCollapsed((value) => !value)} type="button">
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-            {collapsed ? "Expand" : "Collapse"}
+            {collapsed ? "Expand files" : "Collapse files"}
           </button>
         </div>
       </header>
 
-      {entries.length ? (
+      {document.files.length ? (
         <div className="call-diff-entry-list">
-          {entries.map((entry) => (
-            <article className="call-diff-entry" key={entry.key}>
-              <ol className="call-diff-tree"><CallDiffNodeRow collapsed={collapsed} fromRef={document.fromRef} node={entry.tree} onSelect={onSelect} source={source} toRef={document.toRef} /></ol>
+          {document.files.map((file) => (
+            <article className="call-diff-entry" data-call-diff-file={file.path} key={file.path}>
+              <header className="call-diff-file-header">
+                <FileText size={14} />
+                <code title={file.path}>{file.path}</code>
+                <span>{(file.additions + file.deletions).toLocaleString()} LOC</span>
+                <span className="additions">+{file.additions.toLocaleString()}</span>
+                <span className="deletions">−{file.deletions.toLocaleString()}</span>
+              </header>
+              {!collapsed && <div className="call-diff-file-body">
+                {file.entries.map((entry) => <ol className="call-diff-tree" key={entry.key}><CallDiffNodeRow fromRef={document.fromRef} node={entry.tree} onSelect={onSelect} source={source} toRef={document.toRef} /></ol>)}
+              </div>}
             </article>
           ))}
         </div>
       ) : (
-        <div className="call-diff-empty"><Network size={19} /><strong>{activeFile ? "No call flow touches this file" : "No changed call flow found"}</strong><span>{activeFile ? activeFile : "The changed supported files do not add, remove, or rewire a parsed call."}</span></div>
+        <div className="call-diff-empty"><Network size={19} /><strong>No changed call flow found</strong><span>The changed supported files do not add, remove, or rewire a parsed call.</span></div>
       )}
     </section>
   );

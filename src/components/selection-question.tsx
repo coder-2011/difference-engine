@@ -4,6 +4,7 @@ import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import {
@@ -85,6 +86,7 @@ export type ProgrammaticSelection = Point & {
 };
 
 type SelectionQuestionProps = {
+  annotationContainerKey?: string;
   programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
   source: string[];
@@ -280,7 +282,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ annotationContainerKey, onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
@@ -297,6 +299,7 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
+  const [annotationSidebar, setAnnotationSidebar] = useState<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -329,6 +332,14 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
   }, [sourceKey]);
+
+  useEffect(() => {
+    // The visible review tab owns the sidebar, so resolve its portal target only after that tab commits.
+    const frame = window.requestAnimationFrame(() => {
+      setAnnotationSidebar(document.querySelector<HTMLElement>(".file-sidebar:not([hidden]) .annotation-sidebar"));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [annotationContainerKey, sourceKey]);
 
   useEffect(() => {
     if (!programmaticSelection) return;
@@ -980,28 +991,33 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
   const triggerSelection = selection?.open ? undefined : selection;
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
+  const annotationList = annotations.length > 0 && (
+    <div className="annotation-list">
+      <div className="annotation-list-title">
+        <span>Annotations <b>{annotations.length}</b></span>
+        <button aria-label="Copy annotations" className="annotation-copy" onClick={() => void copyAnnotations()} title="Copy annotations" type="button"><ClipboardCopy size={13} /></button>
+      </div>
+      {annotations.map((annotation) => (
+        <div className="annotation-item" key={annotation.id}>
+          <button onClick={() => showSelection(annotation.selection)} type="button">
+            <span className="annotation-location">
+              {annotation.selection.location
+                ? `${annotation.selection.location.id}:${annotation.selection.location.lineNumber}`
+                : "Selected code"}
+            </span>
+            <span className="annotation-code">{annotation.selection.text}</span>
+            <span className="annotation-text">{annotation.text}</span>
+          </button>
+          <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+        </div>
+      ))}
+      {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
+    </div>
+  );
 
   return (
     <>
-      {annotations.length > 0 && (
-        <div className="annotation-list">
-          <div className="annotation-list-title">Annotations <span>{annotations.length}</span></div>
-          {annotations.map((annotation) => (
-            <div className="annotation-item" key={annotation.id}>
-              <button onClick={() => showSelection(annotation.selection)} type="button">
-                <span className="annotation-location">
-                  {annotation.selection.location
-                    ? `${annotation.selection.location.id}:${annotation.selection.location.lineNumber}`
-                    : "Selected code"}
-                </span>
-                <span className="annotation-code">{annotation.selection.text}</span>
-                <span className="annotation-text">{annotation.text}</span>
-              </button>
-              <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
-            </div>
-          ))}
-        </div>
-      )}
+      {annotationList && annotationSidebar && createPortal(annotationList, annotationSidebar)}
 
       {!selection?.open && (
         <div className="ai-chat-actions">
@@ -1010,10 +1026,9 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
               <Sparkles size={14} /> <span>Ask Diffs</span>
             </button>
           )}
-          <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
+          {!annotationSidebar && <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
             <ClipboardCopy size={14} /> <span>Copy Annotations</span>
-          </button>
-          {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
+          </button>}
         </div>
       )}
 

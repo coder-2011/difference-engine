@@ -1,6 +1,6 @@
 import { isTypeScriptCallDiffSourcePath } from "@/lib/call-diff-files";
 import { getCallDiffSource } from "@/lib/github";
-import type { CallDiffDocument, CallDiffEntry, CallDiffNode, CallDiffStatus } from "@/types/call-diff";
+import type { CallDiffDocument, CallDiffEntry, CallDiffFile, CallDiffNode, CallDiffStatus } from "@/types/call-diff";
 
 type TypeScript = typeof import("typescript");
 type TsNode = import("typescript").Node;
@@ -647,7 +647,7 @@ function treeHasChanges(node: CallDiffNode): boolean {
   return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
-/** Reads both snapshots, infers affected exported entrypoints, and returns their compact call-tree diffs. */
+/** Reads both snapshots, then groups compact call-tree diffs by their changed source file. */
 export async function getCallDiffDocument(source: string[], token?: string): Promise<CallDiffDocument> {
   const [snapshot, ts] = await Promise.all([getCallDiffSource(source, token), import("typescript")]);
   const before = createFunctionIndex(snapshot.files.flatMap((file) => file.before ? parseFunctions(ts, file.before.path, file.before.text, file.key) : []));
@@ -667,17 +667,33 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
     entries.push({ exported: Boolean(beforeInfo?.exported || afterInfo?.exported), key: id, tree });
   }
 
-  const exportedEntries = entries.filter((entry) => entry.exported);
-  const visibleEntries = (exportedEntries.length ? exportedEntries : entries)
-    .sort((left, right) => left.tree.label.localeCompare(right.tree.label))
-    .slice(0, CALL_DIFF_ENTRY_LIMIT)
-    .map(({ exported: _exported, ...entry }) => entry);
+  const files: CallDiffFile[] = [];
+  let entryLimitReached = false;
+
+  // Keep one review card per changed file, so a busy file cannot hide every other file's flow.
+  for (const file of snapshot.files) {
+    const fileEntries = entries.filter((entry) => entry.tree.file === file.key);
+    const exportedEntries = fileEntries.filter((entry) => entry.exported);
+    const visibleEntries = (exportedEntries.length ? exportedEntries : fileEntries)
+      .sort((left, right) => left.tree.label.localeCompare(right.tree.label))
+      .slice(0, CALL_DIFF_ENTRY_LIMIT);
+    if (!visibleEntries.length) continue;
+
+    entryLimitReached ||= visibleEntries.length < (exportedEntries.length || fileEntries.length);
+    files.push({
+      additions: file.additions,
+      deletions: file.deletions,
+      entries: visibleEntries.map((entry) => ({ key: entry.key, tree: entry.tree })),
+      path: file.key,
+    });
+  }
+
   return {
-    entries: visibleEntries,
+    files,
     filesAnalyzed: snapshot.files.length,
     fromRef: snapshot.fromRef,
     ignoredFiles: snapshot.ignoredFiles,
     toRef: snapshot.toRef,
-    truncated: snapshot.truncated || entries.length > visibleEntries.length,
+    truncated: snapshot.truncated || entryLimitReached,
   };
 }

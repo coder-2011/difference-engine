@@ -99,7 +99,6 @@ export function DiffViewer({
   const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
   // Retain completed analysis for the current source without carrying it to the next review.
   const [loadedCallFlowSource, setLoadedCallFlowSource] = useState<string>();
-  const [callFlowFile, setCallFlowFile] = useState<string>();
   const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -111,11 +110,6 @@ export function DiffViewer({
   useEffect(() => {
     reviewViewRef.current = reviewView;
   }, [reviewView]);
-
-  // A file selected in one review must never constrain Call Flow in the next review.
-  useEffect(() => {
-    setCallFlowFile(undefined);
-  }, [sourceKey]);
 
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
@@ -246,13 +240,14 @@ export function DiffViewer({
     window.history.replaceState(window.history.state, "", nextUrl);
   }, [repositoryRef, source]);
 
-  /** Moves Files Changed to a selected file or narrows Call Flow to paths that touch it. */
+  /** Moves the active review to a selected file from the persistent file tree. */
   const selectFile = useCallback((selectedPaths: readonly string[]) => {
     const path = selectedPaths.at(-1);
     if (!path) return;
 
     if (reviewViewRef.current === "call-flow") {
-      setCallFlowFile(path);
+      const card = Array.from(document.querySelectorAll<HTMLElement>("[data-call-diff-file]")).find((element) => element.dataset.callDiffFile === path);
+      card?.scrollIntoView({ block: "start", behavior: "smooth" });
       return;
     }
 
@@ -292,16 +287,6 @@ export function DiffViewer({
     // Do not turn Files Changed's initial file into a Call Flow filter while the patch streams.
     if (reviewViewRef.current === "files" && selectedPath) model.getItem(selectedPath)?.select();
   }, [filePath, gitStatus, model, paths]);
-
-  useEffect(() => {
-    if (reviewView !== "files" || !callFlowFile) return;
-
-    // CodeView remounts after changing tabs, so wait for its virtualized items before navigating.
-    const frame = window.requestAnimationFrame(() => {
-      viewerRef.current?.scrollTo({ type: "item", id: callFlowFile, align: "start", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [callFlowFile, reviewView]);
 
   useEffect(() => {
     if (!repositoryFiles || !filePath) return;
@@ -384,17 +369,12 @@ export function DiffViewer({
     </div>
   );
   const fileSidebar = (
-    <aside className="file-sidebar">
+    <aside className="file-sidebar" hidden={!sidebarOpen}>
       <div className="file-sidebar-title">{repository ? "Files" : "Changed files"} <span>{files.length}</span></div>
       <FileTree model={model} aria-label={repository ? "Files" : "Changed files"} />
+      <div className="annotation-sidebar" />
     </aside>
   );
-
-  /** Restores the unfiltered Call Flow view and lets the same file be selected again. */
-  function clearCallFlowFile(): void {
-    if (callFlowFile) model.getItem(callFlowFile)?.deselect();
-    setCallFlowFile(undefined);
-  }
 
   /** Fetches and copies the unparsed GitHub patch as plain text. */
   async function copyRawDiff(): Promise<void> {
@@ -424,9 +404,9 @@ export function DiffViewer({
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
       {callFlowLoaded && (
-        <div aria-labelledby="call-flow-review-tab" className={`viewer-body call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
-          {showingCallDiff && sidebarOpen && fileSidebar}
-          <CallDiffViewer activeFile={callFlowFile} additions={additions} changedFiles={changedFiles} deletions={deletions} onClearFile={clearCallFlowFile} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
+        <div aria-labelledby="call-flow-review-tab" className={`call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
+          {showingCallDiff && fileSidebar}
+          <CallDiffViewer onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
         </div>
       )}
       {!showingCallDiff && <>
@@ -465,7 +445,7 @@ export function DiffViewer({
       </div>
 
       <div aria-labelledby="files-review-tab" className={`viewer-body ${sidebarOpen ? "" : "sidebar-closed"}`} id="files-review" role="tabpanel">
-        {sidebarOpen && fileSidebar}
+        {fileSidebar}
         <div
           className="code-view-shell"
           data-diff-selection-root
@@ -480,7 +460,7 @@ export function DiffViewer({
         </div>
       </div>
       </>}
-      {openAIConnected && <SelectionQuestion onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />}
+      {openAIConnected && <SelectionQuestion annotationContainerKey={`${reviewView}-${sidebarOpen}`} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />}
     </section>
   );
 }

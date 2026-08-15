@@ -233,6 +233,8 @@ type PullRequestAgentCommentResult = {
 };
 
 type PullRequestFile = {
+  additions?: number;
+  deletions?: number;
   filename: string;
   patch?: string;
   previous_filename?: string;
@@ -274,8 +276,10 @@ type GitBlob = {
 
 export type CallDiffSource = {
   files: Array<{
+    additions: number;
     after?: { path: string; text: string };
     before?: { path: string; text: string };
+    deletions: number;
     key: string;
   }>;
   fromRef: string;
@@ -1440,8 +1444,10 @@ async function getCallDiffFileSnapshot(
     afterPath ? getCallDiffFileText(encodedRepository, afterPath, toRef, token) : undefined,
   ]);
   return {
+    additions: file.additions ?? 0,
     after: after && afterPath ? { path: afterPath, text: after } : undefined,
     before: before && beforePath ? { path: beforePath, text: before } : undefined,
+    deletions: file.deletions ?? 0,
     key: afterPath ?? beforePath ?? file.filename,
   };
 }

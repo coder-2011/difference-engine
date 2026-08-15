@@ -16,8 +16,15 @@ export type CallDiffEntry = {
   tree: CallDiffNode;
 };
 
-export type CallDiffDocument = {
+export type CallDiffFile = {
+  additions: number;
+  deletions: number;
   entries: CallDiffEntry[];
+  path: string;
+};
+
+export type CallDiffDocument = {
+  files: CallDiffFile[];
   filesAnalyzed: number;
   fromRef: string;
   ignoredFiles: number;
