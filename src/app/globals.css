@@ -2389,11 +2389,15 @@ button {
   }
 
   .pr-workspace.has-description .pr-description {
+    display: flex;
+    flex-direction: column;
     max-width: none;
   }
 
   .pr-workspace.has-description .markdown-body {
-    max-height: 380px;
+    min-height: 0;
+    max-height: none;
+    flex: 1;
   }
 }
 
