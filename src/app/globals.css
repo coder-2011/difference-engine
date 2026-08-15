@@ -1817,21 +1817,22 @@ button {
 }
 
 .pr-review-form[open] > summary {
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-left-radius: 0;
   background: #24242a;
 }
 
+/* Keep the review editor inside the clipped conversation panel. */
 .pr-review-form-panel {
   position: absolute;
-  top: 28px;
+  bottom: 28px;
   right: 0;
   box-sizing: border-box;
   display: grid;
   width: min(300px, calc(100vw - 48px));
   border: 1px solid #3c3c48;
-  border-bottom-right-radius: 6px;
-  border-bottom-left-radius: 6px;
+  border-top-right-radius: 6px;
+  border-top-left-radius: 6px;
   background: #17171d;
 }
 
