@@ -359,6 +359,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   const chatZoomPercent = Math.round((chatFontSize / DEFAULT_CHAT_FONT_SIZE) * 100);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<CodeSelection | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [annotationSidebar, setAnnotationSidebar] = useState<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -369,6 +370,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   const resizeRef = useRef<ResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
+  const chatOpenRef = useRef(false);
   const chatSelectionRangeRef = useRef<Range | undefined>(undefined);
   const activeChatSelectionRef = useRef<CodeSelection | undefined>(undefined);
   const priorHighlightsRef = useRef<string[]>([]);
@@ -410,6 +412,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     requestRef.current = null;
     setLoading(false);
     setSelection(null);
+    setPendingSelection(null);
     setQuestion("");
     setTurns([]);
     setSuggestion("");
@@ -426,6 +429,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     setAnnotationDraft(null);
     setCopyStatus("");
     activeChatSelectionRef.current = undefined;
+    chatOpenRef.current = false;
     priorHighlightsRef.current = [];
   }, [sourceKey]);
 
@@ -439,8 +443,13 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
   useEffect(() => {
     if (!programmaticSelection) return;
-    // Call Flow supplies a single server-derived source line because it has no selectable code DOM.
-    setSelection((current) => ({ ...programmaticSelection, open: current?.open ?? false }));
+    // A Call Flow node stays pending until the user explicitly adds it to an open chat.
+    if (chatOpenRef.current) {
+      setPendingSelection(programmaticSelection);
+      return;
+    }
+    setPendingSelection(null);
+    setSelection({ ...programmaticSelection, open: false });
   }, [programmaticSelection]);
 
   useEffect(() => {
@@ -467,7 +476,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   }, [selection]);
 
   useEffect(() => {
-    /** Captures a non-empty diff selection without promoting it to chat context. */
+    /** Captures a non-empty diff selection while retaining the current chat's open state. */
     function captureSelection(pointer?: Point, origin?: EventTarget): void {
       const browserSelection = window.getSelection();
       const range = browserSelection ? selectedRange(browserSelection, origin) : undefined;
@@ -480,6 +489,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
 
       if (!text || !insideDiff || !range) {
+        setPendingSelection(null);
         setSelection((current) => current?.open ? current : null);
         return;
       }
@@ -487,6 +497,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       const rect = range.getBoundingClientRect();
       const triggerAnchor = pointer ?? (rect.width || rect.height ? { x: rect.right, y: rect.top } : null);
       if (!triggerAnchor) {
+        setPendingSelection(null);
         setSelection((current) => current?.open ? current : null);
         return;
       }
@@ -498,16 +509,12 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
       const nextSelection = { location: selectionLocation(range), range, text, x, y };
-      if (selection?.open) {
-        setSelection({ ...nextSelection, open: true });
+      // A chat keeps its current model context until the user explicitly adds this range.
+      if (chatOpenRef.current) {
+        setPendingSelection(nextSelection);
         return;
       }
-
-      // A closed chat keeps the highlight available for an explicit Ask Diffs action.
-      requestRef.current?.abort();
-      requestRef.current = null;
-      setLoading(false);
-      clearQueuedQuestions();
+      setPendingSelection(null);
       setSelection({ ...nextSelection, open: false });
     }
 
@@ -531,7 +538,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
-  }, [selection]);
+  }, []);
 
   useEffect(() => {
     /** Enlarges only chat text when Command-Plus originates inside the Ask Diffs panel. */
@@ -590,7 +597,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
   /** Opens a draft question for the first selected code block without sending it. */
   function openPanel(): void {
+    chatOpenRef.current = true;
     followsConversationRef.current = true;
+    setPendingSelection(null);
     setSelection((current) => current && { ...current, open: true });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -600,6 +609,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     requestRef.current?.abort();
     requestRef.current = null;
     followsConversationRef.current = true;
+    chatOpenRef.current = true;
     chatSelectionRangeRef.current = undefined;
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
@@ -610,8 +620,17 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     setAttachments([]);
     clearQueuedQuestions();
     setAttachmentError("");
+    setPendingSelection(null);
     setSelection({ open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /** Adds the pending highlighted range to the open chat without clearing its conversation. */
+  function addPendingSelection(): void {
+    if (!pendingSelection) return;
+    chatOpenRef.current = true;
+    setPendingSelection(null);
+    setSelection({ ...pendingSelection, open: true });
   }
 
   /** Opens a compact composer for a note attached to the current highlighted code. */
@@ -705,7 +724,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     requestRef.current = null;
     window.cancelAnimationFrame(momentumFrameRef.current);
     followsConversationRef.current = true;
+    chatOpenRef.current = false;
     setSelection(null);
+    setPendingSelection(null);
     setQuestion("");
     setTurns([]);
     setLoading(false);
@@ -1138,7 +1159,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     return size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  const triggerSelection = selection?.open ? undefined : selection;
+  const triggerSelection = selection?.open ? pendingSelection : selection;
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
   const annotationList = annotations.length > 0 && (
@@ -1185,8 +1206,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       {triggerSelection && !annotationDraft && (
         <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
           {aiEnabled && (
-            <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={openPanel} type="button">
-              <Plus size={13} /> <span>Ask Diffs</span>
+            <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={selection?.open ? addPendingSelection : openPanel} type="button">
+              <Plus size={13} /> <span>{selection?.open ? "Add to chat" : "Ask Diffs"}</span>
             </button>
           )}
           <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
