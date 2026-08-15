@@ -1007,11 +1007,11 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
         <div className="ai-chat-actions">
           {!triggerSelection && (
             <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
-              <Sparkles size={14} /> Ask Diffs
+              <Sparkles size={14} /> <span>Ask Diffs</span>
             </button>
           )}
           <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
-            <ClipboardCopy size={14} /> Copy Annotations
+            <ClipboardCopy size={14} /> <span>Copy Annotations</span>
           </button>
           {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
         </div>
@@ -1020,10 +1020,10 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
       {triggerSelection && !annotationDraft && (
         <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
           <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={openPanel} type="button">
-            <Plus size={13} /> Ask Diffs
+            <Plus size={13} /> <span>Ask Diffs</span>
           </button>
           <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
-            <MessageSquarePlus size={13} /> Annotate
+            <MessageSquarePlus size={13} /> <span>Annotate</span>
           </button>
         </div>
       )}
@@ -1073,7 +1073,7 @@ export function SelectionQuestion({ onRevealSelection, programmaticSelection, so
             onPointerUp={stopDragging}
             onPointerCancel={stopDragging}
           >
-            <span><Sparkles size={14} /> Ask Diffs <GripHorizontal className="drag-hint" size={13} /></span>
+            <span className="question-panel-title"><Sparkles size={14} /><span>Ask Diffs</span><GripHorizontal className="drag-hint" size={13} /></span>
             <button aria-label="Close" onClick={closePanel}><X size={15} /></button>
           </div>
 

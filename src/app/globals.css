@@ -3103,6 +3103,21 @@ button {
   font-weight: 540;
 }
 
+.selection-trigger > svg,
+.ai-chat-launch > svg,
+.copy-annotations > svg,
+.question-panel-header .question-panel-title > svg,
+.question-panel form .ask-submit > svg {
+  flex: none;
+}
+
+.selection-trigger > span,
+.ai-chat-launch > span,
+.copy-annotations > span,
+.question-panel-header .question-panel-title > span {
+  white-space: nowrap;
+}
+
 .selection-trigger:hover,
 .ai-chat-launch:hover,
 .copy-annotations:hover:not(:disabled) {
@@ -3293,7 +3308,7 @@ button {
   cursor: grabbing;
 }
 
-.question-panel-header span {
+.question-panel-header .question-panel-title {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -3301,7 +3316,7 @@ button {
   font-weight: 570;
 }
 
-.question-panel-header span svg {
+.question-panel-header .question-panel-title svg {
   color: var(--violet);
 }
 
