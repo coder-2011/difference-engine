@@ -51,6 +51,10 @@ type Annotation = {
   text: string;
 };
 
+type StoredAnnotation = Omit<Annotation, "selection"> & {
+  selection: Pick<CodeSelection, "location" | "text">;
+};
+
 type AnnotationDraft = Point & {
   selection: CodeSelection;
   text: string;
@@ -127,6 +131,53 @@ function formattedAnnotations(annotations: Annotation[]): string {
     const copiedLines = code.split("\n").map((line) => `  ${line}`);
     return [`- ${reference}${text}`, "", "  ```", ...copiedLines, "  ```"].join("\n");
   }).join("\n");
+}
+
+/** Builds a source-specific browser key so notes never leak into another review. */
+function annotationStorageKey(sourceKey: string): string {
+  return `diffs:annotations:${sourceKey}`;
+}
+
+/** Restores serializable annotations while intentionally leaving stale DOM ranges behind. */
+function storedAnnotations(sourceKey: string): Annotation[] {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(annotationStorageKey(sourceKey)) ?? "[]") as unknown;
+    if (!Array.isArray(stored)) return [];
+
+    return stored.flatMap((value): Annotation[] => {
+      if (!value || typeof value !== "object") return [];
+
+      const annotation = value as Partial<StoredAnnotation>;
+      const selection = annotation.selection;
+      const location = selection?.location;
+      if (typeof annotation.id !== "string" || typeof annotation.text !== "string" || typeof selection?.text !== "string") return [];
+      if (location && (typeof location.id !== "string" || typeof location.lineNumber !== "number")) return [];
+
+      return [{
+        id: annotation.id,
+        selection: { location, text: selection.text, x: 0, y: 0 },
+        text: annotation.text,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Saves only durable annotation data, never a browser Range that cannot survive a reload. */
+function storeAnnotations(sourceKey: string, annotations: Annotation[]): void {
+  const stored: StoredAnnotation[] = annotations.map(({ id, selection, text }) => ({
+    id,
+    selection: { location: selection.location, text: selection.text },
+    text,
+  }));
+
+  try {
+    if (stored.length) window.localStorage.setItem(annotationStorageKey(sourceKey), JSON.stringify(stored));
+    else window.localStorage.removeItem(annotationStorageKey(sourceKey));
+  } catch {
+    // The note remains usable for this page when browser storage is unavailable.
+  }
 }
 
 /** Renders a readable prompt preview that expands only when it exceeds two lines. */
@@ -326,7 +377,12 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     setSuggestion("");
     setAttachments([]);
     setAttachmentError("");
-    setAnnotations([]);
+    const restoredAnnotations = storedAnnotations(sourceKey);
+    annotationCounterRef.current = restoredAnnotations.reduce((highest, annotation) => {
+      const suffix = Number(annotation.id.replace("annotation-", ""));
+      return Number.isInteger(suffix) ? Math.max(highest, suffix) : highest;
+    }, 0);
+    setAnnotations(restoredAnnotations);
     setAnnotationDraft(null);
     setCopyStatus("");
     activeChatSelectionRef.current = undefined;
@@ -516,11 +572,16 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     if (!text) return;
 
     annotationCounterRef.current += 1;
-    setAnnotations((current) => [...current, {
+    const annotation = {
       id: `annotation-${annotationCounterRef.current}`,
       selection: codeSelection,
       text,
-    }]);
+    };
+    setAnnotations((current) => {
+      const next = [...current, annotation];
+      storeAnnotations(sourceKey, next);
+      return next;
+    });
   }
 
   /** Saves the manual annotation draft and returns the selection controls to their normal state. */
@@ -534,7 +595,11 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
 
   /** Removes an annotation without changing the underlying highlighted code selection. */
   function removeAnnotation(annotationId: string): void {
-    setAnnotations((current) => current.filter((annotation) => annotation.id !== annotationId));
+    setAnnotations((current) => {
+      const next = current.filter((annotation) => annotation.id !== annotationId);
+      storeAnnotations(sourceKey, next);
+      return next;
+    });
   }
 
   /** Copies every source reference, selected code block, and annotation in one Markdown-ready clipboard payload. */
