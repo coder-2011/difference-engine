@@ -289,7 +289,8 @@ export function DiffViewer({
     model.resetPaths(paths);
     model.setGitStatus(gitStatus);
     const selectedPath = filePath && paths.includes(filePath) ? filePath : paths[0];
-    if (selectedPath) model.getItem(selectedPath)?.select();
+    // Do not turn Files Changed's initial file into a Call Flow filter while the patch streams.
+    if (reviewViewRef.current === "files" && selectedPath) model.getItem(selectedPath)?.select();
   }, [filePath, gitStatus, model, paths]);
 
   useEffect(() => {
