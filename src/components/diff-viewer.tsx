@@ -46,6 +46,7 @@ const EMPTY_FILES: FileDiffMetadata[] = [];
 const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
 const DEFAULT_CODE_FONT_SIZE = 13;
 const MAX_CODE_FONT_SIZE = 24;
+const EAGER_CALL_FLOW_CHANGED_LINE_LIMIT = 50_000;
 
 configureDiffHighlighting();
 
@@ -87,6 +88,12 @@ export function DiffViewer({
   source,
 }: DiffViewerProps) {
   const repository = defaultBranch !== undefined;
+  const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
+  // Eagerly prepare bounded Call Flow documents alongside the initial page load.
+  const eagerCallFlow = callDiffAvailable
+    && additions !== undefined
+    && deletions !== undefined
+    && additions + deletions < EAGER_CALL_FLOW_CHANGED_LINE_LIMIT;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -96,14 +103,15 @@ export function DiffViewer({
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
-  // Keep the completed lazy analysis mounted so tab changes never restart its GitHub request.
-  const [callFlowLoaded, setCallFlowLoaded] = useState(false);
+  // Retain completed analysis for the current source without carrying it to the next review.
+  const [loadedCallFlowSource, setLoadedCallFlowSource] = useState<string>();
   const [callFlowFile, setCallFlowFile] = useState<string>();
   const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const sourceKey = source.join("\0");
+  const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
 
   // FileTree retains its first callback, so keep the current tab in a ref for its selection handler.
   useEffect(() => {
@@ -371,13 +379,12 @@ export function DiffViewer({
     `,
   }), [repository, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
-  const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
 
   /** Starts Call Flow analysis before the tab click when the tab has user focus. */
   function preloadCallFlow(): void {
-    setCallFlowLoaded(true);
+    setLoadedCallFlowSource(sourceKey);
   }
 
   const reviewTabs = callDiffAvailable && (
