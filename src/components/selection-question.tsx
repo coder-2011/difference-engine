@@ -90,6 +90,7 @@ export type ProgrammaticSelection = Point & {
 };
 
 type SelectionQuestionProps = {
+  aiEnabled: boolean;
   annotationContainerKey?: string;
   programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
@@ -100,6 +101,14 @@ type UploadedAttachment = {
   data: string;
   name: string;
   type: string;
+};
+
+type QueuedQuestion = {
+  attachments: File[];
+  id: number;
+  priorHighlights: string[];
+  question: string;
+  selection: SelectionState;
 };
 
 type PromptPreviewProps = {
@@ -333,7 +342,7 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ annotationContainerKey, onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
@@ -341,6 +350,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   const [loading, setLoading] = useState(false);
   const [suggestion, setSuggestion] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [queuedQuestions, setQueuedQuestions] = useState<QueuedQuestion[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
@@ -365,6 +375,34 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const annotationCounterRef = useRef(0);
+  const queuedQuestionsRef = useRef<QueuedQuestion[]>([]);
+  const queuedQuestionCounterRef = useRef(0);
+
+  /** Drops queued prompts whenever their selected-code context is discarded. */
+  function clearQueuedQuestions(): void {
+    queuedQuestionsRef.current = [];
+    setQueuedQuestions([]);
+  }
+
+  /** Holds a submitted prompt until the active answer has finished streaming. */
+  function queueQuestion(value: string): void {
+    const question = value.trim();
+    if (!question || !selection) return;
+
+    queuedQuestionCounterRef.current += 1;
+    const next = [...queuedQuestionsRef.current, {
+      attachments: [...attachments],
+      id: queuedQuestionCounterRef.current,
+      priorHighlights: [...priorHighlightsRef.current],
+      question,
+      selection,
+    }];
+    queuedQuestionsRef.current = next;
+    setQueuedQuestions(next);
+    setQuestion("");
+    setAttachments([]);
+    setAttachmentError("");
+  }
 
   useEffect(() => {
     // Notes and active requests belong to the current repository view and cannot be reused against a new source.
@@ -376,6 +414,8 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     setTurns([]);
     setSuggestion("");
     setAttachments([]);
+    clearQueuedQuestions();
+    queuedQuestionCounterRef.current = 0;
     setAttachmentError("");
     const restoredAnnotations = storedAnnotations(sourceKey);
     annotationCounterRef.current = restoredAnnotations.reduce((highest, annotation) => {
@@ -400,7 +440,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   useEffect(() => {
     if (!programmaticSelection) return;
     // Call Flow supplies a single server-derived source line because it has no selectable code DOM.
-    setSelection({ ...programmaticSelection, open: false });
+    setSelection((current) => ({ ...programmaticSelection, open: current?.open ?? false }));
   }, [programmaticSelection]);
 
   useEffect(() => {
@@ -408,7 +448,12 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
       chatSelectionRangeRef.current = undefined;
       return;
     }
-    if (chatSelectionRangeRef.current === selection.range) return;
+    if (
+      chatSelectionRangeRef.current === selection.range
+      && activeChatSelectionRef.current?.text === selection.text
+      && activeChatSelectionRef.current?.location?.id === selection.location?.id
+      && activeChatSelectionRef.current?.location?.lineNumber === selection.location?.lineNumber
+    ) return;
 
     const priorHighlight = activeChatSelectionRef.current?.text.trim();
     // Keep earlier highlights private until the next question directly refers to one.
@@ -416,18 +461,9 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
       priorHighlightsRef.current = [...priorHighlightsRef.current.filter((highlight) => highlight !== priorHighlight), priorHighlight]
         .slice(-MAX_PRIOR_HIGHLIGHTS);
     }
-    // A newly highlighted range makes every visible turn and pending answer stale.
+    // The new range applies to future prompts while visible answers keep their original request context.
     chatSelectionRangeRef.current = selection.range;
     activeChatSelectionRef.current = selection;
-    requestRef.current?.abort();
-    requestRef.current = null;
-    followsConversationRef.current = true;
-    setLoading(false);
-    setQuestion("");
-    setTurns([]);
-    setSuggestion("");
-    setAttachments([]);
-    setAttachmentError("");
   }, [selection]);
 
   useEffect(() => {
@@ -462,10 +498,16 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
       const nextSelection = { location: selectionLocation(range), range, text, x, y };
-      // A new highlight must be explicitly sent through Ask Diffs before it becomes chat context.
+      if (selection?.open) {
+        setSelection({ ...nextSelection, open: true });
+        return;
+      }
+
+      // A closed chat keeps the highlight available for an explicit Ask Diffs action.
       requestRef.current?.abort();
       requestRef.current = null;
       setLoading(false);
+      clearQueuedQuestions();
       setSelection({ ...nextSelection, open: false });
     }
 
@@ -489,7 +531,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
-  }, []);
+  }, [selection]);
 
   useEffect(() => {
     /** Enlarges only chat text when Command-Plus originates inside the Ask Diffs panel. */
@@ -553,12 +595,21 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  /** Opens an empty repository chat without sending a question. */
+  /** Starts a fresh empty repository chat without sending a question. */
   function openChat(): void {
+    requestRef.current?.abort();
+    requestRef.current = null;
     followsConversationRef.current = true;
     chatSelectionRangeRef.current = undefined;
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
+    setQuestion("");
+    setTurns([]);
+    setLoading(false);
+    setSuggestion("");
+    setAttachments([]);
+    clearQueuedQuestions();
+    setAttachmentError("");
     setSelection({ open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -660,6 +711,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     setLoading(false);
     setSuggestion("");
     setAttachments([]);
+    clearQueuedQuestions();
     setAttachmentError("");
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
@@ -890,12 +942,17 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     addAttachments(Array.from(event.dataTransfer.files));
   }
 
-  /** Sends one question plus prior turns and any new attachments to the repository-aware model endpoint. */
-  async function submitQuestion(value: string): Promise<void> {
+  /** Sends one question against its captured code selection, history, and attachments. */
+  async function submitQuestion(
+    value: string,
+    questionAttachments: File[],
+    questionSelection: SelectionState | null = selection,
+    questionPriorHighlights: string[] = priorHighlightsRef.current,
+  ): Promise<void> {
     const submittedQuestion = value.trim();
-    if (!selection || !submittedQuestion || requestRef.current) return;
-    const selectedCode = selection.text;
-    const annotationSelection = selectedCode ? selection : undefined;
+    if (!questionSelection || !submittedQuestion || requestRef.current) return;
+    const selectedCode = questionSelection.text;
+    const annotationSelection = selectedCode ? questionSelection : undefined;
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -949,13 +1006,10 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     }
 
     try {
-      const uploadedAttachments = await Promise.all(attachments.map(encodeAttachment));
+      const uploadedAttachments = await Promise.all(questionAttachments.map(encodeAttachment));
       // Closing the panel can abort while FileReader is still resolving an attachment.
       if (controller.signal.aborted) return;
       const attachmentNames = uploadedAttachments.map((attachment) => attachment.name);
-      setQuestion("");
-      setAttachments([]);
-      setAttachmentError("");
       setTurns((current) => [...current, {
         answer: "",
         attachments: attachmentNames,
@@ -971,7 +1025,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
           annotationSelection: annotationSelection?.text,
-          priorHighlights: priorHighlightsRef.current,
+          priorHighlights: questionPriorHighlights,
           selection: selectedCode,
           source,
         }),
@@ -1031,10 +1085,36 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     }
   }
 
+  useEffect(() => {
+    // Start exactly one queued question after the active stream has fully settled.
+    if (loading || requestRef.current) return;
+
+    const [nextQuestion, ...remainingQuestions] = queuedQuestionsRef.current;
+    if (!nextQuestion) return;
+
+    queuedQuestionsRef.current = remainingQuestions;
+    setQueuedQuestions(remainingQuestions);
+    void submitQuestion(nextQuestion.question, nextQuestion.attachments, nextQuestion.selection, nextQuestion.priorHighlights);
+  }, [loading, queuedQuestions]);
+
   /** Submits the current textarea value without a page navigation. */
   function askQuestion(event: FormEvent): void {
     event.preventDefault();
-    void submitQuestion(question);
+    const submittedQuestion = question.trim();
+    if (!submittedQuestion) return;
+
+    if (loading || requestRef.current) {
+      queueQuestion(submittedQuestion);
+      return;
+    }
+
+    const questionAttachments = attachments;
+    const questionSelection = selection;
+    const questionPriorHighlights = [...priorHighlightsRef.current];
+    setQuestion("");
+    setAttachments([]);
+    setAttachmentError("");
+    void submitQuestion(submittedQuestion, questionAttachments, questionSelection, questionPriorHighlights);
   }
 
   /** Changes only the Ask Diffs text scale within its readable bounds. */
@@ -1089,7 +1169,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
     <>
       {annotationList && annotationSidebar && createPortal(annotationList, annotationSidebar)}
 
-      {!selection?.open && (
+      {!selection?.open && aiEnabled && (
         <div className="ai-chat-actions">
           {!triggerSelection && (
             <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
@@ -1104,9 +1184,11 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
 
       {triggerSelection && !annotationDraft && (
         <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
-          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={openPanel} type="button">
-            <Plus size={13} /> <span>Ask Diffs</span>
-          </button>
+          {aiEnabled && (
+            <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={openPanel} type="button">
+              <Plus size={13} /> <span>Ask Diffs</span>
+            </button>
+          )}
           <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
             <MessageSquarePlus size={13} /> <span>Annotate</span>
           </button>
@@ -1178,7 +1260,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
             </div>
           )}
 
-          {(turns.length > 0 || loading) && (
+          {(turns.length > 0 || queuedQuestions.length > 0 || loading) && (
             <div className="conversation" ref={conversationRef}>
               {turns.map((turn, index) => (
                 <article className="chat-turn" key={`${turn.question}-${index}`}>
@@ -1196,6 +1278,11 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
                         <span />
                       </div>
                     )}
+                </article>
+              ))}
+              {queuedQuestions.map((queuedQuestion) => (
+                <article className="chat-turn queued-chat-turn" key={queuedQuestion.id}>
+                  <div className="queued-question">{queuedQuestion.question}</div>
                 </article>
               ))}
             </div>
@@ -1254,8 +1341,8 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
             <label aria-label="Attach files" className="attach-file" htmlFor="chat-attachment-picker">
               <Paperclip size={14} />
             </label>
-            <button className="ask-submit" disabled={loading || !question.trim()}>
-              {loading ? "Thinking…" : <><span>Ask</span><CornerDownLeft size={13} /></>}
+            <button className="ask-submit" disabled={!question.trim()}>
+              <span>Ask</span><CornerDownLeft size={13} />
             </button>
           </form>
           <div aria-hidden="true" className="question-panel-resize-handles">

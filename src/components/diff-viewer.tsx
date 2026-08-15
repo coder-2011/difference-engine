@@ -460,7 +460,7 @@ export function DiffViewer({
         </div>
       </div>
       </>}
-      {openAIConnected && <SelectionQuestion annotationContainerKey={`${reviewView}-${sidebarOpen}`} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />}
+      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />
     </section>
   );
 }
