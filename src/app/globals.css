@@ -3000,6 +3000,10 @@ button {
   min-height: 520px;
 }
 
+.viewer-body[hidden] {
+  display: none;
+}
+
 .diff-workspace.has-review-tabs .viewer-body {
   height: calc(100vh - 136px);
 }
