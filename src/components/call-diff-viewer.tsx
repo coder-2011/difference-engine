@@ -36,6 +36,8 @@ type SyntaxToken = {
   content: string;
 };
 
+type CallDiffDisplayStatus = "added" | "changed" | "removed" | "same";
+
 /** Builds a viewer link for the exact source revision and location used by one call-tree node. */
 function sourceLocationUrl(source: string[], ref: string, file: string, line: number): string {
   const repository = source.slice(0, 2).map(encodeURIComponent).join("/");
@@ -46,6 +48,24 @@ function sourceLocationUrl(source: string[], ref: string, file: string, line: nu
 /** Checks whether a call tree retains context from the selected changed file. */
 function treeTouchesFile(node: CallDiffNode, file: string): boolean {
   return node.file === file || node.children.some((child) => treeTouchesFile(child, file));
+}
+
+/** Colors retained parents by the added and removed calls they contain. */
+function displayStatus(node: CallDiffNode): CallDiffDisplayStatus {
+  if (node.status !== "same") return node.status;
+
+  const childStatuses = node.children.map(displayStatus);
+  const hasAdded = childStatuses.some((status) => status === "added" || status === "changed");
+  const hasRemoved = childStatuses.some((status) => status === "removed" || status === "changed");
+  if (hasAdded && hasRemoved) return "changed";
+  if (hasAdded) return "added";
+  if (hasRemoved) return "removed";
+  return "same";
+}
+
+/** Keeps only call-tree branches that lead to a changed call. */
+function treeHasChanges(node: CallDiffNode): boolean {
+  return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
 /** Renders a Call Flow source line with the same shared Shiki theme as the main diff. */
@@ -94,6 +114,8 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
   const ref = node.status === "removed" ? fromRef : toRef;
   const location = `${node.file}:${node.line}`;
   const sourceLine = node.snippet.trim() || node.label;
+  const status = displayStatus(node);
+  const children = node.children.filter(treeHasChanges);
 
   /** Places one Call Flow source line into the existing annotation and Ask Diffs selection flow. */
   function selectNode(event: ReactMouseEvent<HTMLButtonElement>): void {
@@ -107,9 +129,9 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
   }
 
   return (
-    <li className={`call-diff-node ${node.kind} ${node.status}`}>
+    <li className={`call-diff-node ${node.kind} ${status}`}>
       <div className="call-diff-node-line">
-        <span aria-label={node.status === "same" ? "unchanged call" : `${node.status} call`} className="call-diff-status" />
+        <span aria-label={status === "same" ? "unchanged call" : status === "changed" ? "added and removed calls" : `${status} call`} className="call-diff-status" />
         {onSelect ? (
           <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
             <HighlightedCallCode file={node.file} text={sourceLine} />
@@ -123,9 +145,9 @@ function CallDiffNodeRow({ collapsed, fromRef, node, onSelect, source, toRef }: 
         )}
         {onSelect && <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}><ExternalLink size={12} /></a>}
       </div>
-      {!collapsed && node.children.length > 0 && (
+      {!collapsed && children.length > 0 && (
         <ol>
-          {node.children.map((child, index) => (
+          {children.map((child, index) => (
             <CallDiffNodeRow collapsed={collapsed} fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} onSelect={onSelect} source={source} toRef={toRef} />
           ))}
         </ol>

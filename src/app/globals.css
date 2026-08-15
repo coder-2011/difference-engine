@@ -2450,6 +2450,7 @@ button {
 
 .call-flow-body .call-diff-viewer {
   display: flex;
+  grid-area: content;
   width: 100%;
   min-width: 0;
   min-height: 0;
@@ -2457,6 +2458,19 @@ button {
   margin: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* Keep Call Flow in the content track when responsive CSS hides the sidebar. */
+.call-flow-body {
+  grid-template-areas: "sidebar content";
+}
+
+.call-flow-body .file-sidebar {
+  grid-area: sidebar;
+}
+
+.call-flow-body.sidebar-closed {
+  grid-template-areas: "content";
 }
 
 .call-flow-body .call-diff-toolbar {
@@ -2618,6 +2632,14 @@ button {
 
 .call-diff-node.removed > .call-diff-node-line code {
   color: #e7abb5;
+}
+
+.call-diff-node.changed > .call-diff-node-line {
+  background: linear-gradient(90deg, rgb(74 222 128 / 0.045), rgb(251 113 133 / 0.045));
+}
+
+.call-diff-node.changed > .call-diff-node-line .call-diff-status {
+  background: linear-gradient(135deg, var(--green) 0 50%, var(--red) 50%);
 }
 
 .call-diff-loading,
@@ -4106,6 +4128,10 @@ button {
 
   .viewer-body.sidebar-closed {
     grid-template-columns: minmax(620px, 1fr);
+  }
+
+  .call-flow-body {
+    grid-template-areas: "content";
   }
 
   .file-sidebar,
