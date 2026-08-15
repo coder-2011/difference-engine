@@ -406,8 +406,6 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   useEffect(() => {
     if (!selection?.open) {
       chatSelectionRangeRef.current = undefined;
-      activeChatSelectionRef.current = undefined;
-      priorHighlightsRef.current = [];
       return;
     }
     if (chatSelectionRangeRef.current === selection.range) return;
@@ -433,7 +431,7 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   }, [selection]);
 
   useEffect(() => {
-    /** Captures a non-empty diff selection and replaces the chat's current code context. */
+    /** Captures a non-empty diff selection without promoting it to chat context. */
     function captureSelection(pointer?: Point, origin?: EventTarget): void {
       const browserSelection = window.getSelection();
       const range = browserSelection ? selectedRange(browserSelection, origin) : undefined;
@@ -464,7 +462,11 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
       const nextSelection = { location: selectionLocation(range), range, text, x, y };
-      setSelection((current) => ({ ...nextSelection, open: current?.open ?? false }));
+      // A new highlight must be explicitly sent through Ask Diffs before it becomes chat context.
+      requestRef.current?.abort();
+      requestRef.current = null;
+      setLoading(false);
+      setSelection({ ...nextSelection, open: false });
     }
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
@@ -554,6 +556,9 @@ export function SelectionQuestion({ annotationContainerKey, onRevealSelection, p
   /** Opens an empty repository chat without sending a question. */
   function openChat(): void {
     followsConversationRef.current = true;
+    chatSelectionRangeRef.current = undefined;
+    activeChatSelectionRef.current = undefined;
+    priorHighlightsRef.current = [];
     setSelection({ open: true, text: "", x: 0, y: 0 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
