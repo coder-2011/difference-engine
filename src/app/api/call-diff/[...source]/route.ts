@@ -3,6 +3,14 @@ import { getCallDiffDocument } from "@/lib/call-diff";
 import { GitHubError } from "@/lib/github";
 import { getGitHubAccessToken } from "@/lib/session";
 
+// calldiff uses native Tree-sitter bindings and cannot run in the Edge runtime.
+export const runtime = "nodejs";
+
+// Vercel functions reserve writable storage for /tmp, while calldiff caches optional grammars on disk.
+if (process.env.VERCEL && !process.env.CALLDIFF_GRAMMAR_CACHE) {
+  process.env.CALLDIFF_GRAMMAR_CACHE = "/tmp/calldiff-grammars";
+}
+
 type RouteContext = {
   params: Promise<{ source: string[] }>;
 };
