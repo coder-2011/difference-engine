@@ -374,10 +374,16 @@ export function DiffViewer({
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
+
+  /** Starts Call Flow analysis before the tab click when the tab has user focus. */
+  function preloadCallFlow(): void {
+    setCallFlowLoaded(true);
+  }
+
   const reviewTabs = callDiffAvailable && (
     <div aria-label="Review view" className="review-tabs" role="tablist">
       <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
-      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { setCallFlowLoaded(true); setReviewView("call-flow"); }} role="tab" type="button"><Network size={13} /> Call flow</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { preloadCallFlow(); setReviewView("call-flow"); }} onFocus={preloadCallFlow} onPointerEnter={preloadCallFlow} role="tab" type="button"><Network size={13} /> Call flow</button>
     </div>
   );
   const fileSidebar = (

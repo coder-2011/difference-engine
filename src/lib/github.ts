@@ -1425,8 +1425,33 @@ async function getCallDiffFileText(encodedRepository: string, path: string, ref:
   }
 }
 
+/** Fetches the before and after snapshots for one changed Call Flow source file. */
+async function getCallDiffFileSnapshot(
+  encodedRepository: string,
+  file: PullRequestFile,
+  fromRef: string,
+  toRef: string,
+  token?: string,
+): Promise<CallDiffSource["files"][number]> {
+  const beforePath = file.status === "added" ? undefined : file.previous_filename ?? file.filename;
+  const afterPath = file.status === "removed" ? undefined : file.filename;
+  const [before, after] = await Promise.all([
+    beforePath ? getCallDiffFileText(encodedRepository, beforePath, fromRef, token) : undefined,
+    afterPath ? getCallDiffFileText(encodedRepository, afterPath, toRef, token) : undefined,
+  ]);
+  return {
+    after: after && afterPath ? { path: afterPath, text: after } : undefined,
+    before: before && beforePath ? { path: beforePath, text: before } : undefined,
+    key: afterPath ?? beforePath ?? file.filename,
+  };
+}
+
 /** Pages through changed PR files until the bounded source-analysis budget is full. */
-async function getPullRequestCallDiffFiles(apiPath: string, token?: string): Promise<{ files: PullRequestFile[]; ignoredFiles: number; truncated: boolean }> {
+async function getPullRequestCallDiffFiles(
+  apiPath: string,
+  token?: string,
+  onCandidate?: (file: PullRequestFile) => void,
+): Promise<{ files: PullRequestFile[]; ignoredFiles: number; truncated: boolean }> {
   const files: PullRequestFile[] = [];
   let ignoredFiles = 0;
   const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
@@ -1440,6 +1465,7 @@ async function getPullRequestCallDiffFiles(apiPath: string, token?: string): Pro
       }
       if (files.length === fileLimit) return { files, ignoredFiles, truncated: true };
       files.push(file);
+      onCandidate?.(file);
     }
     if (batch.length < 100) return { files, ignoredFiles, truncated: false };
   }
@@ -1469,6 +1495,7 @@ function getCompareCallDiffFiles(comparison: Compare, token?: string): { files: 
 /** Fetches the two revision snapshots required for a changed-file call-flow comparison. */
 export async function getCallDiffSource(source: string[], token?: string): Promise<CallDiffSource> {
   const parsed = parseSource(source);
+  const snapshotPromises = new Map<PullRequestFile, Promise<CallDiffSource["files"][number]>>();
   let fromRef: string;
   let toRef: string;
   let candidateFiles: PullRequestFile[];
@@ -1476,11 +1503,17 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
   let truncated: boolean;
 
   if (parsed.kind === "pull") {
-    // The pull metadata and changed-file list are independent GitHub requests.
-    const [pullRequest, candidates] = await Promise.all([
-      githubRequest<PullRequest>(parsed.apiPath, token),
-      getPullRequestCallDiffFiles(parsed.apiPath, token),
-    ]);
+    // Begin each eligible source snapshot as soon as its page identifies it, while later pages keep loading.
+    const pullRequestPromise = githubRequest<PullRequest>(parsed.apiPath, token);
+    const candidatesPromise = getPullRequestCallDiffFiles(parsed.apiPath, token, (file) => {
+      const snapshot = pullRequestPromise.then((pullRequest) =>
+        getCallDiffFileSnapshot(parsed.encodedRepository, file, pullRequest.base.sha, pullRequest.head.sha, token),
+      );
+      // Keep failures for the final Promise.all without reporting an unhandled rejection during pagination.
+      void snapshot.catch(() => undefined);
+      snapshotPromises.set(file, snapshot);
+    });
+    const [pullRequest, candidates] = await Promise.all([pullRequestPromise, candidatesPromise]);
     fromRef = pullRequest.base.sha;
     toRef = pullRequest.head.sha;
     candidateFiles = candidates.files;
@@ -1499,19 +1532,9 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
     throw new GitHubError("Call flow is available for pull requests and comparisons", 400);
   }
 
-  const snapshots = await Promise.all(candidateFiles.map(async (file) => {
-    const beforePath = file.status === "added" ? undefined : file.previous_filename ?? file.filename;
-    const afterPath = file.status === "removed" ? undefined : file.filename;
-    const [before, after] = await Promise.all([
-      beforePath ? getCallDiffFileText(parsed.encodedRepository, beforePath, fromRef, token) : undefined,
-      afterPath ? getCallDiffFileText(parsed.encodedRepository, afterPath, toRef, token) : undefined,
-    ]);
-    return {
-      after: after && afterPath ? { path: afterPath, text: after } : undefined,
-      before: before && beforePath ? { path: beforePath, text: before } : undefined,
-      key: afterPath ?? beforePath ?? file.filename,
-    };
-  }));
+  const snapshots = await Promise.all(candidateFiles.map((file) =>
+    snapshotPromises.get(file) ?? getCallDiffFileSnapshot(parsed.encodedRepository, file, fromRef, toRef, token),
+  ));
 
   const files = snapshots.filter((file) => {
     if (file.before || file.after) return true;
