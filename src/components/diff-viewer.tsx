@@ -46,7 +46,6 @@ const EMPTY_FILES: FileDiffMetadata[] = [];
 const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
 const DEFAULT_CODE_FONT_SIZE = 13;
 const MAX_CODE_FONT_SIZE = 24;
-const EAGER_CALL_FLOW_CHANGED_LINE_LIMIT = 50_000;
 
 configureDiffHighlighting();
 
@@ -89,11 +88,6 @@ export function DiffViewer({
 }: DiffViewerProps) {
   const repository = defaultBranch !== undefined;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
-  // Eagerly prepare bounded Call Flow documents alongside the initial page load.
-  const eagerCallFlow = callDiffAvailable
-    && additions !== undefined
-    && deletions !== undefined
-    && additions + deletions < EAGER_CALL_FLOW_CHANGED_LINE_LIMIT;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -111,7 +105,7 @@ export function DiffViewer({
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const sourceKey = source.join("\0");
-  const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
+  const callFlowLoaded = loadedCallFlowSource === sourceKey;
 
   // FileTree retains its first callback, so keep the current tab in a ref for its selection handler.
   useEffect(() => {
@@ -382,15 +376,10 @@ export function DiffViewer({
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
 
-  /** Starts Call Flow analysis before the tab click when the tab has user focus. */
-  function preloadCallFlow(): void {
-    setLoadedCallFlowSource(sourceKey);
-  }
-
   const reviewTabs = callDiffAvailable && (
     <div aria-label="Review view" className="review-tabs" role="tablist">
       <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
-      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { preloadCallFlow(); setReviewView("call-flow"); }} onFocus={preloadCallFlow} onPointerEnter={preloadCallFlow} role="tab" type="button"><Network size={13} /> Call flow</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { setLoadedCallFlowSource(sourceKey); setReviewView("call-flow"); }} role="tab" type="button"><Network size={13} /> Call flow</button>
     </div>
   );
   const fileSidebar = (
