@@ -3078,9 +3078,10 @@ button {
 }
 
 .annotation-sidebar {
-  height: 184px;
-  flex: none;
-  overflow: hidden;
+  max-height: 30%;
+  min-height: 0;
+  flex: 0 1 auto;
+  overflow-y: auto;
   border-top: 1px solid var(--line-soft);
 }
 
@@ -3391,19 +3392,20 @@ button {
   flex: none;
   max-height: 96px;
   padding: 10px 12px;
-  overflow-y: auto;
+  overflow: auto;
   border-bottom: 1px solid var(--line-soft);
   background: #0d0d0e;
   color: #78787e;
   font-family: var(--font-mono);
   font-size: calc(var(--chat-font-size) * 0.75);
   line-height: 1.45;
-  white-space: pre-wrap;
+  white-space: pre;
 }
 
 .selected-snippet-item {
   display: block;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3412,7 +3414,7 @@ button {
   font: inherit;
   line-height: inherit;
   text-align: left;
-  white-space: pre-wrap;
+  white-space: pre;
 }
 
 .selected-snippet-item:hover,
@@ -3427,8 +3429,7 @@ button {
 }
 
 .annotation-list {
-  height: 100%;
-  overflow-y: auto;
+  min-height: 100%;
   background: #121015;
   --chat-font-size: 12px;
 }
@@ -3598,6 +3599,23 @@ button {
 .chat-turn:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.chat-turn.queued-chat-turn {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.queued-question {
+  padding: 7px 9px;
+  border: 1px solid #2e2e33;
+  border-radius: 6px;
+  background: #19191b;
+  color: #77747d;
+  font-size: calc(var(--chat-font-size) * 0.92);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .asked-question-wrap {
@@ -3909,6 +3927,7 @@ button {
 }
 
 .question-suggestion > span {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
