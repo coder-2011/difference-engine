@@ -1192,11 +1192,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
       {!selection?.open && aiEnabled && (
         <div className="ai-chat-actions">
-          {!triggerSelection && (
-            <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
-              <Sparkles size={14} /> <span>Ask Diffs</span>
-            </button>
-          )}
+          <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
+            <Sparkles size={14} /> <span>Ask Diffs</span>
+          </button>
           {!annotationSidebar && <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
             <ClipboardCopy size={14} /> <span>Copy Annotations</span>
           </button>}
@@ -1205,14 +1203,21 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
       {triggerSelection && !annotationDraft && (
         <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
+          {selection?.open && (
+            <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
+              <MessageSquarePlus size={13} /> <span>Annotate</span>
+            </button>
+          )}
           {aiEnabled && (
             <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={selection?.open ? addPendingSelection : openPanel} type="button">
               <Plus size={13} /> <span>{selection?.open ? "Add to chat" : "Ask Diffs"}</span>
             </button>
           )}
-          <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
-            <MessageSquarePlus size={13} /> <span>Annotate</span>
-          </button>
+          {!selection?.open && (
+            <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
+              <MessageSquarePlus size={13} /> <span>Annotate</span>
+            </button>
+          )}
         </div>
       )}
 
