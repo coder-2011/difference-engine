@@ -3080,7 +3080,7 @@ button {
 .annotation-sidebar {
   max-height: 30%;
   min-height: 0;
-  flex: 0 1 auto;
+  flex: none;
   overflow-y: auto;
   border-top: 1px solid var(--line-soft);
 }
