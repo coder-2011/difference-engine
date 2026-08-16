@@ -40,6 +40,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
   const githubConnected = await isGitHubConnected(accessToken);
   const githubSignedOut = Boolean(accessToken && !githubConnected);
   const githubToken = githubConnected ? accessToken : undefined;
+  const sourceKey = JSON.stringify(source);
   const callbackUrl = `/${source.map(encodeURIComponent).join("/")}`;
 
   let document;
@@ -108,6 +109,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         defaultBranch={document.defaultBranch}
         deletions={document.deletions}
         filePath={document.filePath}
+        key={sourceKey}
         openAIConnected={openAIConnected}
         repositoryRef={document.repositoryRef}
         reviewThreads={document.pullRequest?.reviewThreads}

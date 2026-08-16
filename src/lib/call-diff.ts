@@ -127,7 +127,7 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
     files.push({
       additions: file.additions,
       deletions: file.deletions,
-      entries: visibleEntries.map(({ exported: _exported, ...entry }) => entry),
+      entries: visibleEntries.map((entry) => ({ key: entry.key, tree: entry.tree })),
       path: file.key,
     });
   }

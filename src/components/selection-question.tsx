@@ -150,6 +150,13 @@ type QueuedQuestion = {
   selection: SelectionState;
 };
 
+type SubmitQuestion = (
+  value: string,
+  questionAttachments: File[],
+  questionSelection?: SelectionState | null,
+  questionPriorHighlights?: string[],
+) => Promise<void>;
+
 type PromptPreviewProps = {
   question: string;
 };
@@ -488,6 +495,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const [chatFontSize, setChatFontSize] = useState(storedChatFontSize);
   // Keep the user-visible scale anchored to the default Ask Diffs text size.
   const chatZoomPercent = Math.round((chatFontSize / DEFAULT_CHAT_FONT_SIZE) * 100);
+  const conversationActive = Boolean(turns.length || loading);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationStorageSource, setAnnotationStorageSource] = useState<string>();
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
@@ -521,6 +529,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const lastResumedChatSequenceRef = useRef<number | undefined>(undefined);
   const queuedQuestionsRef = useRef<QueuedQuestion[]>([]);
   const queuedQuestionCounterRef = useRef(0);
+  // The queue effect must always submit through the handler from the current render.
+  const submitQuestionRef = useRef<SubmitQuestion | undefined>(undefined);
 
   /** Drops queued prompts whenever their selected-code context is discarded. */
   function clearQueuedQuestions(): void {
@@ -607,35 +617,39 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     // Notes and active requests belong to the current repository view and cannot be reused against a new source.
     requestRef.current?.abort();
     requestRef.current = null;
-    setLoading(false);
-    setSelection(null);
-    setPendingSelection(null);
-    setQuestion("");
-    setTurns([]);
-    setSuggestion("");
-    setAttachments([]);
-    clearQueuedQuestions();
-    queuedQuestionCounterRef.current = 0;
-    setAttachmentError("");
-    const restoredAnnotations = storedAnnotations(sourceKey);
-    annotationCounterRef.current = restoredAnnotations.reduce((highest, annotation) => {
-      const suffix = Number(annotation.id.replace("annotation-", ""));
-      return Number.isInteger(suffix) ? Math.max(highest, suffix) : highest;
-    }, 0);
-    setAnnotations(restoredAnnotations);
-    setAnnotationStorageSource(sourceKey);
-    setAnnotationDraft(null);
-    setCopyStatus("");
-    setGithubAnnotationConfirmation(undefined);
-    setGithubAnnotationError("");
-    setGithubAnnotationPending(undefined);
-    activeChatIdRef.current = undefined;
-    chatCounterRef.current = 0;
-    chatSessionsRef.current.clear();
-    setChatMarkers([]);
-    activeChatSelectionRef.current = undefined;
-    chatOpenRef.current = false;
-    priorHighlightsRef.current = [];
+    const frame = window.requestAnimationFrame(() => {
+      setLoading(false);
+      setSelection(null);
+      setPendingSelection(null);
+      setQuestion("");
+      setTurns([]);
+      setSuggestion("");
+      setAttachments([]);
+      clearQueuedQuestions();
+      queuedQuestionCounterRef.current = 0;
+      setAttachmentError("");
+      const restoredAnnotations = storedAnnotations(sourceKey);
+      annotationCounterRef.current = restoredAnnotations.reduce((highest, annotation) => {
+        const suffix = Number(annotation.id.replace("annotation-", ""));
+        return Number.isInteger(suffix) ? Math.max(highest, suffix) : highest;
+      }, 0);
+      setAnnotations(restoredAnnotations);
+      setAnnotationStorageSource(sourceKey);
+      setAnnotationDraft(null);
+      setCopyStatus("");
+      setGithubAnnotationConfirmation(undefined);
+      setGithubAnnotationError("");
+      setGithubAnnotationPending(undefined);
+      activeChatIdRef.current = undefined;
+      chatCounterRef.current = 0;
+      chatSessionsRef.current.clear();
+      setChatMarkers([]);
+      activeChatSelectionRef.current = undefined;
+      chatOpenRef.current = false;
+      priorHighlightsRef.current = [];
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [sourceKey]);
 
   useEffect(() => {
@@ -854,7 +868,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       scroller.removeEventListener("scroll", updateFollowState);
       scroller.removeEventListener("wheel", stopFollowingOnWheel);
     };
-  }, [Boolean(turns.length || loading)]);
+  }, [conversationActive]);
 
   /** Opens a draft question for the first selected code block without sending it. */
   function openPanel(): void {
@@ -1428,6 +1442,10 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   }
 
   useEffect(() => {
+    submitQuestionRef.current = submitQuestion;
+  });
+
+  useEffect(() => {
     // Start exactly one queued question after the active stream has fully settled.
     if (loading || requestRef.current) return;
 
@@ -1436,7 +1454,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
     queuedQuestionsRef.current = remainingQuestions;
     setQueuedQuestions(remainingQuestions);
-    void submitQuestion(nextQuestion.question, nextQuestion.attachments, nextQuestion.selection, nextQuestion.priorHighlights);
+    void submitQuestionRef.current?.(nextQuestion.question, nextQuestion.attachments, nextQuestion.selection, nextQuestion.priorHighlights);
   }, [loading, queuedQuestions]);
 
   /** Submits the current textarea value without a page navigation. */

@@ -153,9 +153,14 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
   const [collapsed, setCollapsed] = useState(false);
   const [rawCallDiffCopyStatus, setRawCallDiffCopyStatus] = useState("");
 
+  /** Resets the visible request state before fetching this source again. */
+  function retryCallDiff(): void {
+    setState({ status: "loading" });
+    setRetry((value) => value + 1);
+  }
+
   useEffect(() => {
     const controller = new AbortController();
-    setState({ status: "loading" });
 
     /** Reads the server-only analysis once and ignores a response from a superseded review. */
     async function loadCallDiff(): Promise<void> {
@@ -184,7 +189,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
       <section className="call-diff-error">
         <AlertCircle size={18} />
         <div><strong>Couldn’t trace this call flow</strong><span>{state.error}</span></div>
-        <button onClick={() => setRetry((value) => value + 1)} type="button"><RefreshCw size={13} /> Retry</button>
+        <button onClick={retryCallDiff} type="button"><RefreshCw size={13} /> Retry</button>
       </section>
     );
   }

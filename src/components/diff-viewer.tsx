@@ -299,13 +299,10 @@ export function DiffViewer({
   }, [callDiffAvailable, loadCallFlow]);
 
   useEffect(() => {
+    // DiffPage keys this viewer by source, so a worker always starts from the initial empty state.
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
     let grammarPreloadStarted = false;
-
-    setError("");
-    setParsedFiles(undefined);
-    setRepositoryFiles(undefined);
 
     /** Starts the first needed grammar load without delaying already-parsed files. */
     function preloadInitialGrammar<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[]): void {
@@ -635,7 +632,7 @@ export function DiffViewer({
       {callFlowLoaded && (
         <div aria-labelledby="call-flow-review-tab" className={`call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
           {showingCallDiff && fileSidebar}
-          <CallDiffViewer onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
+          <CallDiffViewer key={sourceKey} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
         </div>
       )}
       {!showingCallDiff && <>

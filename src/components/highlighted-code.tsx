@@ -126,15 +126,10 @@ export function HighlightedCode({ block = false, children, className, ...props }
   const [highlighted, setHighlighted] = useState<HighlightedResult | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
     const highlightedLanguage = language;
+    if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) return;
 
-    if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) {
-      setHighlighted(null);
-      return () => {
-        cancelled = true;
-      };
-    }
+    let cancelled = false;
 
     void highlightCode(deferredSource, highlightedLanguage)
       .then((html) => {
