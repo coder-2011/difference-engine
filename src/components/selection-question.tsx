@@ -8,6 +8,7 @@ import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPoint
 import { createPortal } from "react-dom";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
+import { isInteger, isRecord, isString, type JsonValue } from "@/lib/json";
 import {
   MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_ATTACHMENT_BYTES,
@@ -119,6 +120,8 @@ type ResizeState = Point & {
   width: number;
 };
 
+type ChatPanelStyle = CSSProperties & { "--chat-font-size": string };
+
 export type ProgrammaticSelection = Point & {
   location: CodeSelectionLocation;
   text: string;
@@ -128,6 +131,7 @@ type SelectionQuestionProps = {
   aiEnabled: boolean;
   annotationContainerKey?: string;
   annotationPaths: string[];
+  githubConnected: boolean;
   onAnnotationsChange?: (annotations: LocalAnnotationMarker[]) => void;
   onChatMarkersChange?: (markers: ChatMarker[]) => void;
   programmaticSelection?: ProgrammaticSelection;
@@ -181,6 +185,12 @@ type AnnotationSnippetProps = {
 type SnippetToken = {
   color?: string;
   content: string;
+};
+
+type SnippetHighlight = {
+  language: string;
+  source: string;
+  tokens: SnippetToken[][];
 };
 
 /** Builds a GitHub-style patch fragment from one copied annotation. */
@@ -239,25 +249,39 @@ function annotationStorageKey(sourceKey: string): string {
   return `diffs:annotations:${sourceKey}`;
 }
 
+/** Parses one persisted annotation location before returning it to the live code-selection model. */
+function storedLocation(value: JsonValue | undefined): CodeSelectionLocation | null | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+
+  const endLineNumber = value.endLineNumber;
+  const endSide = value.endSide;
+  const id = value.id;
+  const lineNumber = value.lineNumber;
+  const side = value.side;
+  if (!isString(id) || !isInteger(lineNumber)) return null;
+  if (side !== undefined && side !== "additions" && side !== "deletions") return null;
+  if (endSide !== undefined && endSide !== "additions" && endSide !== "deletions") return null;
+  if (endLineNumber !== undefined && !isInteger(endLineNumber)) return null;
+
+  return { endLineNumber, endSide, id, lineNumber, side };
+}
+
 /** Restores serializable annotations while intentionally leaving stale DOM ranges behind. */
 function storedAnnotations(sourceKey: string): Annotation[] {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(annotationStorageKey(sourceKey)) ?? "[]") as unknown;
+    const stored: JsonValue = JSON.parse(window.localStorage.getItem(annotationStorageKey(sourceKey)) ?? "[]");
     if (!Array.isArray(stored)) return [];
 
-    return stored.flatMap((value): Annotation[] => {
-      if (!value || typeof value !== "object") return [];
-
-      const annotation = value as Partial<StoredAnnotation>;
-      const selection = annotation.selection;
-      const location = selection?.location;
-      if (typeof annotation.id !== "string" || typeof annotation.text !== "string" || typeof selection?.text !== "string") return [];
-      if (location && (typeof location.id !== "string" || typeof location.lineNumber !== "number")) return [];
+    return stored.flatMap((value: JsonValue): Annotation[] => {
+      if (!isRecord(value) || !isString(value.id) || !isString(value.text) || !isRecord(value.selection) || !isString(value.selection.text)) return [];
+      const location = storedLocation(value.selection.location);
+      if (location === null) return [];
 
       return [{
-        id: annotation.id,
-        selection: { location, text: selection.text, x: 0, y: 0 },
-        text: annotation.text,
+        id: value.id,
+        selection: { location, text: value.selection.text, x: 0, y: 0 },
+        text: value.text,
       }];
     });
   } catch {
@@ -356,7 +380,7 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const id = root instanceof ShadowRoot ? root.querySelector("[data-title]")?.textContent?.trim() : "";
   // A missing data-line attribute must not coerce to line zero.
   const lineAttribute = line?.getAttribute("data-line");
-  if (!id || typeof lineAttribute !== "string") return undefined;
+  if (!id || !isString(lineAttribute)) return undefined;
 
   // Only a range ending before the line's content excludes that line.
   if (range.endOffset === 0 && endLine) {
@@ -375,7 +399,7 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   if (!Number.isInteger(lineNumber)) return undefined;
 
   const endLineAttribute = endLine?.getAttribute("data-line");
-  const endLineNumber = typeof endLineAttribute === "string" ? Number(endLineAttribute) : undefined;
+  const endLineNumber = isString(endLineAttribute) ? Number(endLineAttribute) : undefined;
   const lineType = line?.getAttribute("data-line-type");
   const endLineType = endLine?.getAttribute("data-line-type");
   const side = lineType === "change-addition" ? "additions" : lineType === "change-deletion" ? "deletions" : undefined;
@@ -391,13 +415,16 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
 
 /** Renders plain code until hover or focus requests cached Pierre syntax tokens. */
 function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouseLeave }: SyntaxSnippetProps) {
-  const [tokens, setTokens] = useState<SnippetToken[][]>();
+  const [highlighted, setHighlighted] = useState<SnippetHighlight>();
+  const language = codeSelection.location ? getFiletypeFromFileName(codeSelection.location.id) : undefined;
+  const tokens = highlighted && highlighted.language === language && highlighted.source === codeSelection.text
+    ? highlighted.tokens
+    : undefined;
 
   useEffect(() => {
-    if (!active || tokens || !codeSelection.location) return;
+    if (!active || !language || tokens) return;
 
     let cancelled = false;
-    const language = getFiletypeFromFileName(codeSelection.location.id);
     void getSharedHighlighter({
       langs: [language],
       preferredHighlighter: "shiki-wasm",
@@ -406,7 +433,7 @@ function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouse
       lang: language,
       theme: "pierre-dark",
     })).then((result) => {
-      if (!cancelled) setTokens(result.tokens);
+      if (!cancelled) setHighlighted({ language, source: codeSelection.text, tokens: result.tokens });
     }).catch(() => {
       // The plain snippet remains usable if this file's grammar cannot load.
     });
@@ -414,7 +441,7 @@ function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouse
     return () => {
       cancelled = true;
     };
-  }, [active, codeSelection.location, codeSelection.text, tokens]);
+  }, [active, codeSelection.text, language, tokens]);
 
   return (
     <span className={className} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
@@ -479,7 +506,7 @@ function AnnotationSnippet({ codeSelection }: AnnotationSnippetProps) {
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, onAnnotationsChange, onChatMarkersChange, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, githubConnected, onAnnotationsChange, onChatMarkersChange, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -901,12 +928,13 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  /** Adds the pending highlighted range to the open chat without clearing its conversation. */
+  /** Adds the pending highlighted range to the open chat, preserves its conversation, and focuses the composer. */
   function addPendingSelection(): void {
     if (!pendingSelection) return;
     chatOpenRef.current = true;
     setPendingSelection(null);
     setSelection({ ...pendingSelection, open: true });
+    window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   /** Opens a compact composer for a note attached to the current highlighted code. */
@@ -937,10 +965,10 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
   /** Stores a source-validated annotation emitted by Ask Diffs without requiring an active selection. */
   function addModelAnnotation(annotation: Partial<ModelAnnotation>): void {
-    const path = typeof annotation.path === "string" ? annotation.path.trim() : "";
+    const path = isString(annotation.path) ? annotation.path.trim() : "";
     const line = annotation.line;
-    const text = typeof annotation.text === "string" ? annotation.text.trim() : "";
-    if (!path || typeof annotation.code !== "string" || typeof line !== "number" || !Number.isInteger(line) || line < 1 || !text) return;
+    const text = isString(annotation.text) ? annotation.text.trim() : "";
+    if (!path || !isString(annotation.code) || !isInteger(line) || line < 1 || !text) return;
 
     addAnnotation({ location: { id: path, lineNumber: line }, text: annotation.code, x: 0, y: 0 }, text);
   }
@@ -967,6 +995,10 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   async function postAnnotationToGitHub(annotation: Annotation): Promise<void> {
     const isPullRequest = source[2] === "pull" && /^\d+$/.test(source[3] ?? "");
     if (!isPullRequest || githubAnnotationPending) return;
+    if (!githubConnected) {
+      setGithubAnnotationError("Sign in with GitHub from the page header to post annotations.");
+      return;
+    }
 
     if (githubAnnotationConfirmation !== annotation.id) {
       setGithubAnnotationConfirmation(annotation.id);
@@ -987,6 +1019,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
+      // SAFETY: The same-origin annotation route returns this documented result envelope.
       const result = await response.json() as { error?: string; url?: string };
       if (!response.ok || !result.url) throw new Error(result.error ?? "GitHub could not create the comment.");
 
@@ -1107,7 +1140,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
   /** Starts moving the panel from its current rendered position. */
   function startDragging(event: ReactPointerEvent<HTMLDivElement>): void {
-    if ((event.target as Element).closest("button")) return;
+    if (event.target instanceof Element && event.target.closest("button")) return;
     const panel = event.currentTarget.closest<HTMLElement>(".question-panel, .annotation-composer");
     if (!panel) return;
 
@@ -1228,7 +1261,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        if (typeof reader.result !== "string") {
+        if (!isString(reader.result)) {
           reject(new Error("The file could not be read."));
           return;
         }
@@ -1387,6 +1420,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
         }),
       });
       if (!response.ok || !response.body) {
+        // SAFETY: The same-origin Ask route returns this error envelope before streaming.
         const body = (await response.json()) as { error?: string };
         const message = body.error ?? "No answer was returned.";
         if (response.status === 401) setOpenAIError(message);
@@ -1406,6 +1440,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
         for (const line of lines) {
           if (!line) continue;
+          // SAFETY: The same-origin Ask route writes these newline-delimited stream events.
           const event = JSON.parse(line) as { annotation?: Partial<ModelAnnotation>; message?: string; text?: string; type?: string };
           if (event.type === "delta" && event.text) queueDelta(event.text);
           if (event.type === "suggestion" && event.text) streamedSuggestion = event.text;
@@ -1501,7 +1536,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const triggerSelection = selection?.open ? pendingSelection : selection;
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
-  const canPostAnnotationsToGitHub = source[2] === "pull" && /^\d+$/.test(source[3] ?? "");
+  const isPullRequest = source[2] === "pull" && /^\d+$/.test(source[3] ?? "");
   const annotationList = annotations.length > 0 && (
     <div className="annotation-list">
       <div className="annotation-list-title">
@@ -1524,12 +1559,12 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             aria-label={githubAnnotationConfirmation === annotation.id ? "Post annotation to GitHub" : "Prepare annotation for GitHub"}
             aria-pressed={githubAnnotationConfirmation === annotation.id}
             className={`annotation-github${githubAnnotationConfirmation === annotation.id ? " confirming" : ""}`}
-            disabled={!canPostAnnotationsToGitHub || Boolean(githubAnnotationPending)}
+            disabled={!isPullRequest || Boolean(githubAnnotationPending)}
             onClick={() => void postAnnotationToGitHub(annotation)}
-            title={!canPostAnnotationsToGitHub ? "GitHub comments are available only on pull requests" : "Post this annotation to GitHub"}
+            title={!isPullRequest ? "GitHub comments are available only on pull requests" : !githubConnected ? "Sign in with GitHub from the page header to post annotations" : "Post this annotation to GitHub"}
             type="button"
           >
-            {githubAnnotationConfirmation === annotation.id ? <Check size={15} /> : <Github size={15} />}
+            {githubAnnotationConfirmation === annotation.id ? <Check size={14} /> : <Github size={14} />}
           </button>
         </div>
       ))}
@@ -1537,6 +1572,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
     </div>
   );
+
+  const panelStyle: ChatPanelStyle = { "--chat-font-size": `${chatFontSize}px` };
 
   return (
     <>
@@ -1619,7 +1656,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
           onDragLeave={endFileDrag}
           onDragOver={(event) => event.preventDefault()}
           onDrop={dropAttachments}
-          style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
+          style={panelStyle}
         >
           <div
             className="question-panel-header"
@@ -1690,11 +1727,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
               </div>
             )}
             {attachmentError && <p className="attachment-error">{attachmentError}</p>}
-            <div aria-label="Chat text size" className="chat-zoom-controls">
-              <button aria-label="Decrease chat text size" disabled={chatFontSize === MIN_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(-1)} type="button"><Minus size={12} /></button>
-              <span aria-live="polite" className="chat-zoom-value">{chatZoomPercent}%</span>
-              <button aria-label="Increase chat text size" disabled={chatFontSize === MAX_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(1)} type="button"><Plus size={12} /></button>
-            </div>
             <div className="question-input">
               {!question && !isGeneratingSuggestion && suggestedQuestion && (
                 <span className="question-suggestion" aria-hidden="true">
@@ -1717,6 +1749,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
                 }}
                 rows={2}
               />
+            </div>
+            <div aria-label="Chat text size" className="chat-zoom-controls">
+              <button aria-label="Decrease chat text size" disabled={chatFontSize === MIN_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(-1)} type="button"><Minus size={12} /></button>
+              <span aria-live="polite" className="chat-zoom-value">{chatZoomPercent}%</span>
+              <button aria-label="Increase chat text size" disabled={chatFontSize === MAX_CHAT_FONT_SIZE} onClick={() => adjustChatFontSize(1)} type="button"><Plus size={12} /></button>
             </div>
             <input
               accept="image/*,application/pdf,text/*,.csv,.ts,.tsx,.js,.jsx,.json,.md,.py"

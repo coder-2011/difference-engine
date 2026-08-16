@@ -29,6 +29,7 @@ type DiffViewerProps = {
   defaultBranch?: string;
   deletions?: number;
   filePath?: string;
+  githubConnected: boolean;
   openAIConnected: boolean;
   repositoryRef?: string;
   reviewThreads?: PullRequestReviewThread[];
@@ -54,6 +55,8 @@ type InlineCommentMarker = {
   startLine: number;
   tone: "chat" | "github" | "local";
 };
+
+type DiffViewerStyle = CSSProperties & { "--diffs-font-size": string };
 
 const EMPTY_FILES: FileDiffMetadata[] = [];
 const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
@@ -180,6 +183,7 @@ export function DiffViewer({
   defaultBranch,
   deletions,
   filePath,
+  githubConnected,
   openAIConnected,
   repositoryRef,
   reviewThreads = EMPTY_REVIEW_THREADS,
@@ -626,6 +630,8 @@ export function DiffViewer({
     return <section className={workspaceClass}>{reviewTabs}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
   }
 
+  const codeViewStyle: DiffViewerStyle = { "--diffs-font-size": `${codeFontSize}px` };
+
   return (
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
@@ -675,7 +681,7 @@ export function DiffViewer({
         <div
           className="code-view-shell"
           data-diff-selection-root
-          style={{ "--diffs-font-size": `${codeFontSize}px` } as CSSProperties}
+          style={codeViewStyle}
         >
           <CodeView
             ref={viewerRef}
@@ -686,7 +692,7 @@ export function DiffViewer({
         </div>
       </div>
       </>}
-      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} annotationPaths={paths} onAnnotationsChange={setLocalAnnotations} onChatMarkersChange={setChatMarkers} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} resumeChat={resumeChat} source={source} />
+      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} annotationPaths={paths} githubConnected={githubConnected} onAnnotationsChange={setLocalAnnotations} onChatMarkersChange={setChatMarkers} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} resumeChat={resumeChat} source={source} />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { GitHubError, postPullRequestAgentComment } from "@/lib/github";
-import { isRecord } from "@/lib/json";
+import { isInteger, isRecord, isString, type JsonValue } from "@/lib/json";
 import { isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
@@ -23,28 +23,28 @@ type AnnotationComment = {
 };
 
 /** Parses the durable source location stored with a local annotation. */
-function parseLocation(value: unknown): AnnotationLocation | undefined | null {
+function parseLocation(value: JsonValue | undefined): AnnotationLocation | undefined | null {
   if (value === undefined) return undefined;
   if (!isRecord(value)) return null;
 
   const { endLineNumber, endSide, id, lineNumber, side } = value;
-  if (typeof id !== "string" || typeof lineNumber !== "number" || !Number.isInteger(lineNumber) || lineNumber < 1) return null;
+  if (!isString(id) || !isInteger(lineNumber) || lineNumber < 1) return null;
   if (side !== undefined && side !== "additions" && side !== "deletions") return null;
   if (endSide !== undefined && endSide !== "additions" && endSide !== "deletions") return null;
-  if (endLineNumber !== undefined && (typeof endLineNumber !== "number" || !Number.isInteger(endLineNumber) || endLineNumber < 1)) return null;
+  if (endLineNumber !== undefined && (!isInteger(endLineNumber) || endLineNumber < 1)) return null;
 
   return {
     endLineNumber,
-    endSide: endSide as AnnotationLocation["endSide"],
+    endSide,
     id,
     lineNumber,
-    side: side as AnnotationLocation["side"],
+    side,
   };
 }
 
 /** Validates the exact local annotation that the user explicitly confirmed for GitHub. */
-function parseAnnotationComment(value: unknown): AnnotationComment | null {
-  if (!isRecord(value) || typeof value.code !== "string" || typeof value.text !== "string") return null;
+function parseAnnotationComment(value: JsonValue): AnnotationComment | null {
+  if (!isRecord(value) || !isString(value.code) || !isString(value.text)) return null;
   const location = parseLocation(value.location);
   if (location === null) return null;
   return { code: value.code, location, text: value.text };
@@ -80,17 +80,28 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     const firstLine = location && endLine ? Math.min(location.lineNumber, endLine) : undefined;
     const lastLine = location && endLine ? Math.max(location.lineNumber, endLine) : undefined;
     const isInlineRange = Boolean(location?.side && firstLine && lastLine && (firstLine === lastLine || location.endSide === location.side));
-    const result = isInlineRange && location && firstLine && lastLine
-      ? await postPullRequestAgentComment(source, accessToken, {
-        body: annotation.text,
-        line: lastLine,
-        path: location.id,
-        side: location.side === "additions" ? "RIGHT" : "LEFT",
-        startLine: firstLine === lastLine ? undefined : firstLine,
-        startSide: firstLine === lastLine ? undefined : location.side === "additions" ? "RIGHT" : "LEFT",
-        type: "line",
-      })
-      : await postPullRequestAgentComment(source, accessToken, { body: generalCommentBody(annotation), type: "general" });
+    const generalComment = { body: generalCommentBody(annotation), type: "general" as const };
+    let result: { url: string };
+
+    if (isInlineRange && location && firstLine && lastLine) {
+      try {
+        result = await postPullRequestAgentComment(source, accessToken, {
+          body: annotation.text,
+          line: lastLine,
+          path: location.id,
+          side: location.side === "additions" ? "RIGHT" : "LEFT",
+          startLine: firstLine === lastLine ? undefined : firstLine,
+          startSide: firstLine === lastLine ? undefined : location.side === "additions" ? "RIGHT" : "LEFT",
+          type: "line",
+        });
+      } catch (error) {
+        // Closed pull requests and stale hunks reject inline anchors, but their annotation can still be a timeline comment.
+        if (!(error instanceof GitHubError) || error.status !== 422) throw error;
+        result = await postPullRequestAgentComment(source, accessToken, generalComment);
+      }
+    } else {
+      result = await postPullRequestAgentComment(source, accessToken, generalComment);
+    }
     return NextResponse.json(result);
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;

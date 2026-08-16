@@ -30,7 +30,7 @@ type ActionMessage = {
   text: string;
 };
 
-const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
+const ACTION_MESSAGES = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
   "edit-body": "Pull request body updated on GitHub.",
@@ -41,12 +41,12 @@ const ACTION_MESSAGES: Record<PullRequestAction["action"], string> = {
   review: "Review submitted to GitHub.",
   "resolve-thread": "Review thread resolved on GitHub.",
   "unresolve-thread": "Review thread reopened on GitHub.",
-};
-const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+} satisfies Record<PullRequestAction["action"], string>;
+const MERGE_METHOD_LABELS = {
   merge: "Merge commit",
   rebase: "Rebase and merge",
   squash: "Squash and merge",
-};
+} satisfies Record<PullRequestMergeMethod, string>;
 const PR_STATES_BLOCK = /<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/;
 const CELEBRATION_PARTICLES: readonly Particle[] = [
   { color: "#4ade80", delay: "0ms", drift: "-30px", duration: "2680ms", left: "4%", size: 9 },
@@ -94,6 +94,19 @@ function commitSummary(message: string): string {
 /** Selects the first GitHub-enabled merge method, preferring the common squash flow. */
 function initialMergeMethod(methods: PullRequestMergeMethod[]): PullRequestMergeMethod {
   return methods.includes("squash") ? "squash" : methods[0] ?? "merge";
+}
+
+/** Converts one celebration particle into the custom-property style its animation consumes. */
+function celebrationParticleStyle(particle: Particle): ParticleStyle {
+  return {
+    "--pr-particle-drift": particle.drift,
+    animationDelay: particle.delay,
+    animationDuration: particle.duration,
+    backgroundColor: particle.color,
+    height: `${particle.size * 1.4}px`,
+    left: particle.left,
+    width: `${particle.size}px`,
+  };
 }
 
 /** Groups workflow states into the three colors used by the CI details list. */
@@ -206,7 +219,8 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
     event.preventDefault();
     const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".merge-method-option"));
-    const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+    const activeElement = document.activeElement;
+    const currentIndex = activeElement instanceof HTMLButtonElement ? options.indexOf(activeElement) : -1;
     if (!options.length) return;
 
     let nextIndex = 0;
@@ -239,6 +253,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
+      // SAFETY: The local route returns this action result after validating its requested mutation.
       const result = await response.json() as { celebrate?: boolean; error?: string; workspace?: PullRequestWorkspace };
 
       if (!response.ok || !result.workspace) throw new Error(result.error ?? "GitHub could not complete this action");
@@ -289,15 +304,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
           {CELEBRATION_PARTICLES.map((particle, index) => (
             <span
               key={index}
-              style={{
-                "--pr-particle-drift": particle.drift,
-                animationDelay: particle.delay,
-                animationDuration: particle.duration,
-                backgroundColor: particle.color,
-                height: `${particle.size * 1.4}px`,
-                left: particle.left,
-                width: `${particle.size}px`,
-              } as ParticleStyle}
+              style={celebrationParticleStyle(particle)}
             />
           ))}
         </div>
@@ -349,7 +356,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         </div>
       )}
 
-      <aside className="pr-conversation" aria-label="Pull request conversation">
+      <aside className={`pr-conversation${mergeMenuOpen ? " merge-menu-open" : ""}`} aria-label="Pull request conversation">
         {workspace.state === "open" && (
           <header className="pr-conversation-heading">
             <div className="pr-state">

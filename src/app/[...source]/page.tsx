@@ -109,6 +109,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         defaultBranch={document.defaultBranch}
         deletions={document.deletions}
         filePath={document.filePath}
+        githubConnected={githubConnected}
         key={sourceKey}
         openAIConnected={openAIConnected}
         repositoryRef={document.repositoryRef}
