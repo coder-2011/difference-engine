@@ -8,6 +8,7 @@
     "bench:pierre": "node scripts/benchmark-pierre.mjs",
     "start": "next start",
     "lint": "eslint .",
+    "lint:anti-slop": "oxlint",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
@@ -36,12 +37,14 @@
     "typescript": "^5.7.2"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/tar-stream": "^3.1.4",
     "eslint": "^9.17.0",
-    "eslint-config-next": "16.2.10"
+    "eslint-config-next": "16.2.10",
+    "oxlint": "1.78.0"
   },
   "overrides": {
     "postcss": "8.5.10"
