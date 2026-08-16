@@ -13,6 +13,11 @@ type RepositorySearchResult = {
   preview?: string;
 };
 
+type RepositorySearchResults = {
+  error?: string;
+  results: RepositorySearchResult[];
+};
+
 type RepositorySearchProps = {
   files: RepositoryFile[];
   onOpenResult: (result: RepositorySearchResult) => void;
@@ -79,7 +84,7 @@ function searchContents(
   files: RepositoryFile[],
   query: string,
   mode: "regex" | "text",
-): { error?: string; results: RepositorySearchResult[] } {
+): RepositorySearchResults {
   let pattern: RegExp | undefined;
 
   if (mode === "regex") {
@@ -142,7 +147,8 @@ export function RepositorySearch({ files, onOpenResult }: RepositorySearchProps)
 
   /** Changes the search interpretation from the clicked mode button. */
   function changeMode(event: MouseEvent<HTMLButtonElement>): void {
-    setMode(event.currentTarget.value as RepositorySearchMode);
+    const nextMode = event.currentTarget.value;
+    if (nextMode === "files" || nextMode === "regex" || nextMode === "text") setMode(nextMode);
     setActiveIndex(0);
   }
 

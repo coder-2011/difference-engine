@@ -18,10 +18,16 @@ type ParseResponse = {
   repositoryFiles?: RepositoryFile[];
 };
 
+type ParsedDiffChunk = {
+  files: FileDiffMetadata[];
+  nextFileIndex: number;
+  remainder: string;
+};
+
 configureDiffHighlighting();
 
 /** Parses only files that end before the final incomplete Git diff boundary. */
-function parseCompleteDiffFiles(patch: string, cacheKey: string, fileIndex: number): { files: FileDiffMetadata[]; nextFileIndex: number; remainder: string } {
+function parseCompleteDiffFiles(patch: string, cacheKey: string, fileIndex: number): ParsedDiffChunk {
   const nextFileStart = patch.lastIndexOf("\ndiff --git ");
   if (nextFileStart === -1) return { files: [], nextFileIndex: fileIndex, remainder: patch };
 
@@ -57,11 +63,13 @@ async function parseDiff(event: MessageEvent<ParseRequest>): Promise<void> {
     const response = await fetch(event.data.url);
 
     if (!response.ok) {
+      // SAFETY: The same-origin diff route returns this documented error envelope.
       const body = await response.json() as { error?: string };
       throw new Error(body.error ?? "The diff could not be loaded");
     }
 
     if (event.data.repository) {
+      // SAFETY: Repository mode reads the same RepositoryFile array rendered by the main viewer.
       const repositoryFiles = await response.json() as RepositoryFile[];
       self.postMessage({ repositoryFiles } satisfies ParseResponse);
       return;

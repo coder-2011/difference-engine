@@ -59,6 +59,7 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
+      // SAFETY: The same-origin pull-request route returns this documented error envelope.
       const result = await response.json().catch(() => null) as { error?: string } | null;
 
       if (!response.ok) throw new Error(result?.error ?? "GitHub could not rename this pull request");

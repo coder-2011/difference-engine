@@ -167,6 +167,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
       try {
         // Bypass the prior document shape during the brief public edge-cache window after this view ships.
         const response = await fetch(`/api/call-diff/${sourcePath}?v=2`, { signal: controller.signal });
+        // SAFETY: The same-origin Call Flow endpoint returns this document or its error envelope.
         const result = await response.json() as CallDiffDocument & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "The call flow could not be loaded");
         setState({ document: result, status: "ready" });

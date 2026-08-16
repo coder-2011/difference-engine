@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
 import { GitHubError, performPullRequestAction } from "@/lib/github";
-import { isRecord } from "@/lib/json";
+import { isNumber, isRecord, isString, type JsonValue } from "@/lib/json";
 import { isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
-import type { PullRequestAction, PullRequestMergeMethod, PullRequestReviewEvent } from "@/types/github";
+import type { PullRequestAction } from "@/types/github";
 
 type RouteContext = {
   params: Promise<{ source: string[] }>;
 };
 
 /** Validates the small, explicit mutation payload accepted by the pull-request action route. */
-function parsePullRequestAction(value: unknown): PullRequestAction | null {
-  if (!isRecord(value) || typeof value.action !== "string") return null;
+function parsePullRequestAction(value: JsonValue): PullRequestAction | null {
+  if (!isRecord(value) || !isString(value.action)) return null;
 
-  if (value.action === "comment" && typeof value.body === "string") {
+  if (value.action === "comment" && isString(value.body)) {
     return { action: "comment", body: value.body };
   }
 
-  if (value.action === "reply" && typeof value.body === "string" && typeof value.commentId === "number") {
+  if (value.action === "reply" && isString(value.body) && isNumber(value.commentId)) {
     return { action: "reply", body: value.body, commentId: value.commentId };
   }
 
   if (value.action === "close") return { action: "close" };
 
-  if (value.action === "edit-title" && typeof value.title === "string") {
+  if (value.action === "edit-title" && isString(value.title)) {
     return { action: "edit-title", title: value.title };
   }
 
-  if (value.action === "edit-body" && typeof value.body === "string") {
+  if (value.action === "edit-body" && isString(value.body)) {
     return { action: "edit-body", body: value.body };
   }
 
@@ -35,22 +35,22 @@ function parsePullRequestAction(value: unknown): PullRequestAction | null {
 
   if (
     value.action === "review"
-    && typeof value.body === "string"
+    && isString(value.body)
     && (value.event === "APPROVE" || value.event === "COMMENT" || value.event === "REQUEST_CHANGES")
   ) {
-    return { action: "review", body: value.body, event: value.event as PullRequestReviewEvent };
+    return { action: "review", body: value.body, event: value.event };
   }
 
-  if (value.action === "resolve-thread" && typeof value.threadId === "string") {
+  if (value.action === "resolve-thread" && isString(value.threadId)) {
     return { action: "resolve-thread", threadId: value.threadId };
   }
 
-  if (value.action === "unresolve-thread" && typeof value.threadId === "string") {
+  if (value.action === "unresolve-thread" && isString(value.threadId)) {
     return { action: "unresolve-thread", threadId: value.threadId };
   }
 
   if (value.action === "merge" && (value.method === "merge" || value.method === "rebase" || value.method === "squash")) {
-    return { action: "merge", method: value.method as PullRequestMergeMethod };
+    return { action: "merge", method: value.method };
   }
 
   return null;

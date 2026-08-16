@@ -3,21 +3,21 @@
 import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
 import { listOpenPullRequests, listRecentPullRequests, viewerPathFromUrl } from "@/lib/github";
-import { isRecord } from "@/lib/json";
+import { isRecord, isString, type JsonValue } from "@/lib/json";
 import { getOpenAIAccess } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 
 /** Extracts the text returned by one non-streaming ChatGPT response. */
-function modelOutputText(value: unknown): string {
+function modelOutputText(value: JsonValue): string {
   if (!isRecord(value) || !Array.isArray(value.output)) return "";
 
-  return value.output.flatMap((item: unknown) => {
+  return value.output.flatMap((item: JsonValue) => {
     if (!isRecord(item) || !Array.isArray(item.content)) return [];
-    return item.content.flatMap((content: unknown) => {
+    return item.content.flatMap((content: JsonValue) => {
       if (!isRecord(content)) return [];
-      return typeof content.text === "string" ? [content.text] : [];
+      return isString(content.text) ? [content.text] : [];
     });
   }).join("").trim();
 }
@@ -64,7 +64,7 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
 
 /** Restricts the post-login destination to an internal application path. */
 function callbackPath(value: FormDataEntryValue | null): string {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return "/";
+  if (!isString(value) || !value.startsWith("/") || value.startsWith("//")) return "/";
   return value;
 }
 

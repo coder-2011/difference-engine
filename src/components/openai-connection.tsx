@@ -34,6 +34,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
       const response = await fetch("/api/auth/openai/status", { method: "POST" }).catch(() => null);
       if (cancelled || !response?.ok) return;
 
+      // SAFETY: The same-origin status route returns this narrow connection envelope.
       const body = await response.json() as { connected?: boolean };
       if (body.connected) return;
       setConnected(false);
@@ -69,6 +70,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
           return;
         }
 
+        // SAFETY: The same-origin polling route returns a documented error envelope on failure.
         const body = await response.json() as { error?: string };
         if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not finish.");
 
@@ -118,6 +120,7 @@ export function OpenAIConnection({ compact = false, initiallyConnected }: OpenAI
 
     try {
       const response = await fetch("/api/auth/openai/device", { method: "POST" });
+      // SAFETY: The device endpoint returns an OpenAIDeviceCode or its documented error field.
       const body = await response.json() as OpenAIDeviceCode & { error?: string };
       if (!response.ok) throw new Error(body.error ?? "OpenAI sign-in could not start.");
       setDialog({ status: "waiting", device: body, copied: false, copiesCode: false });

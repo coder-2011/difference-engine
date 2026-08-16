@@ -1,6 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { getToken } from "next-auth/jwt";
+import { isString } from "@/lib/json";
 
 /** Decrypts only the current request's Auth.js token on the server. */
 export async function getGitHubAccessToken(request?: Request): Promise<string | undefined> {
@@ -14,5 +15,5 @@ export async function getGitHubAccessToken(request?: Request): Promise<string | 
     secureCookie: process.env.NODE_ENV === "production",
   });
 
-  return typeof token?.accessToken === "string" ? token.accessToken : undefined;
+  return isString(token?.accessToken) ? token.accessToken : undefined;
 }

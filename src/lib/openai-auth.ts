@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cookies } from "next/headers";
-import { isRecord, type JsonRecord } from "@/lib/json";
+import { isNumber, isRecord, isString, type JsonRecord, type JsonValue } from "@/lib/json";
 import type { OpenAIDeviceCode } from "@/types/openai";
 
 const CLIENT_ID = process.env.OPENAI_OAUTH_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -29,12 +29,6 @@ type StoredDeviceSession = {
   interval: number;
   userCode: string;
   version: 1;
-};
-
-type TokenPayload = {
-  access_token?: unknown;
-  id_token?: unknown;
-  refresh_token?: unknown;
 };
 
 type OpenAIAccess = {
@@ -124,14 +118,16 @@ function parseJwtClaims(token: string): JsonRecord | undefined {
 function getAccountId(claims: JsonRecord): string | undefined {
   const auth = claims["https://api.openai.com/auth"];
   if (!isRecord(auth)) return undefined;
-  return typeof auth.chatgpt_account_id === "string" ? auth.chatgpt_account_id : undefined;
+  return isString(auth.chatgpt_account_id) ? auth.chatgpt_account_id : undefined;
 }
 
 /** Validates the token response and builds the minimal encrypted session. */
-function sessionFromTokens(payload: TokenPayload, fallbackSession?: StoredOpenAISession): OpenAIAccess {
-  const accessToken = typeof payload.access_token === "string" ? payload.access_token : "";
-  const idToken = typeof payload.id_token === "string" ? payload.id_token : "";
-  const refreshToken = typeof payload.refresh_token === "string"
+function sessionFromTokens(payload: JsonValue, fallbackSession?: StoredOpenAISession): OpenAIAccess {
+  if (!isRecord(payload)) throw new Error("OpenAI returned an incomplete authorization session.");
+
+  const accessToken = isString(payload.access_token) ? payload.access_token : "";
+  const idToken = isString(payload.id_token) ? payload.id_token : "";
+  const refreshToken = isString(payload.refresh_token)
     ? payload.refresh_token
     : fallbackSession?.refreshToken;
   const claims = parseJwtClaims(idToken);
@@ -157,8 +153,8 @@ async function readStoredSession(): Promise<StoredOpenAISession | undefined> {
   const session = await unseal(store.get(OPENAI_SESSION_COOKIE)?.value);
   if (
     session?.version !== 1 ||
-    typeof session.accountId !== "string" ||
-    typeof session.refreshToken !== "string"
+    !isString(session.accountId) ||
+    !isString(session.refreshToken)
   ) return undefined;
 
   return {
@@ -174,10 +170,10 @@ async function readStoredDevice(): Promise<StoredDeviceSession | undefined> {
   const session = await unseal(store.get(OPENAI_DEVICE_COOKIE)?.value);
   if (
     session?.version !== 1 ||
-    typeof session.deviceAuthId !== "string" ||
-    typeof session.userCode !== "string" ||
-    typeof session.interval !== "number" ||
-    typeof session.expiresAt !== "number" ||
+    !isString(session.deviceAuthId) ||
+    !isString(session.userCode) ||
+    !isNumber(session.interval) ||
+    !isNumber(session.expiresAt) ||
     session.expiresAt <= Date.now()
   ) return undefined;
 
@@ -199,12 +195,12 @@ export async function startOpenAIDeviceCode(): Promise<OpenAIDeviceAuthorization
   const payload: unknown = await response.json();
   if (!isRecord(payload)) throw new Error("OpenAI returned an invalid device authorization response.");
 
-  const deviceAuthId = typeof payload.device_auth_id === "string" ? payload.device_auth_id : "";
-  const userCode = typeof payload.user_code === "string"
+  const deviceAuthId = isString(payload.device_auth_id) ? payload.device_auth_id : "";
+  const userCode = isString(payload.user_code)
     ? payload.user_code
-    : typeof payload.usercode === "string" ? payload.usercode : "";
-  const parsedInterval = typeof payload.interval === "string" ? Number(payload.interval) : payload.interval;
-  const interval = typeof parsedInterval === "number" && Number.isFinite(parsedInterval)
+    : isString(payload.usercode) ? payload.usercode : "";
+  const parsedInterval = isString(payload.interval) ? Number(payload.interval) : payload.interval;
+  const interval = isNumber(parsedInterval) && Number.isFinite(parsedInterval)
     ? Math.max(2, parsedInterval)
     : 5;
 
@@ -242,8 +238,8 @@ export async function pollOpenAIDeviceCode(): Promise<OpenAIDevicePoll> {
   const approval: unknown = await pollResponse.json();
   if (!isRecord(approval)) throw new Error("OpenAI returned an invalid approval response.");
 
-  const authorizationCode = typeof approval.authorization_code === "string" ? approval.authorization_code : "";
-  const codeVerifier = typeof approval.code_verifier === "string" ? approval.code_verifier : "";
+  const authorizationCode = isString(approval.authorization_code) ? approval.authorization_code : "";
+  const codeVerifier = isString(approval.code_verifier) ? approval.code_verifier : "";
   if (!authorizationCode || !codeVerifier) throw new Error("OpenAI returned an incomplete approval response.");
 
   const tokenResponse = await fetch(`${ISSUER}/oauth/token`, {
@@ -260,7 +256,7 @@ export async function pollOpenAIDeviceCode(): Promise<OpenAIDevicePoll> {
 
   if (!tokenResponse.ok) throw new Error(`OpenAI token exchange failed (${tokenResponse.status}).`);
 
-  const access = sessionFromTokens(await tokenResponse.json() as TokenPayload);
+  const access = sessionFromTokens(await tokenResponse.json());
   const sealedSession = await seal(access.session);
 
   return {
@@ -288,7 +284,7 @@ export async function getOpenAIAccess(): Promise<OpenAIAccess | undefined> {
 
   if (response.status >= 500) throw new Error(`OpenAI token refresh failed (${response.status}).`);
   if (!response.ok) return undefined;
-  const access = sessionFromTokens(await response.json() as TokenPayload, session);
+  const access = sessionFromTokens(await response.json(), session);
   const store = await cookies();
   // Persist rotation at the refresh boundary so later repository or model failures cannot lose it.
   store.set(openAISessionCookie(await seal(access.session)));

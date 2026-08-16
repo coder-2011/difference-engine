@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { CALL_DIFF_ANONYMOUS_FILE_LIMIT, CALL_DIFF_FILE_LIMIT, CALL_DIFF_FILE_SIZE_LIMIT, isCallDiffSourcePath } from "@/lib/call-diff-files";
+import { isRecord, isString, type JsonRecord, type JsonValue } from "@/lib/json";
 import { extract } from "tar-stream";
 import type {
   DiffDocument,
@@ -44,6 +45,29 @@ type PullRequestSearch = {
 };
 
 type PullRequestStatus = PullRequestSummary["status"];
+
+type ParsedSource = {
+  apiPath: string;
+  encodedRepository: string;
+  filePath?: string;
+  kind: "compare" | "commit" | "pull" | "repository";
+  repository: string;
+  repositoryRef?: string;
+  value: string;
+};
+
+type CallDiffFileSelection = {
+  files: PullRequestFile[];
+  ignoredFiles: number;
+  truncated: boolean;
+};
+
+type GraphqlResponse<T> = {
+  data?: T;
+  errors?: JsonValue[];
+};
+
+type GitHubRequestBody = Record<string, JsonValue | undefined>;
 
 type PullRequestConversation = {
   comments: PullRequestComment[];
@@ -328,32 +352,34 @@ export class GitHubError extends Error {
 }
 
 /** Builds the shared media and optional authorization headers for GitHub requests. */
-function githubHeaders(accept: string, token?: string): Record<string, string> {
-  const headers: Record<string, string> = { Accept: accept };
-  if (token) headers.Authorization = `Bearer ${token}`;
+function githubHeaders(accept: string, token?: string): Headers {
+  const headers = new Headers({ Accept: accept });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   return headers;
 }
 
 /** Extracts GitHub's safe response message without exposing a raw failed response. */
 async function githubError(response: Response): Promise<GitHubError> {
-  const body = await response.json().catch(() => null) as { message?: unknown } | null;
+  const body = await response.json().catch(() => null);
   const fallback = response.status === 404 ? "GitHub item not found" : "GitHub request failed";
-  const message = typeof body?.message === "string" ? body.message : fallback;
+  const message = isRecord(body) && isString(body.message) ? body.message : fallback;
   return new GitHubError(message, response.status);
 }
 
 /** Performs one GitHub API request while keeping the authenticated token on the server. */
-async function githubResponse(path: string, token?: string, method = "GET", body?: unknown): Promise<Response> {
+async function githubResponse(path: string, token?: string, method = "GET", body?: GitHubRequestBody): Promise<Response> {
   const headers = githubHeaders("application/vnd.github+json", token);
-  headers["X-GitHub-Api-Version"] = "2022-11-28";
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  headers.set("X-GitHub-Api-Version", "2022-11-28");
+  if (body !== undefined) headers.set("Content-Type", "application/json");
 
-  const response = await fetch(`${GITHUB_API}${path}`, {
+  const init = {
+    cache: "no-store" as const,
     headers,
     method,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-  });
+  };
+  const response = body === undefined
+    ? await fetch(`${GITHUB_API}${path}`, init)
+    : await fetch(`${GITHUB_API}${path}`, { ...init, body: JSON.stringify(body) });
 
   if (!response.ok) throw await githubError(response);
 
@@ -364,6 +390,7 @@ async function githubResponse(path: string, token?: string, method = "GET", body
 async function githubRequest<T>(path: string, token?: string): Promise<T> {
   const response = await githubResponse(path, token);
 
+  // SAFETY: Each caller supplies the response type for its fixed GitHub endpoint.
   return response.json() as Promise<T>;
 }
 
@@ -386,6 +413,7 @@ async function githubAllItems<T>(path: string, token?: string): Promise<T[]> {
 
   while (nextPath) {
     const response = await githubResponse(nextPath, token);
+    // SAFETY: This helper is used only with the collection type documented by its GitHub endpoint.
     const page = await response.json() as T[];
     items.push(...page);
     const nextUrl = response.headers.get("link")?.match(/<([^>]+)>; rel="next"/)?.[1];
@@ -400,24 +428,24 @@ async function githubAllItems<T>(path: string, token?: string): Promise<T[]> {
 }
 
 /** Sends one GitHub mutation whose successful response body is not needed locally. */
-async function githubMutation(path: string, token: string, method: "PATCH" | "POST", body?: unknown): Promise<void> {
+async function githubMutation(path: string, token: string, method: "PATCH" | "POST", body?: GitHubRequestBody): Promise<void> {
   await githubResponse(path, token, method, body);
 }
 
 /** Queries the small viewer-specific capability set that REST does not return. */
-async function githubGraphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+async function githubGraphql<T>(token: string, query: string, variables: JsonRecord): Promise<T> {
+  const headers = githubHeaders("application/vnd.github+json", token);
+  headers.set("Content-Type", "application/json");
   const response = await fetch(`${GITHUB_API}/graphql`, {
     method: "POST",
-    headers: {
-      ...githubHeaders("application/vnd.github+json", token),
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ query, variables }),
     cache: "no-store",
   });
 
   if (!response.ok) throw await githubError(response);
-  const result = await response.json() as { data?: T; errors?: unknown[] };
+  // SAFETY: The typed query and its selected fields define the expected GraphQL data shape.
+  const result = await response.json() as GraphqlResponse<T>;
   if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
   return result.data;
 }
@@ -429,12 +457,11 @@ async function searchPullRequests(token: string, query: string, limit = 1_000): 
 
   while (pullRequests.length < limit) {
     const first = Math.min(100, limit - pullRequests.length);
+    const headers = githubHeaders("application/vnd.github+json", token);
+    headers.set("Content-Type", "application/json");
     const response = await fetch(`${GITHUB_API}/graphql`, {
       method: "POST",
-      headers: {
-        ...githubHeaders("application/vnd.github+json", token),
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         query: `query PullRequests($query: String!, $first: Int!, $after: String) {
           search(query: $query, type: ISSUE, first: $first, after: $after) {
@@ -460,7 +487,8 @@ async function searchPullRequests(token: string, query: string, limit = 1_000): 
     });
 
     if (!response.ok) throw new GitHubError("GitHub request failed", response.status);
-    const result = await response.json() as { data?: PullRequestSearch; errors?: unknown[] };
+    // SAFETY: The static search query requests exactly the PullRequestSearch fields consumed below.
+    const result = await response.json() as GraphqlResponse<PullRequestSearch>;
     if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
 
     pullRequests.push(...result.data.search.nodes);
@@ -514,15 +542,7 @@ function summarizePullRequest(pullRequest: SearchPullRequest, status: PullReques
 }
 
 /** Validates and encodes a GitHub-style viewer path for API requests. */
-function parseSource(source: string[]): {
-  apiPath: string;
-  encodedRepository: string;
-  filePath?: string;
-  kind: "compare" | "commit" | "pull" | "repository";
-  repository: string;
-  repositoryRef?: string;
-  value: string;
-} {
+function parseSource(source: string[]): ParsedSource {
   const [owner, repo, kind, value, ...filePath] = source;
   const parsedKind = kind === "pull" || kind === "compare" || kind === "commit" ? kind : undefined;
 
@@ -1056,6 +1076,7 @@ export async function performPullRequestAction(source: string[], token: string |
     }
 
     const response = await githubResponse(`${parsed.apiPath}/merge`, accessToken, "PUT", { merge_method: action.method, sha: pullRequest.head.sha });
+    // SAFETY: GitHub's merge endpoint returns the documented PullRequestMergeResult contract.
     const result = await response.json() as PullRequestMergeResult;
     if (!result.merged) throw new GitHubError(result.message || "GitHub could not merge this pull request", 409);
     return { celebrate: true, workspace: await getPullRequestWorkspace(source, accessToken) };
@@ -1141,8 +1162,10 @@ export async function postPullRequestAgentComment(
     });
   }
 
-  const created = await response.json() as { html_url?: unknown };
-  if (typeof created.html_url !== "string") throw new GitHubError("GitHub did not return the created comment", 502);
+  const created = await response.json();
+  if (!isRecord(created) || !isString(created.html_url)) {
+    throw new GitHubError("GitHub did not return the created comment", 502);
+  }
 
   return comment.type === "general"
     ? { type: "general", url: created.html_url }
@@ -1432,7 +1455,7 @@ async function getCallDiffFileText(encodedRepository: string, path: string, ref:
       `/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`,
       token,
     );
-    if ((file.size ?? 0) > CALL_DIFF_FILE_SIZE_LIMIT || file.encoding !== "base64" || typeof file.content !== "string") return undefined;
+    if ((file.size ?? 0) > CALL_DIFF_FILE_SIZE_LIMIT || file.encoding !== "base64" || !isString(file.content)) return undefined;
 
     const text = Buffer.from(file.content.replaceAll("\n", ""), "base64").toString("utf8");
     return text.length <= CALL_DIFF_FILE_SIZE_LIMIT && !text.includes("\0") ? text : undefined;
@@ -1470,7 +1493,7 @@ async function getPullRequestCallDiffFiles(
   apiPath: string,
   token?: string,
   onCandidate?: (file: PullRequestFile) => void,
-): Promise<{ files: PullRequestFile[]; ignoredFiles: number; truncated: boolean }> {
+): Promise<CallDiffFileSelection> {
   const files: PullRequestFile[] = [];
   let ignoredFiles = 0;
   const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
@@ -1493,7 +1516,7 @@ async function getPullRequestCallDiffFiles(
 }
 
 /** Chooses bounded TypeScript-parseable files from GitHub's non-paginated comparison payload. */
-function getCompareCallDiffFiles(comparison: Compare, token?: string): { files: PullRequestFile[]; ignoredFiles: number; truncated: boolean } {
+function getCompareCallDiffFiles(comparison: Compare, token?: string): CallDiffFileSelection {
   const sourceFiles = comparison.files ?? [];
   const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
   const files: PullRequestFile[] = [];

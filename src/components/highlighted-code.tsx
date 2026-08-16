@@ -69,6 +69,7 @@ function supportedLanguage(className?: string): SupportedLanguage | null {
   const match = className?.match(/language-([^\s]+)/)?.[1]?.toLowerCase();
   if (!match) return null;
 
+  // SAFETY: `match` is only used to index a static grammar alias table and missing keys return null.
   return LANGUAGE_ALIASES[match as keyof typeof LANGUAGE_ALIASES] ?? null;
 }
 

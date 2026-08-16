@@ -39,6 +39,11 @@ function parameterName(parameter: Parameter, sourceText: string): string {
     : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
 }
 
+/** Allows a type predicate to accept raw input at the parsing boundary it establishes. */
+function isTypeGuard(owner: ParameterOwner): boolean {
+  return owner.returnType?.typeAnnotation.type === "TSTypePredicate";
+}
+
 /** Disallow unknown inputs except explicitly named error-cause enrichment. */
 export const noUnknownParametersRule = defineRule({
   meta: {
@@ -54,6 +59,8 @@ export const noUnknownParametersRule = defineRule({
   },
   createOnce(context) {
     const checkParameters = (node: ParameterOwner) => {
+      if (isTypeGuard(node)) return;
+
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
         if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;

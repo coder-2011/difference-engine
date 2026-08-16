@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import type { ComponentPropsWithoutRef } from "react";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
+import { isString } from "@/lib/json";
 
 type GitHubMarkdownProps = {
   children: string;
@@ -10,7 +11,7 @@ type GitHubMarkdownProps = {
 
 type MarkdownNode = {
   children?: MarkdownNode[];
-  data?: { hProperties?: Record<string, unknown> };
+  data?: { hProperties?: { className?: string[] } };
   type?: string;
   value?: string;
 };
@@ -23,28 +24,25 @@ function githubAlerts() {
 }
 
 /** Walks Markdown nodes and replaces each GitHub alert marker with semantic styling data. */
-function markGitHubAlerts(node: unknown): void {
-  if (!node || typeof node !== "object") return;
-
-  const markdownNode = node as MarkdownNode;
-  const firstParagraph = markdownNode.type === "blockquote" ? markdownNode.children?.[0] : undefined;
+function markGitHubAlerts(node: MarkdownNode): void {
+  const firstParagraph = node.type === "blockquote" ? node.children?.[0] : undefined;
   const marker = firstParagraph?.type === "paragraph" ? firstParagraph.children?.[0] : undefined;
-  const markerValue = marker?.type === "text" && typeof marker.value === "string" ? marker.value : undefined;
+  const markerValue = marker?.type === "text" && isString(marker.value) ? marker.value : undefined;
   const alert = markerValue?.match(GITHUB_ALERT);
 
   if (alert && marker && markerValue) {
     marker.value = markerValue.slice(alert[0].length);
     const type = alert[1].toLowerCase();
-    markdownNode.data = {
-      ...markdownNode.data,
+    node.data = {
+      ...node.data,
       hProperties: {
-        ...markdownNode.data?.hProperties,
+        ...node.data?.hProperties,
         className: ["github-alert", `github-alert-${type}`],
       },
     };
   }
 
-  markdownNode.children?.forEach(markGitHubAlerts);
+  node.children?.forEach(markGitHubAlerts);
 }
 
 /** Preserves table layout while giving wide Markdown tables a contained horizontal viewport. */
