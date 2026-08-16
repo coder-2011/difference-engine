@@ -71,11 +71,11 @@ const INLINE_COMMENT_MARKER_CSS = `
     --diffs-inline-comment-color: #58a6ff;
     background: var(--diffs-inline-comment-color);
     bottom: 0;
+    left: var(--diffs-inline-comment-offset, 0px);
     pointer-events: none;
     position: absolute;
-    right: calc(-4px - var(--diffs-inline-comment-offset, 0px));
     top: 0;
-    width: 2px;
+    width: 3px;
     z-index: 4;
   }
 
@@ -86,51 +86,10 @@ const INLINE_COMMENT_MARKER_CSS = `
   [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"] {
     --diffs-inline-comment-color: #a78bfa;
     appearance: none;
-    background: transparent;
     border: 0;
     cursor: pointer;
     padding: 0;
     pointer-events: auto;
-    right: calc(-10px - var(--diffs-inline-comment-offset, 0px));
-    width: 10px;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"]::after {
-    background: var(--diffs-inline-comment-color);
-    bottom: 0;
-    content: "";
-    left: 4px;
-    position: absolute;
-    top: 0;
-    width: 2px;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"]::before {
-    background: var(--diffs-inline-comment-color);
-    left: 5px;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-position="single"] {
-    bottom: auto;
-    height: 0;
-    top: 50%;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"] {
-    height: 12px;
-    top: calc(50% - 6px);
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"]::after {
-    bottom: auto;
-    height: 0;
-    top: 6px;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"]::before {
-    left: 6px;
-    top: 6px;
-    transform: translate(0, -50%);
   }
 
   [data-column-number] > .diffs-inline-comment-marker[data-position="start"] {
@@ -139,29 +98,6 @@ const INLINE_COMMENT_MARKER_CSS = `
 
   [data-column-number] > .diffs-inline-comment-marker[data-position="end"] {
     bottom: 50%;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-position="single"]::before,
-  [data-column-number] > .diffs-inline-comment-marker[data-position="start"]::before,
-  [data-column-number] > .diffs-inline-comment-marker[data-position="end"]::before {
-    background: inherit;
-    border-radius: 999px;
-    content: "";
-    height: 6px;
-    left: 50%;
-    position: absolute;
-    top: 0;
-    transform: translate(-50%, -50%);
-    width: 6px;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-position="single"]::before {
-    left: 100%;
-    transform: translate(0, -50%);
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-position="end"]::before {
-    top: 100%;
   }
 `;
 
@@ -625,7 +561,7 @@ export function DiffViewer({
           element.className = "diffs-inline-comment-marker";
           element.dataset.position = position;
           element.dataset.tone = marker.tone;
-          element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 8}px`);
+          element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 3}px`);
           if (marker.tone === "chat" && marker.chatId && marker.markerId) {
             element.classList.add("diffs-inline-chat-marker");
             element.setAttribute("aria-label", "Resume Ask Diffs chat");
