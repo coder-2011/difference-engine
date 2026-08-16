@@ -78,7 +78,7 @@ export async function logout(): Promise<void> {
   await signOut({ redirectTo: "/" });
 }
 
-/** Opens a supported GitHub pull request, comparison, or commit URL. */
+/** Opens a supported GitHub repository, pull request, comparison, or commit URL. */
 export async function openSource(formData: FormData): Promise<void> {
   const value = String(formData.get("url") ?? "").trim();
   const directPath = viewerPathFromUrl(value);

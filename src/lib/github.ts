@@ -550,6 +550,19 @@ function parseSource(source: string[]): {
       value: "",
     };
   }
+  if (kind === "tree") {
+    const repositoryRef = source.slice(3).join("/");
+    if (!repositoryRef) throw new GitHubError("This GitHub URL is not supported", 400);
+
+    return {
+      apiPath: `/repos/${encodedRepository}`,
+      encodedRepository,
+      kind: "repository",
+      repository,
+      repositoryRef,
+      value: "",
+    };
+  }
   // A trailing path without GitHub's /blob/<ref> prefix targets the default branch.
   if (!parsedKind && source.length > 2) {
     return {
@@ -1259,9 +1272,9 @@ export async function getDiffDocument(source: string[], token?: string, includeP
   if (parsed.kind === "repository") {
     const repository = await githubRequest<Repository>(parsed.apiPath, token);
     const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
-    const fileUrl = parsed.filePath
+    const sourcePath = parsed.filePath
       ? `/blob/${encodeURIComponent(repositoryRef)}/${parsed.filePath.split("/").map(encodeURIComponent).join("/")}`
-      : "";
+      : parsed.repositoryRef ? `/tree/${encodeURIComponent(repositoryRef)}` : "";
 
     return {
       author: repository.owner.login,
@@ -1271,7 +1284,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
       filePath: parsed.filePath,
       repository: parsed.repository,
       repositoryRef,
-      sourceUrl: `${repository.html_url}${fileUrl}`,
+      sourceUrl: `${repository.html_url}${sourcePath}`,
       title: repository.name,
     };
   }
