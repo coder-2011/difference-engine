@@ -6,7 +6,7 @@ import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPull
 import { useEffect, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
-import type { PullRequestAction, PullRequestMergeMethod, PullRequestReviewEvent, PullRequestWorkspace } from "@/types/github";
+import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
   description?: string;
@@ -117,7 +117,6 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [body, setBody] = useState(initialBody ?? "");
   const [bodyDraft, setBodyDraft] = useState<string>();
   const [comment, setComment] = useState("");
-  const [reviewBody, setReviewBody] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
   const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PullRequestAction["action"]>();
@@ -271,12 +270,6 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     if (await runAction({ action: "comment", body: comment })) setComment("");
   }
 
-  /** Submits the selected GitHub review state with the optional review body. */
-  async function submitReview(event: PullRequestReviewEvent): Promise<void> {
-    if (pendingAction) return;
-    if (await runAction({ action: "review", body: reviewBody, event })) setReviewBody("");
-  }
-
   /** Saves the complete Markdown body to GitHub and updates the rendered description only after confirmation. */
   async function submitBody(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -291,6 +284,25 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
   return (
     <section className={`pr-workspace ${visibleBody || workspace.canEditBody ? "has-description" : ""}`}>
+      {celebrating && (
+        <div className="merge-celebration" aria-hidden="true">
+          {CELEBRATION_PARTICLES.map((particle, index) => (
+            <span
+              key={index}
+              style={{
+                "--pr-particle-drift": particle.drift,
+                animationDelay: particle.delay,
+                animationDuration: particle.duration,
+                backgroundColor: particle.color,
+                height: `${particle.size * 1.4}px`,
+                left: particle.left,
+                width: `${particle.size}px`,
+              } as ParticleStyle}
+            />
+          ))}
+        </div>
+      )}
+
       {(visibleBody || workspace.canEditBody) && (
         <section className="pr-description">
           <div className="pr-description-heading">
@@ -338,25 +350,6 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       )}
 
       <aside className="pr-conversation" aria-label="Pull request conversation">
-        {celebrating && (
-          <div className="merge-celebration" aria-hidden="true">
-            {CELEBRATION_PARTICLES.map((particle, index) => (
-              <span
-                key={index}
-                style={{
-                  "--pr-particle-drift": particle.drift,
-                  animationDelay: particle.delay,
-                  animationDuration: particle.duration,
-                  backgroundColor: particle.color,
-                  height: `${particle.size * 1.4}px`,
-                  left: particle.left,
-                  width: `${particle.size}px`,
-                } as ParticleStyle}
-              />
-            ))}
-          </div>
-        )}
-
         {workspace.state === "open" && (
           <header className="pr-conversation-heading">
             <div className="pr-state">
@@ -422,22 +415,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
         {!workspace.canComment && <p className="pr-signin-note">{workspace.hasGitHubAccess ? "Conversation locked on GitHub." : "Sign in with GitHub to comment, merge, or manage this pull request."}</p>}
 
-        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose || workspace.canReview) && workspace.state === "open" && (
+        {(workspace.workflowRuns.length > 0 || workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && workspace.state === "open" && (
           <div className="pr-actions">
-            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose || workspace.canReview) && <div className="pr-action-row">
-              {workspace.canReview && (
-                <details className="pr-review-form">
-                  <summary>Review</summary>
-                  <div className="pr-review-form-panel">
-                    <textarea aria-label="Pull request review" disabled={Boolean(pendingAction)} onChange={(event) => setReviewBody(event.target.value)} placeholder="Leave a review comment…" value={reviewBody} />
-                    <div>
-                      <button disabled={Boolean(pendingAction) || !reviewBody.trim()} onClick={() => void submitReview("REQUEST_CHANGES")} type="button">Request changes</button>
-                      <button disabled={Boolean(pendingAction) || !reviewBody.trim()} onClick={() => void submitReview("COMMENT")} type="button">Comment</button>
-                      <button disabled={Boolean(pendingAction)} onClick={() => void submitReview("APPROVE")} type="button">Approve</button>
-                    </div>
-                  </div>
-                </details>
-              )}
+            {(workspace.canManageMerge || workspace.canMarkReady || workspace.canClose) && <div className="pr-action-row">
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Mark ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">

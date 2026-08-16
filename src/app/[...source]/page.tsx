@@ -110,6 +110,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         filePath={document.filePath}
         openAIConnected={openAIConnected}
         repositoryRef={document.repositoryRef}
+        reviewThreads={document.pullRequest?.reviewThreads}
         source={source}
       />
     </main>

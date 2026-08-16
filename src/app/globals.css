@@ -1750,8 +1750,7 @@ button {
 .edit-pr-button,
 .merge-button,
 .ready-review-button,
-.close-pr-button,
-.pr-review-form button {
+.close-pr-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1775,8 +1774,7 @@ button {
 .edit-pr-button:disabled,
 .merge-button:disabled,
 .ready-review-button:disabled,
-.close-pr-button:disabled,
-.pr-review-form button:disabled {
+.close-pr-button:disabled {
   cursor: default;
   opacity: 0.45;
 }
@@ -1788,81 +1786,6 @@ button {
   color: var(--faint);
   font-size: 10px;
   line-height: 1.5;
-}
-
-.pr-review-form {
-  position: relative;
-}
-
-.pr-review-form summary {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid #3c3c48;
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
-  list-style: none;
-}
-
-.pr-review-form summary::-webkit-details-marker {
-  display: none;
-}
-
-.pr-review-form[open] {
-  z-index: 2;
-}
-
-.pr-review-form[open] > summary {
-  border-top-right-radius: 0;
-  border-top-left-radius: 0;
-  background: #24242a;
-}
-
-/* Keep the review editor inside the clipped conversation panel. */
-.pr-review-form-panel {
-  position: absolute;
-  bottom: 28px;
-  right: 0;
-  box-sizing: border-box;
-  display: grid;
-  width: min(300px, calc(100vw - 48px));
-  border: 1px solid #3c3c48;
-  border-top-right-radius: 6px;
-  border-top-left-radius: 6px;
-  background: #17171d;
-}
-
-.pr-review-form textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 84px;
-  padding: 8px;
-  border: 0;
-  border-bottom: 1px solid #3c3c48;
-  resize: vertical;
-  outline: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.pr-review-form-panel > div {
-  display: flex;
-  justify-content: end;
-  gap: 5px;
-  min-height: 37px;
-  padding: 5px;
-}
-
-.pr-review-form button {
-  padding: 0 7px;
-  background: #2b2b33;
-  color: #dedee5;
 }
 
 .pr-actions {
@@ -2026,6 +1949,8 @@ button {
   display: flex;
   min-width: 0;
   align-items: center;
+  border-radius: 6px;
+  background: #1b4d2a;
 }
 
 .merge-method-dropdown {
@@ -2039,7 +1964,8 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid #103319;
+  border: 0;
+  border-left: 1px solid #103319;
   border-radius: 0 6px 6px 0;
   outline: 0;
   background: #1b4d2a;
@@ -2051,7 +1977,7 @@ button {
 }
 
 .merge-method-trigger[aria-expanded="true"] {
-  border-color: #236136;
+  border-left-color: #174723;
   background: #236136;
 }
 
@@ -2331,8 +2257,8 @@ button {
 }
 
 .merge-celebration {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 130;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
@@ -3193,6 +3119,34 @@ button {
   opacity: 0.48;
 }
 
+/* A successful clipboard write gets a short, calm confirmation before the normal icon returns. */
+.copy-annotations.copied {
+  border-color: #3c8055;
+  background: #183723;
+  color: #a4e6b8;
+  animation: copy-annotations-confirm 180ms ease-out;
+}
+
+.copy-annotations.copied > svg {
+  animation: copy-annotations-check 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes copy-annotations-confirm {
+  50% { transform: scale(1.035); }
+}
+
+@keyframes copy-annotations-check {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-12deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 .annotation-copy-status {
   display: block;
   padding: 6px 12px;
@@ -3224,7 +3178,33 @@ button {
   line-height: 1.45;
 }
 
-.annotation-composer > div {
+.annotation-composer-header {
+  display: flex;
+  height: 22px;
+  align-items: center;
+  color: #aaa5b4;
+  cursor: grab;
+  font-size: 10px;
+  font-weight: 620;
+  touch-action: none;
+  user-select: none;
+}
+
+.annotation-composer-header:active {
+  cursor: grabbing;
+}
+
+.annotation-composer-header > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.annotation-composer-header .drag-hint {
+  color: #6b6575;
+}
+
+.annotation-composer-actions {
   display: flex;
   justify-content: flex-end;
   gap: 7px;
@@ -3481,13 +3461,15 @@ button {
 .annotation-item {
   display: flex;
   align-items: flex-start;
+  min-height: 72px;
+  position: relative;
   border-top: 1px solid #211f25;
 }
 
-.annotation-item > button:first-child {
+.annotation-open {
   flex: 1;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 8px 47px 8px 12px;
   overflow: hidden;
   border: 0;
   background: transparent;
@@ -3501,7 +3483,7 @@ button {
   white-space: normal;
 }
 
-.annotation-item > button:first-child:hover {
+.annotation-open:hover {
   color: #ece8f4;
 }
 
@@ -3537,7 +3519,7 @@ button {
   margin-top: 4px;
 }
 
-.annotation-item > button:last-child {
+.annotation-remove {
   display: grid;
   width: 27px;
   height: 29px;
@@ -3546,10 +3528,58 @@ button {
   background: transparent;
   color: #77717f;
   cursor: pointer;
+  position: absolute;
+  right: 0;
+  top: 4px;
 }
 
-.annotation-item > button:last-child:hover {
+.annotation-remove:hover {
   color: #dc949a;
+}
+
+.annotation-github {
+  display: grid;
+  width: 35px;
+  height: 35px;
+  place-items: center;
+  border: 1px solid #3b3643;
+  border-radius: 6px;
+  background: #1a1720;
+  color: #bfb3dc;
+  cursor: pointer;
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+}
+
+.annotation-github:hover:not(:disabled) {
+  border-color: #7d7297;
+  background: #25202d;
+  color: #f3efff;
+}
+
+.annotation-github.confirming {
+  border-color: #6fb986;
+  background: #183a29;
+  color: #a9e9bc;
+}
+
+.annotation-github:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.annotation-github:focus-visible {
+  outline: 2px solid #8e7cc3;
+  outline-offset: 2px;
+}
+
+.annotation-github-status {
+  display: block;
+  padding: 6px 12px;
+  border-top: 1px solid #211f25;
+  color: #f09aa2;
+  font-size: 10px;
 }
 
 .openai-session-error {
@@ -3927,7 +3957,7 @@ button {
 }
 
 .question-suggestion > span {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

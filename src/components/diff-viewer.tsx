@@ -14,8 +14,8 @@ import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
-import type { RepositoryFile } from "@/types/github";
-import type { ProgrammaticSelection } from "./selection-question";
+import type { PullRequestReviewThread, RepositoryFile } from "@/types/github";
+import type { ChatMarker, ChatResumeRequest, LocalAnnotationMarker, ProgrammaticSelection } from "./selection-question";
 
 // Keep the Markdown chat bundle out of reviews that have no OpenAI session.
 const SelectionQuestion = dynamic(
@@ -31,6 +31,7 @@ type DiffViewerProps = {
   filePath?: string;
   openAIConnected: boolean;
   repositoryRef?: string;
+  reviewThreads?: PullRequestReviewThread[];
   source: string[];
 };
 
@@ -42,10 +43,127 @@ type CodeLocation = {
   side?: "additions" | "deletions";
 };
 
+type InlineCommentMarker = {
+  chatId?: string;
+  endLine: number;
+  id: string;
+  lane?: number;
+  markerId?: string;
+  path: string;
+  side: "additions" | "deletions";
+  startLine: number;
+  tone: "chat" | "github" | "local";
+};
+
 const EMPTY_FILES: FileDiffMetadata[] = [];
 const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
+const EMPTY_REVIEW_THREADS: PullRequestReviewThread[] = [];
+const CALL_FLOW_EAGER_LOAD_LIMIT = 100_000;
+// Keep the selected client-side review surface shareable without changing the server route.
+const REVIEW_TAB_HASH = { "call-flow": "#call-flow", files: "#files-changed" } as const;
 const DEFAULT_CODE_FONT_SIZE = 13;
 const MAX_CODE_FONT_SIZE = 24;
+
+type ReviewView = keyof typeof REVIEW_TAB_HASH;
+
+const INLINE_COMMENT_MARKER_CSS = `
+  [data-column-number] > .diffs-inline-comment-marker {
+    --diffs-inline-comment-color: #58a6ff;
+    background: var(--diffs-inline-comment-color);
+    bottom: 0;
+    pointer-events: none;
+    position: absolute;
+    right: calc(-4px - var(--diffs-inline-comment-offset, 0px));
+    top: 0;
+    width: 2px;
+    z-index: 4;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="github"] {
+    --diffs-inline-comment-color: #56c271;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"] {
+    --diffs-inline-comment-color: #a78bfa;
+    appearance: none;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+    pointer-events: auto;
+    right: calc(-10px - var(--diffs-inline-comment-offset, 0px));
+    width: 10px;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"]::after {
+    background: var(--diffs-inline-comment-color);
+    bottom: 0;
+    content: "";
+    left: 4px;
+    position: absolute;
+    top: 0;
+    width: 2px;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"]::before {
+    background: var(--diffs-inline-comment-color);
+    left: 5px;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="single"] {
+    bottom: auto;
+    height: 0;
+    top: 50%;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"] {
+    height: 12px;
+    top: calc(50% - 6px);
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"]::after {
+    bottom: auto;
+    height: 0;
+    top: 6px;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"][data-position="single"]::before {
+    left: 6px;
+    top: 6px;
+    transform: translate(0, -50%);
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="start"] {
+    top: 50%;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="end"] {
+    bottom: 50%;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="single"]::before,
+  [data-column-number] > .diffs-inline-comment-marker[data-position="start"]::before,
+  [data-column-number] > .diffs-inline-comment-marker[data-position="end"]::before {
+    background: inherit;
+    border-radius: 999px;
+    content: "";
+    height: 6px;
+    left: 50%;
+    position: absolute;
+    top: 0;
+    transform: translate(-50%, -50%);
+    width: 6px;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="single"]::before {
+    left: 100%;
+    transform: translate(0, -50%);
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker[data-position="end"]::before {
+    top: 100%;
+  }
+`;
 
 configureDiffHighlighting();
 
@@ -75,6 +193,50 @@ function repositoryFileUrl(source: string[], repositoryRef: string, filePath: st
   return `/${repository}/blob/${encodeURIComponent(repositoryRef)}/${path}${lineHash}`;
 }
 
+/** Creates one vertical marker range, splitting selections that cross diff sides. */
+function commentRangeMarkers(id: string, path: string, startLine: number, endLine: number, startSide: "additions" | "deletions" | undefined, endSide: "additions" | "deletions" | undefined, tone: InlineCommentMarker["tone"], chatId?: string, markerId?: string): InlineCommentMarker[] {
+  const start = Math.min(startLine, endLine);
+  const side = startSide ?? endSide ?? "additions";
+  const end = Math.max(startLine, endLine);
+  if (!startSide || !endSide || startSide === endSide || start === end) {
+    return [{ chatId, endLine: end, id, markerId, path, side, startLine: start, tone }];
+  }
+
+  return [
+    { chatId, endLine: start, id: `${id}-start`, markerId, path, side: startSide, startLine: start, tone },
+    { chatId, endLine: end, id: `${id}-end`, markerId, path, side: endSide, startLine: end, tone },
+  ];
+}
+
+/** Returns the visual segment that a marker contributes to one rendered line. */
+function markerPosition(marker: InlineCommentMarker, lineNumber: number): "end" | "middle" | "single" | "start" | null {
+  if (lineNumber < marker.startLine || lineNumber > marker.endLine) return null;
+  if (marker.startLine === marker.endLine) return "single";
+  if (lineNumber === marker.startLine) return "start";
+  if (lineNumber === marker.endLine) return "end";
+  return "middle";
+}
+
+/** Packs only overlapping ranges into adjacent gutter lanes, keeping unrelated markers close to the code. */
+function assignMarkerLanes(markers: InlineCommentMarker[]): InlineCommentMarker[] {
+  const laneEndsBySide = new Map<InlineCommentMarker["side"], number[]>();
+  return [...markers]
+    .sort((left, right) => left.startLine - right.startLine || left.endLine - right.endLine)
+    .map((marker) => {
+      const laneEnds = laneEndsBySide.get(marker.side) ?? [];
+      const reusableLane = laneEnds.findIndex((endLine) => endLine < marker.startLine);
+      const lane = reusableLane === -1 ? laneEnds.length : reusableLane;
+      laneEnds[lane] = marker.endLine;
+      laneEndsBySide.set(marker.side, laneEnds);
+      return { ...marker, lane };
+    });
+}
+
+/** Maps tab fragments and existing source-line fragments onto a review tab. */
+function reviewViewFromHash(hash: string): ReviewView {
+  return hash === REVIEW_TAB_HASH["call-flow"] ? "call-flow" : "files";
+}
+
 /** Fetches, parses, navigates, and renders the full GitHub patch. */
 export function DiffViewer({
   additions,
@@ -84,10 +246,15 @@ export function DiffViewer({
   filePath,
   openAIConnected,
   repositoryRef,
+  reviewThreads = EMPTY_REVIEW_THREADS,
   source,
 }: DiffViewerProps) {
   const repository = defaultBranch !== undefined;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
+  const sourceKey = source.join("\0");
+  const changedLineCount = additions !== undefined && deletions !== undefined ? additions + deletions : undefined;
+  // Background analysis stays bounded by the PR's known changed-line total.
+  const eagerCallFlow = callDiffAvailable && changedLineCount !== undefined && changedLineCount <= CALL_FLOW_EAGER_LOAD_LIMIT;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -96,20 +263,104 @@ export function DiffViewer({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
-  const [reviewView, setReviewView] = useState<"call-flow" | "files">("files");
+  const [reviewView, setReviewView] = useState<ReviewView>("files");
   // Retain completed analysis for the current source without carrying it to the next review.
   const [loadedCallFlowSource, setLoadedCallFlowSource] = useState<string>();
   const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
+  const [localAnnotations, setLocalAnnotations] = useState<LocalAnnotationMarker[]>([]);
+  const [chatMarkers, setChatMarkers] = useState<ChatMarker[]>([]);
+  const [resumeChat, setResumeChat] = useState<ChatResumeRequest>();
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
-  const sourceKey = source.join("\0");
-  const callFlowLoaded = loadedCallFlowSource === sourceKey;
+  const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
+
+  /** Mounts the Call Flow view once so a request can survive a later tab switch. */
+  const loadCallFlow = useCallback(() => {
+    setLoadedCallFlowSource(sourceKey);
+  }, [sourceKey]);
+
+  /** Sends a gutter-marker click back to the chat component with a fresh sequence each time. */
+  const resumeChatFromMarker = useCallback((chatId: string, markerId: string) => {
+    setResumeChat((current) => ({ chatId, markerId, sequence: (current?.sequence ?? 0) + 1 }));
+  }, []);
+
+  /** Selects a review tab and records it without triggering browser anchor scrolling. */
+  const selectReviewView = useCallback((view: ReviewView) => {
+    if (view === "call-flow") loadCallFlow();
+    setReviewView(view);
+
+    const hash = REVIEW_TAB_HASH[view];
+    if (window.location.hash !== hash) window.history.pushState(window.history.state, "", hash);
+  }, [loadCallFlow]);
+
+  const inlineCommentMarkers = useMemo(() => {
+    const localMarkers = localAnnotations.flatMap(({ id, location }) => {
+      if (!location) return [];
+      return commentRangeMarkers(
+        `annotation-${id}`,
+        location.id,
+        location.lineNumber,
+        location.endLineNumber ?? location.lineNumber,
+        location.side,
+        location.endSide,
+        "local",
+      );
+    });
+    const githubMarkers = reviewThreads.flatMap((thread, index) => {
+      const endLine = thread.line ?? thread.originalLine;
+      if (!endLine) return [];
+      const startLine = thread.startLine ?? thread.originalStartLine ?? endLine;
+      const side = thread.side === "LEFT" ? "deletions" : "additions";
+      return commentRangeMarkers(`review-${thread.id ?? index}`, thread.path, startLine, endLine, side, side, "github");
+    });
+    const chatRangeMarkers = chatMarkers.flatMap((marker) => commentRangeMarkers(
+      `chat-${marker.id}`,
+      marker.location.id,
+      marker.location.lineNumber,
+      marker.location.endLineNumber ?? marker.location.lineNumber,
+      marker.location.side,
+      marker.location.endSide,
+      "chat",
+      marker.chatId,
+      marker.id,
+    ));
+    return [...localMarkers, ...githubMarkers, ...chatRangeMarkers];
+  }, [chatMarkers, localAnnotations, reviewThreads]);
+
+  const inlineCommentMarkersByFile = useMemo(() => {
+    const markersByFile = new Map<string, InlineCommentMarker[]>();
+    for (const marker of inlineCommentMarkers) {
+      const markers = markersByFile.get(marker.path) ?? [];
+      markers.push(marker);
+      markersByFile.set(marker.path, markers);
+    }
+    for (const [path, markers] of markersByFile) {
+      markersByFile.set(path, assignMarkerLanes(markers));
+    }
+    return markersByFile;
+  }, [inlineCommentMarkers]);
 
   // FileTree retains its first callback, so keep the current tab in a ref for its selection handler.
   useEffect(() => {
     reviewViewRef.current = reviewView;
   }, [reviewView]);
+
+  useEffect(() => {
+    if (!callDiffAvailable) return;
+
+    /** Restores a tab from a shared URL and follows browser back and forward navigation. */
+    function syncReviewView(): void {
+      const view = reviewViewFromHash(window.location.hash);
+      if (view === "call-flow") loadCallFlow();
+      setReviewView(view);
+    }
+
+    if (!window.location.hash) window.history.replaceState(window.history.state, "", REVIEW_TAB_HASH.files);
+    syncReviewView();
+    window.addEventListener("hashchange", syncReviewView);
+    return () => window.removeEventListener("hashchange", syncReviewView);
+  }, [callDiffAvailable, loadCallFlow]);
 
   useEffect(() => {
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
@@ -195,12 +446,12 @@ export function DiffViewer({
     }
 
     if (reviewView === "call-flow") {
-      setReviewView("files");
+      selectReviewView("files");
       window.requestAnimationFrame(selectCode);
       return;
     }
     selectCode();
-  }, [reviewView]);
+  }, [reviewView, selectReviewView]);
 
   /** Converts one Call Flow click into the same source-anchored selection used by Ask Diffs. */
   const selectCallFlowNode = useCallback((selection: CallDiffSelection) => {
@@ -348,6 +599,47 @@ export function DiffViewer({
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",
+    onPostRender: (node, _instance, phase, context) => {
+      if (phase === "unmount") return;
+
+      const shadowRoot = node.shadowRoot;
+      if (!shadowRoot) return;
+
+      shadowRoot.querySelectorAll(".diffs-inline-comment-marker").forEach((marker) => marker.remove());
+      const markers = inlineCommentMarkersByFile.get(context.item.id);
+      if (!markers?.length) return;
+
+      const gutters = [...shadowRoot.querySelectorAll<HTMLElement>("[data-column-number]")];
+      for (const marker of markers) {
+        for (const gutter of gutters) {
+          const lineNumber = Number(gutter.dataset.columnNumber);
+          const position = markerPosition(marker, lineNumber);
+          if (!position || Number.isNaN(lineNumber)) continue;
+
+          const lineType = gutter.dataset.lineType;
+          const column = gutter.closest("[data-code]");
+          const side = lineType === "change-deletion" || column?.hasAttribute("data-deletions") ? "deletions" : marker.side;
+          if (side !== marker.side) continue;
+
+          const element = document.createElement(marker.tone === "chat" ? "button" : "span");
+          element.className = "diffs-inline-comment-marker";
+          element.dataset.position = position;
+          element.dataset.tone = marker.tone;
+          element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 8}px`);
+          if (marker.tone === "chat" && marker.chatId && marker.markerId) {
+            element.classList.add("diffs-inline-chat-marker");
+            element.setAttribute("aria-label", "Resume Ask Diffs chat");
+            if (element instanceof HTMLButtonElement) element.type = "button";
+            element.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              resumeChatFromMarker(marker.chatId!, marker.markerId!);
+            });
+          }
+          gutter.append(element);
+        }
+      }
+    },
     // Pierre renders separators in a shadow root, so make each hidden range's disclosure state explicit there.
     unsafeCSS: `
       [data-expand-index] [data-expand-button] [data-icon] { display: none; }
@@ -356,16 +648,17 @@ export function DiffViewer({
         transition: transform 100ms ease-out;
       }
       [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
+      ${INLINE_COMMENT_MARKER_CSS}
     `,
-  }), [repository, split]);
+  }), [inlineCommentMarkersByFile, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
 
   const reviewTabs = callDiffAvailable && (
     <div aria-label="Review view" className="review-tabs" role="tablist">
-      <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => setReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
-      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => { setLoadedCallFlowSource(sourceKey); setReviewView("call-flow"); }} role="tab" type="button"><Network size={13} /> Call flow</button>
+      <button aria-controls="files-review" aria-selected={!showingCallDiff} id="files-review-tab" onClick={() => selectReviewView("files")} role="tab" type="button"><FileText size={13} /> Files changed</button>
+      <button aria-controls="call-flow-review" aria-selected={showingCallDiff} id="call-flow-review-tab" onClick={() => selectReviewView("call-flow")} onFocus={loadCallFlow} onPointerEnter={loadCallFlow} role="tab" type="button"><Network size={13} /> Call flow</button>
     </div>
   );
   const fileSidebar = (
@@ -460,7 +753,7 @@ export function DiffViewer({
         </div>
       </div>
       </>}
-      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} source={source} />
+      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} annotationPaths={paths} onAnnotationsChange={setLocalAnnotations} onChatMarkersChange={setChatMarkers} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} resumeChat={resumeChat} source={source} />
     </section>
   );
 }

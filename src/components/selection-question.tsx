@@ -1,9 +1,10 @@
 "use client";
 
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
-import { ClipboardCopy, CornerDownLeft, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
-import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check, ClipboardCopy, CornerDownLeft, Github, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import type { CSSProperties } from "react";
+import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
@@ -19,6 +20,7 @@ const DEFAULT_QUESTION = "What does this code do?";
 const DEFAULT_CHAT_FONT_SIZE = 12;
 const MAX_CHAT_FONT_SIZE = 22;
 const MIN_CHAT_FONT_SIZE = 10;
+const CHAT_FONT_SIZE_STORAGE_KEY = "diffs:chat-font-size";
 const MAX_PRIOR_HIGHLIGHTS = 3;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
@@ -51,12 +53,45 @@ type Annotation = {
   text: string;
 };
 
+export type LocalAnnotationMarker = Pick<Annotation, "id"> & {
+  location?: CodeSelectionLocation;
+};
+
+export type ChatMarker = {
+  chatId: string;
+  id: string;
+  location: CodeSelectionLocation;
+};
+
+export type ChatResumeRequest = {
+  chatId: string;
+  markerId: string;
+  sequence: number;
+};
+
 type StoredAnnotation = Omit<Annotation, "selection"> & {
   selection: Pick<CodeSelection, "location" | "text">;
 };
 
 type AnnotationDraft = Point & {
   selection: CodeSelection;
+  text: string;
+};
+
+type ChatSession = {
+  draft: string;
+  id: string;
+  markers: Array<{ id: string; selection: CodeSelection }>;
+  priorHighlights: string[];
+  selection: SelectionState;
+  suggestion: string;
+  turns: ChatTurn[];
+};
+
+type ModelAnnotation = {
+  code: string;
+  line: number;
+  path: string;
   text: string;
 };
 
@@ -92,8 +127,12 @@ export type ProgrammaticSelection = Point & {
 type SelectionQuestionProps = {
   aiEnabled: boolean;
   annotationContainerKey?: string;
+  annotationPaths: string[];
+  onAnnotationsChange?: (annotations: LocalAnnotationMarker[]) => void;
+  onChatMarkersChange?: (markers: ChatMarker[]) => void;
   programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
+  resumeChat?: ChatResumeRequest;
   source: string[];
 };
 
@@ -120,12 +159,56 @@ type SelectedSnippetProps = {
   onShow: (selection: CodeSelection) => void;
 };
 
+type SyntaxSnippetProps = {
+  active: boolean;
+  className?: string;
+  codeSelection: CodeSelection;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+};
+
+type AnnotationSnippetProps = {
+  codeSelection: CodeSelection;
+};
+
 type SnippetToken = {
   color?: string;
   content: string;
 };
 
-/** Formats source-anchored annotations and their selected code as Markdown ready to paste into a review. */
+/** Builds a GitHub-style patch fragment from one copied annotation. */
+function annotationDiff(code: string, location?: CodeSelectionLocation): string[] {
+  const lines = code.split("\n");
+  if (!location) return lines;
+
+  const selectionStaysOnOneSide = !location.endSide || location.endSide === location.side;
+  const side = selectionStaysOnOneSide ? location.side : undefined;
+  const prefix = side === "additions" ? "+" : side === "deletions" ? "-" : " ";
+  const oldRange = side === "additions" ? `${location.lineNumber},0` : `${location.lineNumber},${lines.length}`;
+  const newRange = side === "deletions" ? `${location.lineNumber},0` : `${location.lineNumber},${lines.length}`;
+
+  return [
+    `diff --git a/${location.id} b/${location.id}`,
+    `--- a/${location.id}`,
+    `+++ b/${location.id}`,
+    `@@ -${oldRange} +${newRange} @@`,
+    ...lines.map((line) => `${prefix}${line}`),
+  ];
+}
+
+/** Wraps copied code in a fence longer than any backtick run it contains. */
+function annotationCodeFence(language: string, lines: string[]): string[] {
+  let fenceLength = 3;
+
+  for (const match of lines.join("\n").matchAll(/`+/g)) {
+    fenceLength = Math.max(fenceLength, match[0].length + 1);
+  }
+
+  const fence = "`".repeat(fenceLength);
+  return [`${fence}${language}`, ...lines, fence];
+}
+
+/** Formats annotations as GitHub-style patches plus language-tagged source blocks. */
 function formattedAnnotations(annotations: Annotation[]): string {
   return annotations.map((annotation) => {
     const location = annotation.selection.location;
@@ -137,8 +220,10 @@ function formattedAnnotations(annotations: Annotation[]): string {
     // Continuations must remain part of their source-anchored list item.
     const text = annotation.text.replace(/\r?\n/g, "\n  ");
     const code = annotation.selection.text.replace(/\r?\n/g, "\n");
-    const copiedLines = code.split("\n").map((line) => `  ${line}`);
-    return [`- ${reference}${text}`, "", "  ```", ...copiedLines, "  ```"].join("\n");
+    const diffLines = annotationCodeFence("diff", annotationDiff(code, location)).map((line) => `  ${line}`);
+    const language = location ? getFiletypeFromFileName(location.id) : "text";
+    const copiedLines = annotationCodeFence(language, code.split("\n")).map((line) => `  ${line}`);
+    return [`- ${reference}${text}`, "", ...diffLines, "", ...copiedLines].join("\n");
   }).join("\n");
 }
 
@@ -186,6 +271,26 @@ function storeAnnotations(sourceKey: string, annotations: Annotation[]): void {
     else window.localStorage.removeItem(annotationStorageKey(sourceKey));
   } catch {
     // The note remains usable for this page when browser storage is unavailable.
+  }
+}
+
+/** Restores a valid user-wide Ask Diffs text size without trusting stale browser data. */
+function storedChatFontSize(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(CHAT_FONT_SIZE_STORAGE_KEY));
+    if (!Number.isInteger(stored) || stored < MIN_CHAT_FONT_SIZE || stored > MAX_CHAT_FONT_SIZE) return DEFAULT_CHAT_FONT_SIZE;
+    return stored;
+  } catch {
+    return DEFAULT_CHAT_FONT_SIZE;
+  }
+}
+
+/** Saves the user-wide Ask Diffs text size while allowing the panel to work without storage. */
+function storeChatFontSize(size: number): void {
+  try {
+    window.localStorage.setItem(CHAT_FONT_SIZE_STORAGE_KEY, String(size));
+  } catch {
+    // The current chat stays resized when browser storage is unavailable.
   }
 }
 
@@ -277,9 +382,8 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   };
 }
 
-/** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
-function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
-  const [active, setActive] = useState(false);
+/** Renders plain code until hover or focus requests cached Pierre syntax tokens. */
+function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouseLeave }: SyntaxSnippetProps) {
   const [tokens, setTokens] = useState<SnippetToken[][]>();
 
   useEffect(() => {
@@ -305,9 +409,29 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
     };
   }, [active, codeSelection.location, codeSelection.text, tokens]);
 
-  /** Returns to plain text after hover unless the click left this button focused. */
-  function stopHighlighting(event: ReactMouseEvent<HTMLButtonElement>): void {
-    if (document.activeElement !== event.currentTarget) setActive(false);
+  return (
+    <span className={className} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      {active && tokens
+        ? tokens.map((line, lineIndex) => (
+            <Fragment key={lineIndex}>
+              {line.map((token, tokenIndex) => (
+                <span key={tokenIndex} style={{ color: token.color }}>{token.content}</span>
+              ))}
+              {lineIndex < tokens.length - 1 ? "\n" : null}
+            </Fragment>
+          ))
+        : codeSelection.text}
+    </span>
+  );
+}
+
+/** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
+function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
+  const [active, setActive] = useState(false);
+
+  /** Returns to plain text when the pointer leaves the saved selection. */
+  function stopHighlighting(): void {
+    setActive(false);
   }
 
   /** Reveals the source and preserves syntax colors for pointer clicks that do not focus buttons. */
@@ -327,23 +451,30 @@ function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
       title="Show this code in the diff"
       type="button"
     >
-      {active && tokens
-        ? tokens.map((line, lineIndex) => (
-            <Fragment key={lineIndex}>
-              {line.map((token, tokenIndex) => (
-                <span key={tokenIndex} style={{ color: token.color }}>{token.content}</span>
-              ))}
-              {lineIndex < tokens.length - 1 ? "\n" : null}
-            </Fragment>
-          ))
-        : codeSelection.text}
+      <SyntaxSnippet active={active} codeSelection={codeSelection} />
     </button>
   );
 }
 
+/** Shows syntax colors for a compact annotation snippet only while the pointer is over it. */
+function AnnotationSnippet({ codeSelection }: AnnotationSnippetProps) {
+  const [active, setActive] = useState(false);
+
+  return (
+    <SyntaxSnippet
+      active={active}
+      className="annotation-code"
+      codeSelection={codeSelection}
+      onMouseEnter={() => setActive(true)}
+      onMouseLeave={() => setActive(false)}
+    />
+  );
+}
+
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealSelection, programmaticSelection, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, onAnnotationsChange, onChatMarkersChange, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
+  const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -354,17 +485,23 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
-  const [chatFontSize, setChatFontSize] = useState(DEFAULT_CHAT_FONT_SIZE);
+  const [chatFontSize, setChatFontSize] = useState(storedChatFontSize);
   // Keep the user-visible scale anchored to the default Ask Diffs text size.
   const chatZoomPercent = Math.round((chatFontSize / DEFAULT_CHAT_FONT_SIZE) * 100);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotationStorageSource, setAnnotationStorageSource] = useState<string>();
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
   const [pendingSelection, setPendingSelection] = useState<CodeSelection | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [annotationSidebar, setAnnotationSidebar] = useState<HTMLElement | null>(null);
+  const [githubAnnotationConfirmation, setGithubAnnotationConfirmation] = useState<string>();
+  const [githubAnnotationError, setGithubAnnotationError] = useState("");
+  const [githubAnnotationPending, setGithubAnnotationPending] = useState<string>();
+  const [chatMarkers, setChatMarkers] = useState<ChatMarker[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const draggedPanelRef = useRef<HTMLElement | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -377,6 +514,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const annotationCounterRef = useRef(0);
+  const activeChatIdRef = useRef<string | undefined>(undefined);
+  const chatCounterRef = useRef(0);
+  const chatSessionsRef = useRef(new Map<string, ChatSession>());
+  // A parent-held resume request must restore its chat once even if that restore rerenders this component.
+  const lastResumedChatSequenceRef = useRef<number | undefined>(undefined);
   const queuedQuestionsRef = useRef<QueuedQuestion[]>([]);
   const queuedQuestionCounterRef = useRef(0);
 
@@ -384,6 +526,61 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   function clearQueuedQuestions(): void {
     queuedQuestionsRef.current = [];
     setQueuedQuestions([]);
+  }
+
+  /** Gives each selected source range one stable marker identity within its chat. */
+  function chatMarkerLocationKey(location: CodeSelectionLocation): string {
+    return [
+      location.id,
+      location.lineNumber,
+      location.endLineNumber ?? location.lineNumber,
+      location.side ?? "",
+      location.endSide ?? location.side ?? "",
+    ].join("\0");
+  }
+
+  /** Saves the visible chat state so its purple source marker can reopen the same conversation. */
+  const saveActiveChat = useCallback((): void => {
+    const chatId = activeChatIdRef.current;
+    const chat = chatId ? chatSessionsRef.current.get(chatId) : undefined;
+    if (!chat) return;
+
+    chat.draft = question;
+    chat.priorHighlights = [...priorHighlightsRef.current];
+    chat.selection = selection ?? chat.selection;
+    chat.suggestion = suggestion;
+    chat.turns = turns;
+  }, [question, selection, suggestion, turns]);
+
+  /** Starts a track lazily and adds a purple marker only after selected code is actually asked about. */
+  function trackQuestionSelection(codeSelection: SelectionState): void {
+    if (!codeSelection.text || !codeSelection.location) return;
+
+    let chatId = activeChatIdRef.current;
+    let chat = chatId ? chatSessionsRef.current.get(chatId) : undefined;
+    if (!chat) {
+      chatCounterRef.current += 1;
+      chatId = `chat-${chatCounterRef.current}`;
+      chat = {
+        draft: question,
+        id: chatId,
+        markers: [],
+        priorHighlights: [...priorHighlightsRef.current],
+        selection: codeSelection,
+        suggestion,
+        turns,
+      };
+      chatSessionsRef.current.set(chatId, chat);
+      activeChatIdRef.current = chatId;
+    }
+
+    chat.selection = codeSelection;
+    const locationKey = chatMarkerLocationKey(codeSelection.location);
+    if (chat.markers.some((marker) => marker.selection.location && chatMarkerLocationKey(marker.selection.location) === locationKey)) return;
+
+    const markerId = `chat-marker-${chat.id}-${chat.markers.length + 1}`;
+    chat.markers.push({ id: markerId, selection: codeSelection });
+    setChatMarkers((current) => [...current, { chatId: chat.id, id: markerId, location: codeSelection.location! }]);
   }
 
   /** Holds a submitted prompt until the active answer has finished streaming. */
@@ -426,12 +623,31 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       return Number.isInteger(suffix) ? Math.max(highest, suffix) : highest;
     }, 0);
     setAnnotations(restoredAnnotations);
+    setAnnotationStorageSource(sourceKey);
     setAnnotationDraft(null);
     setCopyStatus("");
+    setGithubAnnotationConfirmation(undefined);
+    setGithubAnnotationError("");
+    setGithubAnnotationPending(undefined);
+    activeChatIdRef.current = undefined;
+    chatCounterRef.current = 0;
+    chatSessionsRef.current.clear();
+    setChatMarkers([]);
     activeChatSelectionRef.current = undefined;
     chatOpenRef.current = false;
     priorHighlightsRef.current = [];
   }, [sourceKey]);
+
+  useEffect(() => {
+    // Do not let the initial empty render erase annotations before this source has restored them.
+    if (annotationStorageSource !== sourceKey) return;
+    storeAnnotations(sourceKey, annotations);
+  }, [annotationStorageSource, annotations, sourceKey]);
+
+  useEffect(() => {
+    // Zoom is a user preference, unlike the PR-specific conversation and annotations above.
+    storeChatFontSize(chatFontSize);
+  }, [chatFontSize]);
 
   useEffect(() => {
     // The visible review tab owns the sidebar, so resolve its portal target only after that tab commits.
@@ -440,6 +656,49 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     });
     return () => window.cancelAnimationFrame(frame);
   }, [annotationContainerKey, sourceKey]);
+
+  useEffect(() => {
+    // The diff gutter needs only durable source locations, never the selected DOM range.
+    onAnnotationsChange?.(annotations.map(({ id, selection }) => ({ id, location: selection.location })));
+  }, [annotations, onAnnotationsChange]);
+
+  useEffect(() => {
+    // Marker state is separate from annotations because its click target resumes a chat instead of opening a note.
+    onChatMarkersChange?.(chatMarkers);
+  }, [chatMarkers, onChatMarkersChange]);
+
+  useEffect(() => {
+    // Keep the active conversation current without rerendering the durable gutter marker list for every streamed token.
+    saveActiveChat();
+  }, [saveActiveChat]);
+
+  useEffect(() => {
+    if (!resumeChat || lastResumedChatSequenceRef.current === resumeChat.sequence) return;
+
+    const chat = chatSessionsRef.current.get(resumeChat.chatId);
+    const marker = chat?.markers.find((candidate) => candidate.id === resumeChat.markerId);
+    if (!chat || !marker) return;
+
+    // Preserve a currently open track before the clicked marker switches back to another one.
+    lastResumedChatSequenceRef.current = resumeChat.sequence;
+    saveActiveChat();
+    requestRef.current?.abort();
+    requestRef.current = null;
+    activeChatIdRef.current = chat.id;
+    chatOpenRef.current = true;
+    followsConversationRef.current = true;
+    priorHighlightsRef.current = [...chat.priorHighlights];
+    setPendingSelection(null);
+    setSelection({ ...marker.selection, open: true });
+    setQuestion(chat.draft);
+    setTurns(chat.turns);
+    setLoading(false);
+    setSuggestion(chat.suggestion);
+    setAttachments([]);
+    clearQueuedQuestions();
+    setAttachmentError("");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }, [resumeChat, saveActiveChat]);
 
   useEffect(() => {
     if (!programmaticSelection) return;
@@ -520,6 +779,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
+      // A purple gutter marker resumes its existing chat instead of becoming a fresh code selection.
+      if (event.composedPath().some((target) => target instanceof Element && target.classList.contains("diffs-inline-chat-marker"))) return;
       if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-list, .selection-actions, .annotation-composer, .question-panel, .call-diff-viewer")) return;
       const pointer = { x: event.clientX, y: event.clientY };
       const origin = event.composedPath()[0];
@@ -610,6 +871,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     requestRef.current = null;
     followsConversationRef.current = true;
     chatOpenRef.current = true;
+    activeChatIdRef.current = undefined;
     chatSelectionRangeRef.current = undefined;
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
@@ -659,6 +921,16 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     });
   }
 
+  /** Stores a source-validated annotation emitted by Ask Diffs without requiring an active selection. */
+  function addModelAnnotation(annotation: Partial<ModelAnnotation>): void {
+    const path = typeof annotation.path === "string" ? annotation.path.trim() : "";
+    const line = annotation.line;
+    const text = typeof annotation.text === "string" ? annotation.text.trim() : "";
+    if (!path || typeof annotation.code !== "string" || typeof line !== "number" || !Number.isInteger(line) || line < 1 || !text) return;
+
+    addAnnotation({ location: { id: path, lineNumber: line }, text: annotation.code, x: 0, y: 0 }, text);
+  }
+
   /** Saves the manual annotation draft and returns the selection controls to their normal state. */
   function saveAnnotation(event: FormEvent): void {
     event.preventDefault();
@@ -675,6 +947,44 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       storeAnnotations(sourceKey, next);
       return next;
     });
+  }
+
+  /** Arms one annotation for GitHub, then posts it only after the user confirms with the checkmark. */
+  async function postAnnotationToGitHub(annotation: Annotation): Promise<void> {
+    const isPullRequest = source[2] === "pull" && /^\d+$/.test(source[3] ?? "");
+    if (!isPullRequest || githubAnnotationPending) return;
+
+    if (githubAnnotationConfirmation !== annotation.id) {
+      setGithubAnnotationConfirmation(annotation.id);
+      setGithubAnnotationError("");
+      return;
+    }
+
+    setGithubAnnotationPending(annotation.id);
+    setGithubAnnotationError("");
+    try {
+      const path = source.map(encodeURIComponent).join("/");
+      const response = await fetch(`/api/annotations/${path}`, {
+        body: JSON.stringify({
+          code: annotation.selection.text,
+          location: annotation.selection.location,
+          text: annotation.text,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const result = await response.json() as { error?: string; url?: string };
+      if (!response.ok || !result.url) throw new Error(result.error ?? "GitHub could not create the comment.");
+
+      removeAnnotation(annotation.id);
+      setGithubAnnotationConfirmation(undefined);
+      router.refresh();
+    } catch (error) {
+      setGithubAnnotationConfirmation(undefined);
+      setGithubAnnotationError(error instanceof Error ? error.message : "GitHub could not create the comment.");
+    } finally {
+      setGithubAnnotationPending(undefined);
+    }
   }
 
   /** Copies every source reference, selected code block, and annotation in one Markdown-ready clipboard payload. */
@@ -717,8 +1027,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     else element?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   }
 
-  /** Closes the panel and clears conversation state tied to the old selection. */
+  /** Closes the panel while preserving its marker-backed conversation for a later marker click. */
   function closePanel(): void {
+    saveActiveChat();
     // Aborting prevents a completed request from leaking into the next code selection.
     requestRef.current?.abort();
     requestRef.current = null;
@@ -734,11 +1045,12 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     setAttachments([]);
     clearQueuedQuestions();
     setAttachmentError("");
+    activeChatIdRef.current = undefined;
     activeChatSelectionRef.current = undefined;
     priorHighlightsRef.current = [];
   }
 
-  /** Places the panel inside the viewport and returns its clamped coordinates. */
+  /** Places a movable panel inside the viewport and retains an annotation composer position through draft rerenders. */
   function placePanel(panel: HTMLElement, left: number, top: number): Point {
     const maxX = Math.max(window.innerWidth - panel.offsetWidth - 8, 8);
     const maxY = Math.max(window.innerHeight - panel.offsetHeight - 8, 8);
@@ -746,13 +1058,18 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
     const y = Math.min(Math.max(top, 8), maxY);
     panel.style.left = `${x}px`;
     panel.style.top = `${y}px`;
+    if (panel.classList.contains("annotation-composer")) {
+      setAnnotationDraft((current) => {
+        if (!current || (current.x === x && current.y === y)) return current;
+        return { ...current, x, y };
+      });
+    }
     return { x, y };
   }
 
   /** Continues a released drag with friction until the panel naturally comes to rest. */
-  function continueMomentum(velocityX: number, velocityY: number): void {
-    const panel = panelRef.current;
-    if (!panel || Math.hypot(velocityX, velocityY) < 0.12) return;
+  function continueMomentum(panel: HTMLElement, velocityX: number, velocityY: number): void {
+    if (Math.hypot(velocityX, velocityY) < 0.12) return;
 
     let lastTime = performance.now();
     const move = (time: number): void => {
@@ -777,11 +1094,12 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   /** Starts moving the panel from its current rendered position. */
   function startDragging(event: ReactPointerEvent<HTMLDivElement>): void {
     if ((event.target as Element).closest("button")) return;
-    const panel = panelRef.current;
+    const panel = event.currentTarget.closest<HTMLElement>(".question-panel, .annotation-composer");
     if (!panel) return;
 
     const rect = panel.getBoundingClientRect();
     window.cancelAnimationFrame(momentumFrameRef.current);
+    draggedPanelRef.current = panel;
     dragRef.current = {
       lastTime: performance.now(),
       lastX: event.clientX,
@@ -803,7 +1121,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   /** Keeps the dragged panel fully inside the current viewport. */
   function movePanel(event: ReactPointerEvent<HTMLDivElement>): void {
     const drag = dragRef.current;
-    const panel = panelRef.current;
+    const panel = draggedPanelRef.current;
     if (!drag || !panel) return;
 
     const time = performance.now();
@@ -819,11 +1137,13 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   /** Ends panel movement and releases pointer capture. */
   function stopDragging(event: ReactPointerEvent<HTMLDivElement>): void {
     const drag = dragRef.current;
+    const panel = draggedPanelRef.current;
     dragRef.current = null;
+    draggedPanelRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (drag && event.type !== "pointercancel") continueMomentum(drag.velocityX, drag.velocityY);
+    if (drag && panel && event.type !== "pointercancel") continueMomentum(panel, drag.velocityX, drag.velocityY);
   }
 
   /** Starts a resize while preserving the opposite edge of the panel. */
@@ -972,8 +1292,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   ): Promise<void> {
     const submittedQuestion = value.trim();
     if (!questionSelection || !submittedQuestion || requestRef.current) return;
+    trackQuestionSelection(questionSelection);
     const selectedCode = questionSelection.text;
-    const annotationSelection = selectedCode ? questionSelection : undefined;
 
     const controller = new AbortController();
     requestRef.current = controller;
@@ -1042,10 +1362,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
+          annotationPaths,
           attachments: uploadedAttachments,
+          fullHistory: turns,
           history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
           question: submittedQuestion,
-          annotationSelection: annotationSelection?.text,
           priorHighlights: questionPriorHighlights,
           selection: selectedCode,
           source,
@@ -1071,10 +1392,10 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
 
         for (const line of lines) {
           if (!line) continue;
-          const event = JSON.parse(line) as { message?: string; text?: string; type?: string };
+          const event = JSON.parse(line) as { annotation?: Partial<ModelAnnotation>; message?: string; text?: string; type?: string };
           if (event.type === "delta" && event.text) queueDelta(event.text);
           if (event.type === "suggestion" && event.text) streamedSuggestion = event.text;
-          if (event.type === "annotation" && event.text && annotationSelection) addAnnotation(annotationSelection, event.text);
+          if (event.type === "annotation" && event.annotation) addModelAnnotation(event.annotation);
           if (event.type === "error") throw new Error(event.message);
         }
 
@@ -1162,6 +1483,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
   const triggerSelection = selection?.open ? pendingSelection : selection;
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
+  const canPostAnnotationsToGitHub = source[2] === "pull" && /^\d+$/.test(source[3] ?? "");
   const annotationList = annotations.length > 0 && (
     <div className="annotation-list">
       <div className="annotation-list-title">
@@ -1170,18 +1492,30 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
       </div>
       {annotations.map((annotation) => (
         <div className="annotation-item" key={annotation.id}>
-          <button onClick={() => showSelection(annotation.selection)} type="button">
+          <button className="annotation-open" onClick={() => showSelection(annotation.selection)} type="button">
             <span className="annotation-location">
               {annotation.selection.location
                 ? `${annotation.selection.location.id}:${annotation.selection.location.lineNumber}`
                 : "Selected code"}
             </span>
-            <span className="annotation-code">{annotation.selection.text}</span>
+            <AnnotationSnippet codeSelection={annotation.selection} />
             <span className="annotation-text">{annotation.text}</span>
           </button>
-          <button aria-label="Remove annotation" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+          <button aria-label="Remove annotation" className="annotation-remove" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
+          <button
+            aria-label={githubAnnotationConfirmation === annotation.id ? "Post annotation to GitHub" : "Prepare annotation for GitHub"}
+            aria-pressed={githubAnnotationConfirmation === annotation.id}
+            className={`annotation-github${githubAnnotationConfirmation === annotation.id ? " confirming" : ""}`}
+            disabled={!canPostAnnotationsToGitHub || Boolean(githubAnnotationPending)}
+            onClick={() => void postAnnotationToGitHub(annotation)}
+            title={!canPostAnnotationsToGitHub ? "GitHub comments are available only on pull requests" : "Post this annotation to GitHub"}
+            type="button"
+          >
+            {githubAnnotationConfirmation === annotation.id ? <Check size={15} /> : <Github size={15} />}
+          </button>
         </div>
       ))}
+      {githubAnnotationError && <span aria-live="polite" className="annotation-github-status">{githubAnnotationError}</span>}
       {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
     </div>
   );
@@ -1195,8 +1529,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
           <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={openChat} type="button">
             <Sparkles size={14} /> <span>Ask Diffs</span>
           </button>
-          {!annotationSidebar && <button className="copy-annotations" disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
-            <ClipboardCopy size={14} /> <span>Copy Annotations</span>
+          {!annotationSidebar && <button aria-label={copyStatus === "Copied" ? "Annotations copied" : "Copy Annotations"} className={`copy-annotations${copyStatus === "Copied" ? " copied" : ""}`} disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
+            {copyStatus === "Copied" ? <Check size={14} /> : <ClipboardCopy size={14} />} <span>Copy Annotations</span>
           </button>}
         </div>
       )}
@@ -1227,6 +1561,16 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
           onSubmit={saveAnnotation}
           style={{ left: annotationDraft.x, top: annotationDraft.y }}
         >
+          <div
+            className="annotation-composer-header"
+            onPointerDown={startDragging}
+            onPointerMove={movePanel}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+            title="Drag to move annotation composer"
+          >
+            <span><span>Annotation</span><GripHorizontal className="drag-hint" size={13} /></span>
+          </div>
           <textarea
             aria-label="Annotation"
             onChange={(event) => setAnnotationDraft((current) => current ? { ...current, text: event.target.value } : current)}
@@ -1241,7 +1585,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, onRevealS
             rows={3}
             value={annotationDraft.text}
           />
-          <div>
+          <div className="annotation-composer-actions">
             <button onClick={() => setAnnotationDraft(null)} type="button">Cancel</button>
             <button disabled={!annotationDraft.text.trim()} type="submit">Add annotation</button>
           </div>
