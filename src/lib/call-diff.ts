@@ -1,4 +1,6 @@
 import { buildCallTree, buildIndex, diffTrees, extractFunctions, treeHasChanges, type CallNode, type DiffNode, type FunctionInfo } from "calldiff";
+// Bundle Rust's grammar so calldiff does not install it during a request.
+import "tree-sitter-rust";
 import { getCallDiffSource } from "@/lib/github";
 import type { CallDiffDocument, CallDiffEntry, CallDiffFile, CallDiffNode, CallDiffStatus } from "@/types/call-diff";
 
