@@ -30,7 +30,7 @@ type ActionMessage = {
   text: string;
 };
 
-const ACTION_MESSAGES = {
+const ACTION_MESSAGES: Partial<Record<PullRequestAction["action"], string>> = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
   "edit-body": "Pull request body updated on GitHub.",
@@ -40,7 +40,7 @@ const ACTION_MESSAGES = {
   review: "Review submitted to GitHub.",
   "resolve-thread": "Review thread resolved on GitHub.",
   "unresolve-thread": "Review thread reopened on GitHub.",
-} satisfies Partial<Record<PullRequestAction["action"], string>>;
+};
 const MERGE_METHOD_LABELS = {
   merge: "Merge commit",
   rebase: "Rebase and merge",
