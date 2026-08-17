@@ -82,7 +82,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
 
       <section className="pr-header">
         <div className="pr-repo"><FileCode2 size={14} /> {document.repository}</div>
-        {document.pullRequest?.canEditTitle
+        {document.pullRequest && githubConnected
           ? <PullRequestTitle initialTitle={document.title} source={source} />
           : <h1>{document.title}</h1>}
         <div className="pr-byline">

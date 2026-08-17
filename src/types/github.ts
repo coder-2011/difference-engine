@@ -104,7 +104,6 @@ export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
   canEditBody: boolean;
-  canEditTitle: boolean;
   canManageMerge: boolean;
   canMarkReady: boolean;
   canMerge: boolean;
