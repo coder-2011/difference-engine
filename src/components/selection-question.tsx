@@ -570,9 +570,9 @@ function AnnotationSnippet({ codeSelection }: AnnotationSnippetProps) {
   );
 }
 
-/** Shows the in-progress reply without re-parsing its growing Markdown document every frame. */
+/** Renders the in-progress reply as Markdown as soon as each construct is complete. */
 function StreamingAnswer({ answer }: { answer: string }) {
-  return <div className="chat-streaming-answer">{answer}<span aria-hidden="true" className="chat-streaming-caret" /></div>;
+  return <div className="chat-markdown chat-streaming-answer"><GitHubMarkdown>{answer}</GitHubMarkdown><span aria-hidden="true" className="chat-streaming-caret" /></div>;
 }
 
 /** Gives each source range one stable identity within a purple chat marker track. */

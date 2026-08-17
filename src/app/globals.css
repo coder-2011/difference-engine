@@ -3749,14 +3749,9 @@ button {
   line-height: 1.58;
 }
 
-/* Keeps live text visually steady while completed answers use the full Markdown renderer. */
+/* Keeps the live Markdown reply visible while incomplete syntax becomes valid. */
 .chat-streaming-answer {
   min-height: 1.58em;
-  color: #ceced2;
-  font-family: var(--font-mono);
-  font-size: calc(var(--chat-font-size) * 0.92);
-  line-height: 1.58;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   animation: chat-stream-in 120ms ease-out;
 }
