@@ -527,6 +527,8 @@ export function DiffViewer({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository,
+    // Keep even one unchanged line behind the same user-controlled expander.
+    collapsedContextThreshold: 0,
     // A clicked unchanged-lines separator should reveal its entire collapsed range.
     expansionLineCount: Number.POSITIVE_INFINITY,
     hunkSeparators: "line-info",

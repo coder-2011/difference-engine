@@ -36,12 +36,11 @@ const ACTION_MESSAGES = {
   "edit-body": "Pull request body updated on GitHub.",
   "edit-title": "Pull request title updated on GitHub.",
   merge: "Pull request merged on GitHub.",
-  ready: "Pull request marked ready for review on GitHub.",
   reply: "Reply posted to GitHub.",
   review: "Review submitted to GitHub.",
   "resolve-thread": "Review thread resolved on GitHub.",
   "unresolve-thread": "Review thread reopened on GitHub.",
-} satisfies Record<PullRequestAction["action"], string>;
+} satisfies Partial<Record<PullRequestAction["action"], string>>;
 const MERGE_METHOD_LABELS = {
   merge: "Merge commit",
   rebase: "Rebase and merge",
@@ -264,10 +263,8 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         ? currentMethod
         : initialMergeMethod(refreshedMergeMethods));
       if (result.celebrate) setCelebrating(true);
-      setMessage({
-        error: false,
-        text: ACTION_MESSAGES[action.action],
-      });
+      const actionMessage = ACTION_MESSAGES[action.action];
+      if (actionMessage) setMessage({ error: false, text: actionMessage });
       return true;
     } catch (error) {
       setMessage({ error: true, text: error instanceof Error ? error.message : "GitHub could not complete this action" });
