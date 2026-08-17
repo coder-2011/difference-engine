@@ -62,7 +62,6 @@ export type PullRequestReviewThread = {
   canResolve: boolean;
   canUnresolve: boolean;
   comments: PullRequestReviewThreadComment[];
-  diffHunk?: string;
   id?: string;
   isOutdated: boolean;
   isResolved: boolean;

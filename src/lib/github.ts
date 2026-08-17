@@ -123,7 +123,6 @@ type PullRequestReview = {
 type PullRequestReviewComment = {
   body: string;
   created_at: string;
-  diff_hunk?: string;
   html_url: string;
   id: number;
   in_reply_to_id: number | null;
@@ -721,7 +720,6 @@ function summarizeReviewThread(
     canResolve: metadata?.viewerCanResolve ?? false,
     canUnresolve: metadata?.viewerCanUnresolve ?? false,
     comments,
-    diffHunk: root.diff_hunk,
     id: metadata?.id,
     isOutdated: metadata?.isOutdated ?? false,
     isResolved: metadata?.isResolved ?? false,

@@ -63,7 +63,6 @@ export function PullRequestReviewThread({ onAction, pending, thread }: PullReque
           </button>
         )}
       </header>
-      {thread.diffHunk && <pre className="pr-review-thread-hunk"><code>{thread.diffHunk}</code></pre>}
       <div className="pr-review-thread-comments">
         {thread.comments.map((comment) => (
           <article className="pr-review-thread-comment" key={comment.id}>

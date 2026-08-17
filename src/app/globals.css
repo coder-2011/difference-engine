@@ -1676,19 +1676,6 @@ button {
   color: #d8b84f;
 }
 
-.pr-review-thread-hunk {
-  max-height: 134px;
-  margin: 0;
-  padding: 7px 8px;
-  overflow: auto;
-  border-bottom: 1px solid var(--line-soft);
-  background: #0b0b0d;
-  color: #a9adb7;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1.45;
-}
-
 .pr-review-thread-comments {
   display: grid;
 }
