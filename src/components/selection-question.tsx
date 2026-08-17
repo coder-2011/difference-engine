@@ -669,10 +669,11 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   useEffect(() => {
     const conversation = conversationRef.current;
     if (!conversation) return;
+    const scroller = conversation;
 
     /** Remembers whether the reader wants incoming text to keep following the bottom. */
     function updateFollowState(): void {
-      const distanceFromBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
+      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
       followsConversationRef.current = distanceFromBottom < 24;
     }
 
@@ -687,13 +688,13 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     }
 
     updateFollowState();
-    conversation.addEventListener("pointerdown", stopFollowingOnPointer, { passive: true });
-    conversation.addEventListener("scroll", updateFollowState, { passive: true });
-    conversation.addEventListener("wheel", stopFollowingOnWheel, { passive: true });
+    scroller.addEventListener("pointerdown", stopFollowingOnPointer, { passive: true });
+    scroller.addEventListener("scroll", updateFollowState, { passive: true });
+    scroller.addEventListener("wheel", stopFollowingOnWheel, { passive: true });
     return () => {
-      conversation.removeEventListener("pointerdown", stopFollowingOnPointer);
-      conversation.removeEventListener("scroll", updateFollowState);
-      conversation.removeEventListener("wheel", stopFollowingOnWheel);
+      scroller.removeEventListener("pointerdown", stopFollowingOnPointer);
+      scroller.removeEventListener("scroll", updateFollowState);
+      scroller.removeEventListener("wheel", stopFollowingOnWheel);
     };
   }, [conversationActive]);
 
