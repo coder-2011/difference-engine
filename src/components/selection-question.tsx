@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { GitHubMarkdown } from "@/components/github-markdown";
+import { GitHubMarkdown, parseCodeReference, type CodeReference } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { isInteger, isRecord, isString, type JsonValue } from "@/lib/json";
 import {
@@ -186,10 +186,11 @@ type AskDiffsPanelProps = {
   onFork: (chat: ChatSession) => void;
   onMarkersChange: (chatId: string, markers: ChatSession["markers"]) => void;
   onModelAnnotation: (annotation: Partial<ModelAnnotation>) => void;
+  onRevealLocation: (location: CodeSelectionLocation) => void;
   onShowSelection: (selection: CodeSelection) => void;
+  position?: Point;
   selectionRequest?: SelectionRequest;
   source: string[];
-  stackIndex: number;
 };
 
 type PromptPreviewProps = {
@@ -571,8 +572,8 @@ function AnnotationSnippet({ codeSelection }: AnnotationSnippetProps) {
 }
 
 /** Renders the in-progress reply as Markdown as soon as each construct is complete. */
-function StreamingAnswer({ answer }: { answer: string }) {
-  return <div className="chat-markdown chat-streaming-answer"><GitHubMarkdown>{answer}</GitHubMarkdown><span aria-hidden="true" className="chat-streaming-caret" /></div>;
+function StreamingAnswer({ answer, codeReferencePaths, onCodeReference }: { answer: string; codeReferencePaths: string[]; onCodeReference: (reference: CodeReference) => void }) {
+  return <div className="chat-markdown chat-streaming-answer"><GitHubMarkdown codeReferencePaths={codeReferencePaths} onCodeReference={onCodeReference}>{answer}</GitHubMarkdown><span aria-hidden="true" className="chat-streaming-caret" /></div>;
 }
 
 /** Gives each source range one stable identity within a purple chat marker track. */
@@ -587,7 +588,7 @@ function chatMarkerLocationKey(location: CodeSelectionLocation): string {
 }
 
 /** Renders one independent Ask Diffs conversation, including its own request and queue state. */
-function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange, onChatZoomChange, onClose, onFocus, onFork, onMarkersChange, onModelAnnotation, onShowSelection, selectionRequest, source, stackIndex }: AskDiffsPanelProps) {
+function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange, onChatZoomChange, onClose, onFocus, onFork, onMarkersChange, onModelAnnotation, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
   const [selection, setSelection] = useState<SelectionState>(chat.selection);
   const [question, setQuestion] = useState(chat.draft);
   const [turns, setTurns] = useState<ChatTurn[]>(chat.turns);
@@ -650,6 +651,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
       setPriorHighlights((current) => [...current.filter((highlight) => highlight !== previousHighlight), previousHighlight].slice(-MAX_PRIOR_HIGHLIGHTS));
     }
     setSelection({ ...selectionRequest.selection, open: true });
+    setSuggestion(DEFAULT_QUESTION);
     followsConversationRef.current = true;
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }, [chat.id, selection, selectionRequest]);
@@ -1117,6 +1119,13 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     const submittedQuestion = question.trim();
     if (!submittedQuestion) return;
 
+    const location = parseCodeReference(submittedQuestion, new Set(annotationPaths));
+    if (location) {
+      setQuestion("");
+      revealCodeReference(location);
+      return;
+    }
+
     if (loading || requestRef.current) {
       queueQuestion(submittedQuestion);
       return;
@@ -1129,6 +1138,11 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     setAttachments([]);
     setAttachmentError("");
     void submitQuestion(submittedQuestion, questionAttachments, questionSelection, questionPriorHighlights);
+  }
+
+  /** Sends one parsed chat location through the same reveal path as saved selections. */
+  function revealCodeReference(reference: CodeReference): void {
+    onRevealLocation({ endLineNumber: reference.endLineNumber, id: reference.path, lineNumber: reference.lineNumber });
   }
 
   /** Updates the shared zoom setting and the local editable percentage together. */
@@ -1186,11 +1200,9 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
 
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
   const isGeneratingSuggestion = Boolean(turns.length && loading && !suggestion);
-  const panelStyle: ChatPanelStyle = {
-    "--chat-font-size": `${chatFontSize}px`,
-    bottom: `${16 + stackIndex * 24}px`,
-    right: `${16 + stackIndex * 24}px`,
-  };
+  const panelStyle: ChatPanelStyle = position
+    ? { "--chat-font-size": `${chatFontSize}px`, left: `${position.x}px`, top: `${position.y}px` }
+    : { "--chat-font-size": `${chatFontSize}px`, bottom: "16px", right: "16px" };
   const canDecreaseChatZoom = adjacentChatZoom(chatZoom, -1) !== chatZoom;
   const canIncreaseChatZoom = adjacentChatZoom(chatZoom, 1) !== chatZoom;
   const attachmentPickerId = `chat-attachment-picker-${chat.id}`;
@@ -1200,6 +1212,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
       ref={panelRef}
       aria-label={selection.text ? "Ask about selected code" : "Ask Diffs"}
       className={`question-panel${isActive ? " active" : ""}${isDraggingFiles ? " dragging-files" : ""}`}
+      data-chat-id={chat.id}
       onDragEnter={beginFileDrag}
       onDragLeave={endFileDrag}
       onDragOver={(event) => event.preventDefault()}
@@ -1246,8 +1259,8 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
               <div className="chat-turn-divider" />
               {turn.answer
                 ? index === turns.length - 1 && loading
-                  ? <StreamingAnswer answer={turn.answer} />
-                  : <div className="chat-markdown"><GitHubMarkdown>{turn.answer}</GitHubMarkdown></div>
+                  ? <StreamingAnswer answer={turn.answer} codeReferencePaths={annotationPaths} onCodeReference={revealCodeReference} />
+                  : <div className="chat-markdown"><GitHubMarkdown codeReferencePaths={annotationPaths} onCodeReference={revealCodeReference}>{turn.answer}</GitHubMarkdown></div>
                 : <div aria-label="Loading response" className="chat-loading-wave" role="status"><span /><span /><span /></div>}
             </article>
           ))}
@@ -1302,6 +1315,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
             aria-label="Chat zoom percentage"
             className="chat-zoom-value"
             inputMode="decimal"
+            min="1"
             onBlur={commitChatZoom}
             onChange={(event) => setChatZoomInput(event.target.value)}
             onKeyDown={(event) => {
@@ -1310,7 +1324,8 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
               commitChatZoom();
               event.currentTarget.blur();
             }}
-            type="text"
+            step="any"
+            type="number"
             value={chatZoomInput}
           />
           <span aria-hidden="true" className="chat-zoom-unit">%</span>
@@ -1364,6 +1379,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const activeChatIdRef = useRef<string | undefined>(undefined);
   const openChatIdsRef = useRef<string[]>([]);
   const chatCounterRef = useRef(0);
+  const chatPositionsRef = useRef(new Map<string, Point>());
   const chatSessionsRef = useRef(new Map<string, ChatSession>());
   const lastResumedChatSequenceRef = useRef<number | undefined>(undefined);
   const selectionRequestCounterRef = useRef(0);
@@ -1397,6 +1413,24 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     setActiveChatId(chatId);
   }
 
+  /** Finds the flush neighboring position with the most available viewport space. */
+  function adjacentChatPosition(): Point | undefined {
+    const activeChatId = activeChatIdRef.current;
+    if (!activeChatId) return undefined;
+
+    const activePanel = document.querySelector<HTMLElement>(`.question-panel[data-chat-id="${activeChatId}"]`);
+    if (!activePanel) return undefined;
+
+    const rect = activePanel.getBoundingClientRect();
+    const width = Math.min(380, Math.max(MIN_PANEL_WIDTH, window.innerWidth - 32));
+    const leftSpace = rect.left - 8;
+    const rightSpace = window.innerWidth - rect.right - 8;
+    const requestedX = leftSpace >= rightSpace ? rect.left - width : rect.right;
+    const x = Math.min(Math.max(requestedX, 8), Math.max(window.innerWidth - width - 8, 8));
+    const y = Math.min(Math.max(rect.top, 8), Math.max(window.innerHeight - MIN_PANEL_HEIGHT - 8, 8));
+    return { x, y };
+  }
+
   /** Opens a blank panel or a forked snapshot without closing any current conversation. */
   function openChat(seed?: ChatSession): void {
     chatCounterRef.current += 1;
@@ -1413,6 +1447,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
         turns: [],
     };
     chatSessionsRef.current.set(id, chat);
+    const position = adjacentChatPosition();
+    if (position) chatPositionsRef.current.set(id, position);
     const nextChatIds = [...openChatIdsRef.current, id];
     openChatIdsRef.current = nextChatIds;
     setOpenChatIds(nextChatIds);
@@ -1491,6 +1527,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       activeChatIdRef.current = undefined;
       openChatIdsRef.current = [];
       chatCounterRef.current = 0;
+      chatPositionsRef.current.clear();
       chatSessionsRef.current.clear();
       setOpenChatIds([]);
       setActiveChatId(undefined);
@@ -1966,7 +2003,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
         </form>
       )}
 
-      {openChatIds.map((chatId, index) => {
+      {openChatIds.map((chatId) => {
         const chat = chatSessionsRef.current.get(chatId);
         if (!chat) return null;
 
@@ -1984,10 +2021,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             onFork={openChat}
             onMarkersChange={updateChatMarkers}
             onModelAnnotation={addModelAnnotation}
+            onRevealLocation={onRevealSelection}
             onShowSelection={showSelection}
+            position={chatPositionsRef.current.get(chat.id)}
             selectionRequest={selectionRequest}
             source={source}
-            stackIndex={index}
           />
         );
       })}
