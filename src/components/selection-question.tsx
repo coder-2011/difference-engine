@@ -225,6 +225,14 @@ type SnippetHighlight = {
   tokens: SnippetToken[][];
 };
 
+/** Gives each selected range a stable identity so stale Tab suggestions cannot replace a newer highlight. */
+function selectionContextKey(selection: SelectionState | null): string {
+  if (!selection) return "";
+
+  const location = selection.location;
+  return [location?.id, location?.lineNumber, location?.endLineNumber, location?.side, location?.endSide, selection.text].join("\0");
+}
+
 /** Builds a GitHub-style patch fragment from one copied annotation. */
 function annotationDiff(code: string, location?: CodeSelectionLocation): string[] {
   const lines = code.split("\n");
@@ -616,6 +624,8 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const queuedQuestionCounterRef = useRef(0);
   const submitQuestionRef = useRef<SubmitQuestion | undefined>(undefined);
   const lastSelectionRequestRef = useRef<number | undefined>(undefined);
+  const selectionRef = useRef(selection);
+  const suggestionRequestRef = useRef<AbortController | null>(null);
   const conversationActive = Boolean(turns.length || loading);
   const chatFontSize = (DEFAULT_CHAT_FONT_SIZE * chatZoom) / DEFAULT_CHAT_ZOOM;
 
@@ -642,6 +652,35 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     setChatZoomInput(String(chatZoom));
   }, [chatZoom]);
 
+  // Keep asynchronous Tab suggestions tied to the selection currently visible in this chat.
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+
+  /** Updates Tab with a context-aware follow-up while the generic prompt remains usable immediately. */
+  const refreshSuggestion = useCallback((nextSelection: SelectionState): void => {
+    suggestionRequestRef.current?.abort();
+    const controller = new AbortController();
+    suggestionRequestRef.current = controller;
+
+    void fetch("/api/ask/suggestion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ selection: nextSelection.text, turns }),
+    }).then(async (response) => {
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(body) || !isString(body.suggestion)) return;
+      if (suggestionRequestRef.current === controller && selectionContextKey(selectionRef.current) === selectionContextKey(nextSelection)) {
+        setSuggestion(body.suggestion);
+      }
+    }).catch(() => {
+      // The generic prompt stays available when the lightweight suggestion request fails.
+    }).finally(() => {
+      if (suggestionRequestRef.current === controller) suggestionRequestRef.current = null;
+    });
+  }, [turns]);
+
   useEffect(() => {
     if (!selectionRequest || selectionRequest.chatId !== chat.id || lastSelectionRequestRef.current === selectionRequest.sequence) return;
 
@@ -650,15 +689,19 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     if (previousHighlight && previousHighlight !== selectionRequest.selection.text) {
       setPriorHighlights((current) => [...current.filter((highlight) => highlight !== previousHighlight), previousHighlight].slice(-MAX_PRIOR_HIGHLIGHTS));
     }
-    setSelection({ ...selectionRequest.selection, open: true });
+    const nextSelection = { ...selectionRequest.selection, open: true };
+    selectionRef.current = nextSelection;
+    setSelection(nextSelection);
     setSuggestion(DEFAULT_QUESTION);
+    refreshSuggestion(nextSelection);
     followsConversationRef.current = true;
     window.setTimeout(() => inputRef.current?.focus(), 0);
-  }, [chat.id, selection, selectionRequest]);
+  }, [chat.id, refreshSuggestion, selection, selectionRequest]);
 
   useEffect(() => {
     return () => {
       requestRef.current?.abort();
+      suggestionRequestRef.current?.abort();
       window.cancelAnimationFrame(momentumFrameRef.current);
     };
   }, []);
@@ -974,8 +1017,10 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
 
     const controller = new AbortController();
     requestRef.current = controller;
+    suggestionRequestRef.current?.abort();
     setLoading(true);
     setSuggestion("");
+    const questionSelectionKey = selectionContextKey(questionSelection);
     let pendingDelta = "";
     let flushFrame: number | undefined;
     let resolveDrain: (() => void) | undefined;
@@ -1076,7 +1121,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
       }
       await drainDeltas();
       if (controller.signal.aborted) return;
-      if (streamedSuggestion) setSuggestion(streamedSuggestion);
+      if (streamedSuggestion && selectionContextKey(selectionRef.current) === questionSelectionKey) setSuggestion(streamedSuggestion);
     } catch (error) {
       if (controller.signal.aborted) {
         if (flushFrame !== undefined) window.cancelAnimationFrame(flushFrame);
