@@ -1,6 +1,6 @@
 "use client";
 
-import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 
@@ -26,11 +26,6 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
   function cancelEditing(): void {
     setDraft(undefined);
     setError(undefined);
-  }
-
-  /** Selects the complete title so typing immediately replaces it. */
-  function selectTitle(event: FocusEvent<HTMLInputElement>): void {
-    event.currentTarget.select();
   }
 
   /** Lets Escape cancel while Enter follows the form's normal submit path. */
@@ -88,7 +83,6 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
         disabled={pending}
         maxLength={256}
         onChange={(event) => setDraft(event.target.value)}
-        onFocus={selectTitle}
         onKeyDown={handleKeyDown}
         value={draft}
       />
