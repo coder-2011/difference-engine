@@ -3257,6 +3257,10 @@ button {
   box-shadow: 0 24px 80px rgb(0 0 0 / 0.55);
 }
 
+.question-panel.active {
+  z-index: 91;
+}
+
 /* Preserves a clean panel edge while accepting all edge and corner resize gestures. */
 .question-panel-resize-handles {
   position: absolute;
@@ -3345,6 +3349,12 @@ button {
   gap: 7px;
   font-size: calc(var(--chat-font-size) * 0.92);
   font-weight: 570;
+}
+
+.question-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .question-panel-header .question-panel-title svg {
@@ -3737,6 +3747,37 @@ button {
   line-height: 1.58;
 }
 
+/* Keeps live text visually steady while completed answers use the full Markdown renderer. */
+.chat-streaming-answer {
+  min-height: 1.58em;
+  color: #ceced2;
+  font-family: var(--font-mono);
+  font-size: calc(var(--chat-font-size) * 0.92);
+  line-height: 1.58;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: chat-stream-in 120ms ease-out;
+}
+
+.chat-streaming-caret {
+  display: inline-block;
+  width: 0.42ch;
+  height: 1em;
+  margin-left: 1px;
+  background: #9586bf;
+  vertical-align: -0.13em;
+  animation: chat-stream-caret 850ms steps(1, end) infinite;
+}
+
+@keyframes chat-stream-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chat-stream-caret {
+  50% { opacity: 0; }
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -3922,11 +3963,30 @@ button {
 }
 
 .chat-zoom-value {
-  min-width: 29px;
+  width: 3.5ch;
+  min-width: 0;
+  padding: 1px 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: 0;
+  background: transparent;
   color: #958e9d;
   font-family: var(--font-mono);
   font-size: 9px;
   text-align: center;
+}
+
+.chat-zoom-value:focus {
+  border-color: #5e556e;
+  background: #211d27;
+  color: #c4b2ee;
+}
+
+.chat-zoom-unit {
+  margin-left: -2px;
+  color: #958e9d;
+  font-family: var(--font-mono);
+  font-size: 9px;
 }
 
 .chat-zoom-controls button:hover:not(:disabled) {
@@ -4046,9 +4106,9 @@ button {
 }
 
 .question-panel textarea {
-  height: 72px;
-  min-height: 72px;
-  max-height: 72px;
+  height: calc(var(--chat-font-size) * 6);
+  min-height: calc(var(--chat-font-size) * 6);
+  max-height: calc(var(--chat-font-size) * 6);
   box-sizing: border-box;
   padding: 2px 0;
   overflow-y: auto;
