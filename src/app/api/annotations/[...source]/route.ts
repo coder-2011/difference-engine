@@ -95,8 +95,8 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
           type: "line",
         });
       } catch (error) {
-        // Closed pull requests and stale hunks reject inline anchors, but their annotation can still be a timeline comment.
-        if (!(error instanceof GitHubError) || error.status !== 422) throw error;
+        // Stale revisions and invalid diff anchors can reject line comments while a normal PR comment remains valid.
+        if (!(error instanceof GitHubError) || ![400, 404, 409, 422].includes(error.status)) throw error;
         result = await postPullRequestAgentComment(source, accessToken, generalComment);
       }
     } else {
