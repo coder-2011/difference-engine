@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["calldiff", "tree-sitter-rust"],
+  serverExternalPackages: ["calldiff", "tree-sitter", "tree-sitter-rust"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "avatars.githubusercontent.com" },
