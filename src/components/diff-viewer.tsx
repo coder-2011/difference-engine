@@ -617,6 +617,13 @@ export function DiffViewer({
       <div className="annotation-sidebar" />
     </aside>
   );
+  // Keep bounded Call Flow analysis alive behind Files Changed's streaming state.
+  const callFlowPanel = callFlowLoaded && (
+    <div aria-labelledby="call-flow-review-tab" className={`call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
+      {showingCallDiff && fileSidebar}
+      <CallDiffViewer key={sourceKey} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
+    </div>
+  );
 
   /** Fetches and copies the unparsed GitHub patch as plain text. */
   async function copyRawDiff(): Promise<void> {
@@ -635,11 +642,11 @@ export function DiffViewer({
   }
 
   if (error && !showingCallDiff) {
-    return <section className={workspaceClass}>{reviewTabs}<div className="diff-error" id="files-review" role="tabpanel"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div></section>;
+    return <section className={workspaceClass}>{reviewTabs}{callFlowPanel}<div className="diff-error" id="files-review" role="tabpanel"><strong>Couldn’t load this {repository ? "repository" : "diff"}</strong><span>{error}</span></div></section>;
   }
 
   if (!showingCallDiff && (repository ? !repositoryFiles : !parsedFiles)) {
-    return <section className={workspaceClass}>{reviewTabs}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
+    return <section className={workspaceClass}>{reviewTabs}{callFlowPanel}<div className="diff-loading" id="files-review" role="tabpanel"><LoaderCircle className="spinner" size={20} /><strong>Fetching {repository ? "repository" : "diff"}</strong><span>{repository ? "Loading files from GitHub…" : "Streaming the patch from GitHub…"}</span></div></section>;
   }
 
   const codeViewStyle: DiffViewerStyle = { "--diffs-font-size": `${codeFontSize}px` };
@@ -647,12 +654,7 @@ export function DiffViewer({
   return (
     <section className={workspaceClass} ref={workspaceRef}>
       {reviewTabs}
-      {callFlowLoaded && (
-        <div aria-labelledby="call-flow-review-tab" className={`call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
-          {showingCallDiff && fileSidebar}
-          <CallDiffViewer key={sourceKey} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
-        </div>
-      )}
+      {callFlowPanel}
       {!showingCallDiff && <>
       <div className="viewer-toolbar">
         <div className="change-stats">
