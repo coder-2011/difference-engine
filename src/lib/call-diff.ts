@@ -1,6 +1,7 @@
-import { buildCallTree, buildIndex, diffTrees, extractFunctions, treeHasChanges, type CallNode, type DiffNode, type FunctionInfo } from "calldiff";
-// Bundle Rust's grammar and matching runtime so calldiff does not install them during a request.
+import { buildCallTree, buildIndex, diffTrees, extractFunctions, treeHasChanges, type CallNode, type CallStep, type DiffNode, type FunctionInfo } from "calldiff";
+// Bundle the grammars used by this app so calldiff does not install them during a request.
 import "tree-sitter";
+import "tree-sitter-cpp";
 import "tree-sitter-rust";
 import { getCallDiffSource } from "@/lib/github";
 import type { CallDiffDocument, CallDiffEntry, CallDiffFile, CallDiffNode, CallDiffStatus } from "@/types/call-diff";
@@ -13,6 +14,27 @@ type IndexedFunction = {
 
 const CALL_DIFF_ENTRY_LIMIT = 12;
 const CALL_DIFF_MAX_DEPTH = 4;
+
+/** Maps CUDA source names to Calldiff's C++ extractor without changing the displayed path. */
+function parserPath(path: string): string {
+  return /\.cuh?$/i.test(path) ? `${path}.cpp` : path;
+}
+
+/** Restores a parser alias to the source path the viewer can navigate to. */
+function restoreStepPath(step: CallStep, path: string): CallStep {
+  if (!("children" in step) || !step.children) {
+    return { ...step, file: path };
+  }
+
+  const children = step.children.map((child) => restoreStepPath(child, path));
+  return { ...step, children, file: path };
+}
+
+/** Restores all Calldiff locations after CUDA source was parsed through the C++ grammar. */
+function restoreFunctionPath(info: FunctionInfo, path: string): FunctionInfo {
+  const steps = info.steps.map((step) => restoreStepPath(step, path));
+  return { ...info, file: path, steps };
+}
 
 /** Returns a rename-stable identity for one exported entrypoint in a changed file. */
 function functionId(fileKey: string, symbol: string): string {
@@ -65,7 +87,9 @@ function extractSnapshotFunctions(
 
   sources.set(source.path, source.text);
   try {
-    for (const info of extractFunctions(source.path, source.text)) {
+    const extractedPath = parserPath(source.path);
+    for (const extracted of extractFunctions(extractedPath, source.text)) {
+      const info = extractedPath === source.path ? extracted : restoreFunctionPath(extracted, source.path);
       functions.push({ fileKey, info, key: functionId(fileKey, info.key) });
     }
   } catch {
