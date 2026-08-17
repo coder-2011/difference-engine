@@ -358,7 +358,7 @@ function adjacentChatZoom(zoom: number, direction: -1 | 1): number {
 
 /** Converts a retired pixel preference to its closest supported percentage. */
 function nearestChatZoom(zoom: number): number {
-  let nearest = CHAT_ZOOM_PRESETS[0];
+  let nearest: number = CHAT_ZOOM_PRESETS[0];
   for (const preset of CHAT_ZOOM_PRESETS) {
     if (Math.abs(preset - zoom) < Math.abs(nearest - zoom)) nearest = preset;
   }
