@@ -92,7 +92,7 @@ type PullRequest = {
   changed_files: number;
   draft: boolean;
   deletions: number;
-  head: { label: string; ref: string; sha: string };
+  head: { label: string; ref: string; repo: { full_name: string } | null; sha: string };
   html_url: string;
   locked: boolean;
   merge_commit_sha: string | null;
@@ -1044,6 +1044,20 @@ export async function performPullRequestAction(source: string[], token: string |
     return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
   }
 
+  if (action.action === "rename-branch") {
+    const name = action.name.trim();
+    if (!name || name.length > 255) throw new GitHubError("Branch names must be between 1 and 255 characters", 400);
+
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, accessToken);
+    const headRepository = pullRequest.head.repo?.full_name;
+    if (!headRepository) throw new GitHubError("GitHub could not locate the pull request branch", 422);
+
+    const repositoryPath = headRepository.split("/").map(encodeURIComponent).join("/");
+    const branchPath = pullRequest.head.ref.split("/").map(encodeURIComponent).join("/");
+    await githubMutation(`/repos/${repositoryPath}/branches/${branchPath}/rename`, accessToken, "POST", { new_name: name });
+    return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
+  }
+
   const { capabilities, pullRequest } = await currentPullRequest(parsed, accessToken);
 
   if (action.action === "edit-title") {
@@ -1323,6 +1337,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
       changedFiles: pullRequest.changed_files,
       deletions: pullRequest.deletions,
       description: pullRequest.body ?? undefined,
+      headBranch: pullRequest.head.ref,
       headLabel: pullRequest.head.label,
       pullRequest: workspace,
       repository: parsed.repository,

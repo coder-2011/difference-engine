@@ -22,6 +22,7 @@ export type DiffDocument = {
   deletions?: number;
   description?: string;
   filePath?: string;
+  headBranch?: string;
   headLabel?: string;
   repository: string;
   repositoryRef?: string;
@@ -128,6 +129,7 @@ export type PullRequestAction =
   | { action: "edit-body"; body: string }
   | { action: "edit-title"; title: string }
   | { action: "merge"; method: PullRequestMergeMethod }
+  | { action: "rename-branch"; name: string }
   | { action: "ready" }
   | { action: "review"; body: string; event: PullRequestReviewEvent }
   | { action: "resolve-thread"; threadId: string }

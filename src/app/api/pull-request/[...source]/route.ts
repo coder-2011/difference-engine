@@ -27,6 +27,10 @@ function parsePullRequestAction(value: JsonValue): PullRequestAction | null {
     return { action: "edit-title", title: value.title };
   }
 
+  if (value.action === "rename-branch" && isString(value.name)) {
+    return { action: "rename-branch", name: value.name };
+  }
+
   if (value.action === "edit-body" && isString(value.body)) {
     return { action: "edit-body", body: value.body };
   }

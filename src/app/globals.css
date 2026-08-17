@@ -1090,6 +1090,78 @@ button {
   color: var(--faint);
 }
 
+.pr-branch-button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pr-branch-button span {
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-branch-button svg {
+  flex: none;
+  color: var(--faint);
+  opacity: 0.55;
+}
+
+.pr-branch-button:hover svg,
+.pr-branch-button:focus-visible svg {
+  color: var(--text);
+  opacity: 1;
+}
+
+.pr-branch-editor {
+  display: grid;
+  grid-template-columns: auto minmax(72px, 190px) auto auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.pr-branch-editor input {
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #54545a;
+  border-radius: 4px;
+  outline: 0;
+  background: #111112;
+  color: var(--text);
+}
+
+.pr-branch-editor button {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid #3d3d42;
+  border-radius: 4px;
+  background: #232328;
+  color: #c9c9cd;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.pr-branch-editor button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.pr-branch-error {
+  grid-column: 1 / -1;
+  color: #dc949a;
+  font-size: 10px;
+}
+
 .pr-workspace {
   margin-top: 27px;
 }

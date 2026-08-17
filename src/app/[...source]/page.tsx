@@ -8,6 +8,7 @@ import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
+import { PullRequestBranch } from "@/components/pull-request-branch";
 import { PullRequestTitle } from "@/components/pull-request-title";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
 import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
@@ -89,7 +90,12 @@ export default async function DiffPage({ params }: DiffPageProps) {
           {document.avatarUrl && <Image className="avatar" src={document.avatarUrl} alt="" width={22} height={22} />}
           <strong>{document.author}</strong>
           {document.baseLabel && document.headLabel && (
-            <span className="branch-pair"><GitCompareArrows size={13} /> {document.baseLabel} <span>←</span> {document.headLabel}</span>
+            <div className="branch-pair">
+              <GitCompareArrows size={13} /> {document.baseLabel} <span>←</span>
+              {document.pullRequest && githubConnected && document.headBranch
+                ? <PullRequestBranch initialBranch={document.headBranch} initialLabel={document.headLabel} source={source} />
+                : document.headLabel}
+            </div>
           )}
         </div>
 
