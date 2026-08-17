@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, FileCode2, GitCompareArrows, Github } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, FileCode2, Github } from "lucide-react";
 import { login } from "@/app/actions";
 import { Brand } from "@/components/brand";
 import { DiffViewer } from "@/components/diff-viewer";
@@ -91,7 +91,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
           <strong>{document.author}</strong>
           {document.baseLabel && document.headLabel && (
             <div className="branch-pair">
-              <GitCompareArrows size={13} /> {document.baseLabel} <span>←</span>
+              {document.baseLabel} <span>←</span>
               {document.pullRequest && githubConnected && document.headBranch
                 ? <PullRequestBranch initialBranch={document.headBranch} initialLabel={document.headLabel} source={source} />
                 : document.headLabel}
