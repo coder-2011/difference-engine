@@ -71,7 +71,7 @@ type ReviewView = keyof typeof REVIEW_TAB_HASH;
 
 const INLINE_COMMENT_MARKER_CSS = `
   [data-column-number] > .diffs-inline-comment-marker {
-    --diffs-inline-comment-color: #58a6ff;
+    --diffs-inline-comment-color: #3f7199;
     background: var(--diffs-inline-comment-color);
     bottom: 0;
     left: var(--diffs-inline-comment-offset, 0px);
@@ -83,11 +83,11 @@ const INLINE_COMMENT_MARKER_CSS = `
   }
 
   [data-column-number] > .diffs-inline-comment-marker[data-tone="github"] {
-    --diffs-inline-comment-color: #56c271;
+    --diffs-inline-comment-color: #3f7952;
   }
 
   [data-column-number] > .diffs-inline-comment-marker[data-tone="chat"] {
-    --diffs-inline-comment-color: #a78bfa;
+    --diffs-inline-comment-color: #765da3;
     appearance: none;
     border: 0;
     cursor: pointer;
@@ -389,6 +389,17 @@ export function DiffViewer({
     }
     selectCode();
   }, [reviewView, selectReviewView]);
+
+  useEffect(() => {
+    /** Clears the temporary annotation focus when the user clicks anywhere else. */
+    function clearRevealedSelection(): void {
+      viewerRef.current?.clearSelectedLines();
+      window.getSelection()?.removeAllRanges();
+    }
+
+    document.addEventListener("click", clearRevealedSelection, true);
+    return () => document.removeEventListener("click", clearRevealedSelection, true);
+  }, []);
 
   /** Converts one Call Flow click into the same source-anchored selection used by Ask Diffs. */
   const selectCallFlowNode = useCallback((selection: CallDiffSelection) => {
