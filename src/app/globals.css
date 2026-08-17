@@ -2613,15 +2613,18 @@ button {
 
 .call-diff-node.branch .call-diff-node-line code {
   color: #cbb9f9;
-  font-style: italic;
 }
 
-.call-diff-node-line a > span,
-.call-diff-node-select > span {
+.call-diff-node-line-number {
   flex: none;
+  width: 4ch;
+  overflow: hidden;
   color: var(--faint);
   font-family: var(--font-mono);
   font-size: 9px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .call-diff-node-source {
@@ -4225,14 +4228,6 @@ button {
   .call-diff-node-line > a,
   .call-diff-node-select {
     gap: 7px;
-  }
-
-  .call-diff-node-line a > span,
-  .call-diff-node-select > span {
-    max-width: 34vw;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .call-diff-node > ol {

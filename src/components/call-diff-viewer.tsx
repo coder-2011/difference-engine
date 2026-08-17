@@ -123,13 +123,13 @@ function CallDiffNodeRow({ fromRef, node, onSelect, source, toRef }: { fromRef: 
       <div className="call-diff-node-line">
         {onSelect ? (
           <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
+            <span aria-hidden="true" className="call-diff-node-line-number">{node.line}</span>
             <HighlightedCallCode file={node.file} text={sourceLine} />
-            <span>{location}</span>
           </button>
         ) : (
           <a href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
+            <span aria-hidden="true" className="call-diff-node-line-number">{node.line}</span>
             <HighlightedCallCode file={node.file} text={sourceLine} />
-            <span>{location}</span>
           </a>
         )}
         {onSelect && <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}><ExternalLink size={12} /></a>}
