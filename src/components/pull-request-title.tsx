@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 
@@ -34,10 +34,13 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
   }
 
   /** Persists one non-empty title and exits edit mode after GitHub confirms it. */
-  async function submitTitle(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function saveTitle(): Promise<void> {
     const nextTitle = draft?.trim() ?? "";
-    if (!nextTitle || nextTitle === title || pending) return;
+    if (!nextTitle || pending) return;
+    if (nextTitle === title) {
+      cancelEditing();
+      return;
+    }
 
     setPending(true);
     setError(undefined);
@@ -64,6 +67,18 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
     }
   }
 
+  /** Saves the title when the form submits through Enter or the Save button. */
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    void saveTitle();
+  }
+
+  /** Saves a valid draft only after focus leaves the complete inline editor. */
+  function handleBlur(event: FocusEvent<HTMLFormElement>): void {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    void saveTitle();
+  }
+
   if (draft === undefined) {
     return (
       <h1>
@@ -76,7 +91,7 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
   }
 
   return (
-    <form className="pr-title-editor" onSubmit={submitTitle}>
+    <form className="pr-title-editor" onBlur={handleBlur} onSubmit={handleSubmit}>
       <input
         aria-label="Pull request title"
         autoFocus

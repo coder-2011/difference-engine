@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 
@@ -36,10 +36,13 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
   }
 
   /** Renames the current pull request head branch after GitHub accepts the new name. */
-  async function submitBranch(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function saveBranch(): Promise<void> {
     const nextBranch = draft?.trim() ?? "";
-    if (!nextBranch || nextBranch === branch || pending) return;
+    if (!nextBranch || pending) return;
+    if (nextBranch === branch) {
+      cancelEditing();
+      return;
+    }
 
     setPending(true);
     setError(undefined);
@@ -65,6 +68,18 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
     }
   }
 
+  /** Saves the branch when the form submits through Enter or the Save button. */
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    void saveBranch();
+  }
+
+  /** Saves a valid draft only after focus leaves the complete inline editor. */
+  function handleBlur(event: FocusEvent<HTMLFormElement>): void {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    void saveBranch();
+  }
+
   if (draft === undefined) {
     return (
       <button className="pr-branch-button" onClick={beginEditing} title="Rename branch" type="button">
@@ -75,7 +90,7 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
   }
 
   return (
-    <form className="pr-branch-editor" onSubmit={submitBranch}>
+    <form className="pr-branch-editor" onBlur={handleBlur} onSubmit={handleSubmit}>
       {prefix && <span>{prefix}</span>}
       <input
         aria-label="Pull request branch name"
