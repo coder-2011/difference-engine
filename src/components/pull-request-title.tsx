@@ -38,11 +38,6 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
     if (event.key === "Escape") cancelEditing();
   }
 
-  /** Cancels the title draft when focus moves outside the inline editor. */
-  function cancelWhenFocusLeaves(event: FocusEvent<HTMLFormElement>): void {
-    if (!event.currentTarget.contains(event.relatedTarget)) cancelEditing();
-  }
-
   /** Persists one non-empty title and exits edit mode after GitHub confirms it. */
   async function submitTitle(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -86,7 +81,7 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
   }
 
   return (
-    <form className="pr-title-editor" onBlur={cancelWhenFocusLeaves} onSubmit={submitTitle}>
+    <form className="pr-title-editor" onSubmit={submitTitle}>
       <input
         aria-label="Pull request title"
         autoFocus
