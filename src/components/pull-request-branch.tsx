@@ -1,6 +1,6 @@
 "use client";
 
-import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 
@@ -74,12 +74,6 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
     void saveBranch();
   }
 
-  /** Saves a valid draft only after focus leaves the complete inline editor. */
-  function handleBlur(event: FocusEvent<HTMLFormElement>): void {
-    if (event.currentTarget.contains(event.relatedTarget)) return;
-    void saveBranch();
-  }
-
   if (draft === undefined) {
     return (
       <button className="pr-branch-button" onClick={beginEditing} title="Rename branch" type="button">
@@ -90,7 +84,7 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
   }
 
   return (
-    <form className="pr-branch-editor" onBlur={handleBlur} onSubmit={handleSubmit}>
+    <form className="pr-branch-editor" onSubmit={handleSubmit}>
       {prefix && <span>{prefix}</span>}
       <input
         aria-label="Pull request branch name"
