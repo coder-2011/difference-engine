@@ -394,7 +394,6 @@ export function DiffViewer({
     /** Clears the temporary annotation focus when the user clicks anywhere else. */
     function clearRevealedSelection(): void {
       viewerRef.current?.clearSelectedLines();
-      window.getSelection()?.removeAllRanges();
     }
 
     document.addEventListener("click", clearRevealedSelection, true);
