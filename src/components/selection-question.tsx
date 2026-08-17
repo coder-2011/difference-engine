@@ -1636,8 +1636,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
   /** Opens a compact composer for a note attached to the current highlighted code. */
   function openAnnotationComposer(codeSelection: CodeSelection): void {
-    const x = Math.min(codeSelection.x, Math.max(window.innerWidth - 328, 8));
-    const y = Math.min(codeSelection.y, Math.max(window.innerHeight - 144, 8));
+    const x = Math.min(codeSelection.x, Math.max(window.innerWidth - 288, 8));
+    const y = Math.min(codeSelection.y, Math.max(window.innerHeight - 112, 8));
     setAnnotationDraft({ selection: codeSelection, text: "", x, y });
     window.setTimeout(() => annotationInputRef.current?.focus(), 0);
   }
@@ -1752,7 +1752,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     }
 
     setCopyStatus("Copied");
-    window.setTimeout(() => setCopyStatus(""), 2_000);
+    window.setTimeout(() => setCopyStatus(""), 1_200);
   }
 
   /** Scrolls back to a saved code range and highlights it again in the diff. */
@@ -1872,7 +1872,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     <div className="annotation-list">
       <div className="annotation-list-title">
         <span>Annotations <b>{annotations.length}</b></span>
-        <button aria-label="Copy annotations" className="annotation-copy" onClick={() => void copyAnnotations()} title="Copy annotations" type="button"><ClipboardCopy size={13} /></button>
+        <button aria-label={copyStatus === "Copied" ? "Annotations copied" : "Copy annotations"} className={`annotation-copy${copyStatus === "Copied" ? " copied" : ""}`} onClick={() => void copyAnnotations()} title={copyStatus === "Copied" ? "Annotations copied" : "Copy annotations"} type="button">
+          {copyStatus === "Copied" ? <Check size={13} /> : <ClipboardCopy size={13} />}
+        </button>
       </div>
       {annotations.map((annotation) => (
         <div className="annotation-item" key={annotation.id}>
@@ -1887,20 +1889,20 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
           </button>
           <button aria-label="Remove annotation" className="annotation-remove" onClick={() => removeAnnotation(annotation.id)} type="button"><X size={12} /></button>
           <button
-            aria-label={githubAnnotationConfirmation === annotation.id ? "Post annotation to GitHub" : "Prepare annotation for GitHub"}
+            aria-label={githubAnnotationConfirmation === annotation.id ? "Confirm posting local annotation to GitHub" : "Post local annotation to GitHub"}
             aria-pressed={githubAnnotationConfirmation === annotation.id}
             className={`annotation-github${githubAnnotationConfirmation === annotation.id ? " confirming" : ""}`}
             disabled={!isPullRequest || Boolean(githubAnnotationPending)}
             onClick={() => void postAnnotationToGitHub(annotation)}
-            title={!isPullRequest ? "GitHub comments are available only on pull requests" : !githubConnected ? "Sign in with GitHub from the page header to post annotations" : "Post this annotation to GitHub"}
+            title={!isPullRequest ? "GitHub comments are available only on pull requests" : !githubConnected ? "Sign in with GitHub from the page header to post annotations" : githubAnnotationConfirmation === annotation.id ? "Click again to post this annotation as a GitHub comment" : "Post this local annotation as a GitHub pull request comment"}
             type="button"
           >
-            {githubAnnotationConfirmation === annotation.id ? <Check size={14} /> : <Github size={14} />}
+            {githubAnnotationConfirmation === annotation.id ? <Check size={10} /> : <Github size={10} />}
           </button>
         </div>
       ))}
       {githubAnnotationError && <span aria-live="polite" className="annotation-github-status">{githubAnnotationError}</span>}
-      {copyStatus && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
+      {copyStatus === "Copy failed" && <span aria-live="polite" className="annotation-copy-status">{copyStatus}</span>}
     </div>
   );
 
@@ -1942,7 +1944,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             onPointerUp={stopDragging}
             title="Drag to move annotation composer"
           >
-            <span><span>Annotation</span><GripHorizontal className="drag-hint" size={13} /></span>
+            <span><GripHorizontal className="drag-hint" size={13} /></span>
           </div>
           <textarea
             aria-label="Annotation"
@@ -1954,7 +1956,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             }}
             placeholder="Add a short annotation"
             ref={annotationInputRef}
-            rows={3}
+            rows={2}
             value={annotationDraft.text}
           />
           <div className="annotation-composer-actions">

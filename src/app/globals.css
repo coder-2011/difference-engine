@@ -3125,14 +3125,16 @@ button {
 }
 
 /* A successful clipboard write gets a short, calm confirmation before the normal icon returns. */
-.copy-annotations.copied {
+.copy-annotations.copied,
+.annotation-copy.copied {
   border-color: #3c8055;
   background: #183723;
   color: #a4e6b8;
   animation: copy-annotations-confirm 180ms ease-out;
 }
 
-.copy-annotations.copied > svg {
+.copy-annotations.copied > svg,
+.annotation-copy.copied > svg {
   animation: copy-annotations-check 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -3163,8 +3165,8 @@ button {
 .annotation-composer {
   position: fixed;
   z-index: 101;
-  width: min(320px, calc(100vw - 16px));
-  padding: 9px;
+  width: min(280px, calc(100vw - 16px));
+  padding: 7px;
   border: 1px solid #4c4658;
   border-radius: 8px;
   background: #171519;
@@ -3185,7 +3187,7 @@ button {
 
 .annotation-composer-header {
   display: flex;
-  height: 22px;
+  height: 16px;
   align-items: center;
   color: #aaa5b4;
   cursor: grab;
@@ -3212,12 +3214,12 @@ button {
 .annotation-composer-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 7px;
-  margin-top: 7px;
+  gap: 6px;
+  margin-top: 4px;
 }
 
 .annotation-composer button {
-  padding: 5px 7px;
+  padding: 4px 6px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -3484,7 +3486,7 @@ button {
 .annotation-open {
   flex: 1;
   min-width: 0;
-  padding: 8px 47px 8px 12px;
+  padding: 8px 37px 8px 12px;
   overflow: hidden;
   border: 0;
   background: transparent;
@@ -3554,8 +3556,8 @@ button {
 
 .annotation-github {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   place-items: center;
   padding: 0;
   border: 1px solid #3b3643;
