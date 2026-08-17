@@ -33,7 +33,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.3.1",
     "tar-stream": "^3.2.0",
-    "tree-sitter": "0.22.4",
+    "tree-sitter": "0.25.1",
     "tree-sitter-rust": "0.24.0",
     "typescript": "^5.7.2"
   },

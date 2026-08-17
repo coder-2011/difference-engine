@@ -30,4 +30,5 @@ export type CallDiffDocument = {
   ignoredFiles: number;
   toRef: string;
   truncated: boolean;
+  unparsedFiles: number;
 };

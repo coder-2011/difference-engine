@@ -2495,6 +2495,8 @@ button {
 .call-flow-body .call-diff-error {
   flex: 1;
   min-height: 0;
+  margin-top: 28px;
+  padding: 24px;
 }
 
 .call-diff-entry-list {

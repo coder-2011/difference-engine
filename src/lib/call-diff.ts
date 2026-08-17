@@ -57,6 +57,7 @@ function treeForEntry(entry: FunctionInfo, functions: FunctionInfo[]): CallNode 
 function extractSnapshotFunctions(
   fileKey: string,
   source: { path: string; text: string } | undefined,
+  unparsedFiles: Set<string>,
   functions: IndexedFunction[],
   sources: Map<string, string>,
 ): void {
@@ -68,7 +69,8 @@ function extractSnapshotFunctions(
       functions.push({ fileKey, info, key: functionId(fileKey, info.key) });
     }
   } catch {
-    // A missing optional grammar must not discard Call Flow for the other changed files.
+    // Report unavailable grammars instead of misrepresenting them as an empty call flow.
+    unparsedFiles.add(source.path);
   }
 }
 
@@ -79,10 +81,11 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
   const afterFunctions: IndexedFunction[] = [];
   const beforeSources = new Map<string, string>();
   const afterSources = new Map<string, string>();
+  const unparsedFiles = new Set<string>();
 
   for (const file of snapshot.files) {
-    extractSnapshotFunctions(file.key, file.before, beforeFunctions, beforeSources);
-    extractSnapshotFunctions(file.key, file.after, afterFunctions, afterSources);
+    extractSnapshotFunctions(file.key, file.before, unparsedFiles, beforeFunctions, beforeSources);
+    extractSnapshotFunctions(file.key, file.after, unparsedFiles, afterFunctions, afterSources);
   }
 
   const beforeByKey = new Map(beforeFunctions.map((entry) => [entry.key, entry]));
@@ -140,5 +143,6 @@ export async function getCallDiffDocument(source: string[], token?: string): Pro
     ignoredFiles: snapshot.ignoredFiles,
     toRef: snapshot.toRef,
     truncated: snapshot.truncated || entryLimitReached,
+    unparsedFiles: unparsedFiles.size,
   };
 }

@@ -215,7 +215,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
     <section className="call-diff-viewer" aria-label="Call flow">
       <header className="call-diff-toolbar viewer-toolbar">
         <div className="change-stats">
-          <span><FileText size={13} /> {document.files.length} files</span>
+          <span><FileText size={13} /> {document.files.length}/{document.filesAnalyzed} files</span>
           <span>{changedLines.toLocaleString()} LOC</span>
           <span className="additions">+{additions.toLocaleString()}</span>
           <span className="deletions">−{deletions.toLocaleString()}</span>
@@ -250,7 +250,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
           ))}
         </div>
       ) : (
-        <div className="call-diff-empty"><Network size={19} /><strong>No changed call flow found</strong><span>The changed supported files do not add, remove, or rewire a parsed call.</span></div>
+        <div className="call-diff-empty"><Network size={19} /><strong>{document.unparsedFiles ? "Call flow could not parse every changed source file" : "No changed call flow found"}</strong><span>{document.unparsedFiles ? `${document.unparsedFiles} source ${document.unparsedFiles === 1 ? "file was" : "files were"} unavailable to the parser.` : "The changed supported files do not add, remove, or rewire a parsed call."}</span></div>
       )}
     </section>
   );
