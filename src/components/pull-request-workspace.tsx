@@ -270,7 +270,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         ? currentMethod
         : initialMergeMethod(refreshedMergeMethods));
       if (result.celebrate) setCelebrating(true);
-      const actionMessage = ACTION_MESSAGES[action.action];
+      const actionMessage = action.action in ACTION_MESSAGES
+        ? ACTION_MESSAGES[action.action as keyof typeof ACTION_MESSAGES]
+        : undefined;
       if (actionMessage) setMessage({ error: false, text: actionMessage });
       return true;
     } catch (error) {
