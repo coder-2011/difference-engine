@@ -1255,6 +1255,7 @@ export async function createCommitAndPush(
       tree: treeEntries,
     },
   );
+  // SAFETY: GitHub's trees endpoint returns a tree object containing the created tree sha.
   const treeData = await treeResponse.json() as { sha: string };
 
   const commitResponse = await githubResponse(
@@ -1267,6 +1268,7 @@ export async function createCommitAndPush(
       tree: treeData.sha,
     },
   );
+  // SAFETY: GitHub's commits endpoint returns a commit object containing the created commit sha.
   const commitData = await commitResponse.json() as { sha: string };
 
   await githubResponse(

@@ -612,7 +612,7 @@ export function DiffViewer({
     hunkSeparators: "line-info",
     lineDiffType: "word-alt",
     overflow: "scroll",
-    preferredHighlighter: "shiki-wasm",
+    preferredHighlighter: "shiki-js",
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",

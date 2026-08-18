@@ -61,7 +61,7 @@ function treeHasChanges(node: CallDiffNode): boolean {
   return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
-const LANGUAGE_MAP: Record<string, string> = {
+const LANGUAGE_MAP = {
   c: "c",
   cc: "cpp",
   cpp: "cpp",
@@ -104,7 +104,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   kt: "kotlin",
   zig: "zig",
   lua: "lua",
-};
+} satisfies Record<string, string>;
 
 /** Resolves the proper Shiki-supported language ID for a source file. */
 function resolveLanguage(file: string): string {

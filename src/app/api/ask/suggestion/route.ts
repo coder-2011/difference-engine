@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOpenAIAccess, isSameOrigin, OPENAI_SESSION_COOKIE } from "@/lib/openai-auth";
+import type { JsonValue } from "@/lib/json";
 import { isRecord, isString } from "@/lib/json";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -15,7 +16,7 @@ type ChatTurn = {
 };
 
 /** Keeps the client-supplied chat track bounded before it reaches the suggestion model. */
-function parseTrack(value: unknown): ChatTurn[] {
+function parseTrack(value: JsonValue): ChatTurn[] {
   if (!Array.isArray(value)) return [];
 
   return value
@@ -29,7 +30,7 @@ function parseTrack(value: unknown): ChatTurn[] {
 }
 
 /** Extracts completed text from the small non-streaming Responses result. */
-function outputText(value: unknown): string {
+function outputText(value: JsonValue): string {
   if (!isRecord(value) || !Array.isArray(value.output)) return "";
 
   return value.output.flatMap((item) => (
