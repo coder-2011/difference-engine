@@ -16,7 +16,7 @@ type ChatTurn = {
 };
 
 /** Keeps the client-supplied chat track bounded before it reaches the suggestion model. */
-function parseTrack(value: JsonValue): ChatTurn[] {
+function parseTrack(value: JsonValue | undefined): ChatTurn[] {
   if (!Array.isArray(value)) return [];
 
   return value
@@ -30,7 +30,7 @@ function parseTrack(value: JsonValue): ChatTurn[] {
 }
 
 /** Extracts completed text from the small non-streaming Responses result. */
-function outputText(value: JsonValue): string {
+function outputText(value: JsonValue | undefined): string {
   if (!isRecord(value) || !Array.isArray(value.output)) return "";
 
   return value.output.flatMap((item) => (
