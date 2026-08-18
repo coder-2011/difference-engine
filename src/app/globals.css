@@ -4082,6 +4082,31 @@ button {
   min-width: 0;
 }
 
+.question-input-resize {
+  position: absolute;
+  z-index: 2;
+  top: -7px;
+  right: 0;
+  left: 0;
+  height: 8px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.question-input-resize::after {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: #302f34;
+  content: "";
+}
+
+.question-input-resize:hover::after {
+  background: #655c75;
+}
+
 .question-suggestion {
   position: absolute;
   inset: 0;

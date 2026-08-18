@@ -133,6 +133,10 @@ type ResizeState = Point & {
   width: number;
 };
 
+type InputResizeState = Point & {
+  height: number;
+};
+
 type ChatPanelStyle = CSSProperties & { "--chat-font-size": string };
 
 export type ProgrammaticSelection = Point & {
@@ -616,6 +620,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const conversationRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
+  const inputResizeRef = useRef<InputResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
   const followsConversationRef = useRef(true);
@@ -926,6 +931,34 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   /** Releases the current resize pointer capture. */
   function stopResizing(event: ReactPointerEvent<HTMLDivElement>): void {
     resizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  /** Starts resizing the textarea from its top edge so chat controls remain in place below it. */
+  function startInputResizing(event: ReactPointerEvent<HTMLDivElement>): void {
+    const input = inputRef.current;
+    if (!input) return;
+
+    inputResizeRef.current = { height: input.clientHeight, x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  /** Grows or shrinks the input within its CSS-defined bounds. */
+  function resizeInput(event: ReactPointerEvent<HTMLDivElement>): void {
+    const resize = inputResizeRef.current;
+    const input = inputRef.current;
+    if (!resize || !input) return;
+
+    const minHeight = Number.parseFloat(window.getComputedStyle(input).minHeight);
+    const maxHeight = Number.parseFloat(window.getComputedStyle(input).maxHeight);
+    const height = Math.min(maxHeight, Math.max(minHeight, resize.height + resize.y - event.clientY));
+    input.style.height = `${height}px`;
+  }
+
+  /** Releases the textarea resize gesture. */
+  function stopInputResizing(event: ReactPointerEvent<HTMLDivElement>): void {
+    inputResizeRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
@@ -1332,6 +1365,15 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
         )}
         {attachmentError && <p className="attachment-error">{attachmentError}</p>}
         <div className="question-input">
+          <div
+            aria-label="Resize message area"
+            className="question-input-resize"
+            onPointerCancel={stopInputResizing}
+            onPointerDown={startInputResizing}
+            onPointerMove={resizeInput}
+            onPointerUp={stopInputResizing}
+            role="separator"
+          />
           {!question && !isGeneratingSuggestion && suggestedQuestion && (
             <span aria-hidden="true" className="question-suggestion">
               <span>{suggestedQuestion}</span>
