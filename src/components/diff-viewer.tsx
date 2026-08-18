@@ -4,13 +4,14 @@ import type { CodeViewItem, CodeViewLineSelection, CodeViewOptions, FileDiffMeta
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
-import { CodeView, WorkerPoolContextProvider } from "@pierre/diffs/react";
+import { CodeView, WorkerPoolContext } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { Check, ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
+import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
@@ -591,37 +592,14 @@ export function DiffViewer({
     return () => workspace.removeEventListener("wheel", revealWorkspace, { capture: true });
   }, []);
 
+  const workerPool = useMemo(() => getDiffWorkerPool(), []);
+
   const items = useMemo<CodeViewItem[]>(
     () => repository
-      ? codeFiles.map((file) => ({
-          cacheKey: `repo:${file.name}`,
-          id: file.name,
-          type: "file",
-          file,
-          collapsed,
-          version: collapsed ? 1 : 0,
-        }))
-      : diffFiles.map((file) => ({
-          cacheKey: `diff:${file.name}:${file.cacheKey ?? file.type}`,
-          id: file.name,
-          type: "diff",
-          fileDiff: file,
-          collapsed,
-          version: collapsed ? 1 : 0,
-        })),
+      ? codeFiles.map((file) => ({ id: file.name, type: "file", file, collapsed, version: collapsed ? 1 : 0 }))
+      : diffFiles.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
     [codeFiles, collapsed, diffFiles, repository],
   );
-  const workerPoolOptions = useMemo(() => ({
-    poolSize: typeof navigator !== "undefined" ? Math.min(Math.max(navigator.hardwareConcurrency || 2, 2), 4) : 4,
-    workerFactory: () => new Worker(new URL("../workers/diff-highlight.worker.ts", import.meta.url)),
-  }), []);
-  const workerHighlighterOptions = useMemo(() => ({
-    theme: "pierre-dark" as const,
-    preferredHighlighter: "shiki-wasm" as const,
-    useTokenTransformer: true,
-    tokenizeMaxLineLength: 5000,
-    maxLineDiffLength: 1000,
-  }), []);
   const codeViewOptions = useMemo<CodeViewOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
@@ -634,20 +612,6 @@ export function DiffViewer({
     lineDiffType: "word-alt",
     overflow: "scroll",
     preferredHighlighter: "shiki-wasm",
-    useTokenTransformer: true,
-    tokenizeMaxLineLength: 5000,
-    maxLineDiffLength: 1000,
-    pointerEventsOnScroll: false,
-    layout: {
-      gap: 12,
-      paddingBottom: 24,
-      paddingTop: 0,
-    },
-    smoothScrollSettings: {
-      omega: 0.022,
-      positionEpsilon: 0.5,
-      velocityEpsilon: 0.01,
-    },
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",
@@ -898,14 +862,14 @@ export function DiffViewer({
           data-diff-selection-root
           style={codeViewStyle}
         >
-          <WorkerPoolContextProvider highlighterOptions={workerHighlighterOptions} poolOptions={workerPoolOptions}>
+          <WorkerPoolContext.Provider value={workerPool}>
             <CodeView
               ref={viewerRef}
               items={items}
               onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
               options={codeViewOptions}
             />
-          </WorkerPoolContextProvider>
+          </WorkerPoolContext.Provider>
         </div>
       </div>
       </>}
