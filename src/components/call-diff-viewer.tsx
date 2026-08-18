@@ -32,6 +32,7 @@ type CallDiffState =
 type SyntaxToken = {
   color?: string;
   content: string;
+  fontStyle?: number;
 };
 
 type CallDiffDisplayStatus = "added" | "changed" | "removed" | "same";
