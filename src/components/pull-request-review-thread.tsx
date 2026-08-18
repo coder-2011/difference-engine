@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Check, ExternalLink, Reply, RotateCcw, Send } from "lucide-react";
 import { useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
+import { commentDate } from "@/components/pull-request-workspace";
 import type { PullRequestAction, PullRequestReviewThread } from "@/types/github";
 
 type PullRequestReviewThreadProps = {
@@ -68,7 +69,7 @@ export function PullRequestReviewThread({ onAction, pending, thread }: PullReque
           <article className="pr-review-thread-comment" key={comment.id}>
             <Image className="avatar" src={comment.avatarUrl} alt="" width={20} height={20} />
             <div>
-              <header><strong>{comment.author}</strong><time dateTime={comment.createdAt} suppressHydrationWarning>{new Date(comment.createdAt).toLocaleString()}</time>{comment.updatedAt !== comment.createdAt && <span>edited</span>}</header>
+              <header><strong>{comment.author}</strong><time dateTime={comment.createdAt} suppressHydrationWarning>{commentDate(comment.createdAt)}</time>{comment.updatedAt !== comment.createdAt && <span>edited</span>}</header>
               <div className="pr-comment-markdown"><GitHubMarkdown>{comment.body}</GitHubMarkdown></div>
             </div>
           </article>

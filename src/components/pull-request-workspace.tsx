@@ -69,7 +69,7 @@ const CELEBRATION_PARTICLES: readonly Particle[] = [
 ];
 
 /** Formats a GitHub timestamp as a compact elapsed time for conversation rows. */
-function commentDate(value: string): string {
+export function commentDate(value: string): string {
   const minutes = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 60_000);
   if (minutes < 1) return "now";
   if (minutes < 60) return `${minutes}m ago`;
@@ -157,6 +157,13 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     threads.push(thread);
     reviewThreadsByReview.set(thread.reviewId, threads);
   }
+  const renderedReviewIds = new Set(
+    conversationItems
+      .filter((item): item is typeof item & { kind: "comment" } => item.kind === "comment")
+      .map((item) => item.entry.reviewId)
+      .filter((id): id is number => typeof id === "number"),
+  );
+  const unattachedThreads = reviewThreads.filter((thread) => !thread.reviewId || !renderedReviewIds.has(thread.reviewId));
   // Hide automation metadata in rendered prose while retaining it in the editable GitHub body.
   const visibleBody = body.replace(PR_STATES_BLOCK, "").trim();
 
@@ -382,23 +389,37 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
             }
 
             const entry = item.entry;
+            const threads = entry.reviewId ? reviewThreadsByReview.get(entry.reviewId) : undefined;
+            const hasBody = Boolean(entry.body?.trim());
+            const hasThreads = Boolean(threads?.length);
+
+            if (!hasBody && !hasThreads) {
+              if (entry.context && entry.context !== "commented") {
+                const actionLabel = entry.context === "approved" ? "approved these changes" : entry.context === "changes requested" ? "requested changes" : entry.context;
+                return <p className="pr-timeline-event" key={item.key}><time dateTime={entry.createdAt} suppressHydrationWarning>{commentDate(entry.createdAt)}</time>{entry.author} {actionLabel}</p>;
+              }
+              return null;
+            }
+
             return (
               <div className="pr-conversation-entry" key={item.key}>
-                <article className="pr-comment">
-                  <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
-                  <div>
-                    <header><strong>{entry.author}</strong><time dateTime={entry.createdAt} suppressHydrationWarning>{commentDate(entry.createdAt)}</time>{entry.updatedAt !== entry.createdAt && <span>edited</span>}</header>
-                    {entry.context && <span className="pr-comment-context">{entry.context}</span>}
-                    {entry.body && <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>}
-                  </div>
-                </article>
-                {entry.reviewId && reviewThreadsByReview.get(entry.reviewId)?.map((thread) => (
+                {hasBody && (
+                  <article className="pr-comment">
+                    <Image className="avatar" src={entry.avatarUrl} alt="" width={20} height={20} />
+                    <div>
+                      <header><strong>{entry.author}</strong><time dateTime={entry.createdAt} suppressHydrationWarning>{commentDate(entry.createdAt)}</time>{entry.updatedAt !== entry.createdAt && <span>edited</span>}</header>
+                      {entry.context && entry.context !== "commented" && <span className="pr-comment-context">{entry.context === "approved" ? "approved these changes" : entry.context === "changes requested" ? "requested changes" : entry.context}</span>}
+                      <div className="pr-comment-markdown"><GitHubMarkdown>{entry.body}</GitHubMarkdown></div>
+                    </div>
+                  </article>
+                )}
+                {threads?.map((thread) => (
                   <PullRequestReviewThread key={thread.comments[0]?.id ?? thread.path} onAction={runAction} pending={Boolean(pendingAction)} thread={thread} />
                 ))}
               </div>
             );
           }) : !workspace.conversationUnavailable && <p className="pr-comment-empty">No conversation yet.</p>}
-          {reviewThreads.filter((thread) => !thread.reviewId).map((thread) => (
+          {unattachedThreads.map((thread) => (
             <PullRequestReviewThread key={thread.comments[0]?.id ?? thread.path} onAction={runAction} pending={Boolean(pendingAction)} thread={thread} />
           ))}
           {workspace.conversationUnavailable && <p className="pr-conversation-note">Conversation may be incomplete.</p>}

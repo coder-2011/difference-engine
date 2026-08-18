@@ -132,7 +132,7 @@ button {
 .account-cluster {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -851,7 +851,7 @@ button {
   grid-area: meta;
   align-self: center;
   justify-self: start;
-  gap: 7px;
+  gap: 8px;
   color: #68656e;
   font-family: var(--font-mono);
   font-size: 9px;
@@ -1066,7 +1066,7 @@ button {
 }
 
 .pr-byline {
-  gap: 7px;
+  gap: 8px;
   margin-top: 15px;
   color: var(--muted);
   font-size: 11px;
@@ -1215,9 +1215,15 @@ button {
 .markdown-body img,
 .pr-comment-markdown img,
 .chat-markdown img {
-  display: block;
   max-width: 100%;
   height: auto;
+  vertical-align: middle;
+}
+
+.markdown-body p > img:only-child,
+.pr-comment-markdown p > img:only-child,
+.chat-markdown p > img:only-child {
+  display: block;
   margin: 8px 0;
   border: 1px solid var(--line-soft);
   border-radius: 6px;
@@ -1365,6 +1371,67 @@ button {
   font-weight: 650;
 }
 
+.markdown-body details,
+.pr-comment-markdown details,
+.chat-markdown details {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #111114;
+}
+
+.markdown-body summary,
+.pr-comment-markdown summary,
+.chat-markdown summary {
+  cursor: pointer;
+  color: #cfcfe2;
+  font-weight: 500;
+  user-select: none;
+}
+
+.markdown-body summary:hover,
+.pr-comment-markdown summary:hover,
+.chat-markdown summary:hover {
+  color: #ffffff;
+}
+
+.markdown-body details[open] > summary,
+.pr-comment-markdown details[open] > summary,
+.chat-markdown details[open] > summary {
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.markdown-body sub,
+.pr-comment-markdown sub,
+.chat-markdown sub {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+  bottom: -0.25em;
+}
+
+.markdown-body sup,
+.pr-comment-markdown sup,
+.chat-markdown sup {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+  top: -0.5em;
+}
+
+.markdown-body hr,
+.pr-comment-markdown hr,
+.chat-markdown hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
 .markdown-code-block {
   position: relative;
 }
@@ -1508,6 +1575,7 @@ button {
 .pr-comment {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
 }
 
 .pr-conversation-entry {
@@ -1682,7 +1750,7 @@ button {
 
 .pr-review-thread-comment {
   align-items: start;
-  gap: 7px;
+  gap: 8px;
   padding: 8px;
   color: #bcbcc2;
   font-size: 11px;

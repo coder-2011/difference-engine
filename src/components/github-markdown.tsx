@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import type { ComponentPropsWithoutRef } from "react";
+import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, MarkdownPre } from "@/components/highlighted-code";
 import { isString } from "@/lib/json";
@@ -142,6 +143,7 @@ function MarkdownTable({ children, ...props }: ComponentPropsWithoutRef<"table">
 
 const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre, table: MarkdownTable };
 const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
+const REHYPE_PLUGINS = [rehypeRaw];
 
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
 export const GitHubMarkdown = memo(function GitHubMarkdown({ children, codeReferencePaths, onCodeReference }: GitHubMarkdownProps) {
@@ -160,8 +162,8 @@ export const GitHubMarkdown = memo(function GitHubMarkdown({ children, codeRefer
   return (
     <ReactMarkdown
       components={markdownComponents}
+      rehypePlugins={REHYPE_PLUGINS}
       remarkPlugins={markdownPlugins}
-      skipHtml
     >
       {children}
     </ReactMarkdown>
