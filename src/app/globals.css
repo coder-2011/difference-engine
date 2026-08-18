@@ -3238,6 +3238,11 @@ button {
   overflow: hidden;
 }
 
+.sidebar-bottom-bar.single-action,
+.sidebar-bottom-bar:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+
 .sidebar-bottom-action {
   display: flex;
   align-items: center;

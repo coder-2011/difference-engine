@@ -270,6 +270,7 @@ export function DiffViewer({
     const handleKeyDown = (event: KeyboardEvent): void => {
       const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E");
       if (isCommandShiftE) {
+        if (reviewViewRef.current === "call-flow") return;
         event.preventDefault();
         setEditMode((mode) => !mode);
       }
@@ -737,7 +738,7 @@ export function DiffViewer({
       <div className="file-sidebar-title">{repository ? "Files" : "Changed files"} <span>{files.length}</span></div>
       <FileTree model={model} aria-label={repository ? "Files" : "Changed files"} />
       <div className="annotation-sidebar" />
-      <div className="sidebar-bottom-bar">
+      <div className={`sidebar-bottom-bar${showingCallDiff ? " single-action" : ""}`}>
         <button
           aria-label="Open Ask Diffs"
           className="sidebar-bottom-action ask-diffs-btn"
@@ -747,16 +748,18 @@ export function DiffViewer({
           <Sparkles size={13} />
           <span>Ask Diffs</span>
         </button>
-        <button
-          aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
-          className={`sidebar-bottom-action edit-mode-btn${editMode ? " active" : ""}`}
-          onClick={() => setEditMode((mode) => !mode)}
-          type="button"
-        >
-          <Pencil size={13} />
-          <span>{editMode ? "Editing" : "Edit"}</span>
-          <kbd className="key-hint">⌘⇧E</kbd>
-        </button>
+        {!showingCallDiff && (
+          <button
+            aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
+            className={`sidebar-bottom-action edit-mode-btn${editMode ? " active" : ""}`}
+            onClick={() => setEditMode((mode) => !mode)}
+            type="button"
+          >
+            <Pencil size={13} />
+            <span>{editMode ? "Editing" : "Edit"}</span>
+            <kbd className="key-hint">⌘⇧E</kbd>
+          </button>
+        )}
       </div>
     </aside>
   );
