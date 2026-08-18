@@ -4,7 +4,10 @@ import { AlertCircle, ChevronDown, ChevronRight, ClipboardCopy, ExternalLink, Fi
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { CallDiffDocument, CallDiffNode } from "@/types/call-diff";
+import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
+
+configureDiffHighlighting();
 
 type CallDiffViewerProps = {
   onSelect?: (selection: CallDiffSelection) => void;
@@ -58,17 +61,70 @@ function treeHasChanges(node: CallDiffNode): boolean {
   return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
+const LANGUAGE_MAP: Record<string, string> = {
+  c: "c",
+  cc: "cpp",
+  cpp: "cpp",
+  cu: "cpp",
+  cuh: "cpp",
+  cxx: "cpp",
+  h: "cpp",
+  hh: "cpp",
+  hpp: "cpp",
+  hxx: "cpp",
+  cs: "csharp",
+  go: "go",
+  java: "java",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  jsx: "jsx",
+  ts: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  tsx: "tsx",
+  py: "python",
+  pyi: "python",
+  rs: "rust",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  md: "markdown",
+  html: "html",
+  css: "css",
+  scss: "css",
+  sql: "sql",
+  rb: "ruby",
+  php: "php",
+  swift: "swift",
+  kt: "kotlin",
+  zig: "zig",
+  lua: "lua",
+};
+
+/** Resolves the proper Shiki-supported language ID for a source file. */
+function resolveLanguage(file: string): string {
+  const ext = file.split(".").pop()?.toLowerCase() ?? "";
+  return LANGUAGE_MAP[ext] || getFiletypeFromFileName(file) || "text";
+}
+
 const CALL_CODE_CACHE = new Map<string, SyntaxToken[][]>();
 
 /** Renders a Call Flow source line with the same shared Shiki theme as the main diff. */
 function HighlightedCallCode({ file, text }: { file: string; text: string }) {
-  const language = getFiletypeFromFileName(file);
-  const key = `${file}\0${text}`;
+  const language = resolveLanguage(file);
+  const key = `${language}\0${text}`;
   const cachedTokens = CALL_CODE_CACHE.get(key);
-  const [highlight, setHighlight] = useState<{ key: string; tokens: SyntaxToken[][] } | null>(null);
+  const [highlight, setHighlight] = useState<{ key: string; tokens: SyntaxToken[][] } | null>(
+    () => (cachedTokens ? { key, tokens: cachedTokens } : null),
+  );
 
   useEffect(() => {
-    if (CALL_CODE_CACHE.has(key)) return;
+    if (CALL_CODE_CACHE.has(key) || !text) return;
 
     let cancelled = false;
 
@@ -76,19 +132,24 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
       langs: [language],
       preferredHighlighter: "shiki-wasm",
       themes: ["pierre-dark"],
-    }).then((highlighter) => highlighter.codeToTokens(text, {
-      lang: language,
-      theme: "pierre-dark",
-    })).then((result) => {
-      if (CALL_CODE_CACHE.size >= 1000) {
-        const firstKey = CALL_CODE_CACHE.keys().next().value;
-        if (firstKey) CALL_CODE_CACHE.delete(firstKey);
-      }
-      CALL_CODE_CACHE.set(key, result.tokens);
-      if (!cancelled) setHighlight({ key, tokens: result.tokens });
-    }).catch(() => {
-      // The source line remains readable when an optional grammar cannot load.
-    });
+    })
+      .then((highlighter) =>
+        highlighter.codeToTokens(text, {
+          lang: language,
+          theme: "pierre-dark",
+        }),
+      )
+      .then((result) => {
+        if (CALL_CODE_CACHE.size >= 2000) {
+          const firstKey = CALL_CODE_CACHE.keys().next().value;
+          if (firstKey) CALL_CODE_CACHE.delete(firstKey);
+        }
+        CALL_CODE_CACHE.set(key, result.tokens);
+        if (!cancelled) setHighlight({ key, tokens: result.tokens });
+      })
+      .catch(() => {
+        // Fall back to un-highlighted text if grammar is missing
+      });
 
     return () => {
       cancelled = true;
@@ -102,7 +163,18 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
       {activeTokens
         ? activeTokens.map((line, lineIndex) => (
             <Fragment key={lineIndex}>
-              {line.map((token, tokenIndex) => <span key={tokenIndex} style={{ color: token.color }}>{token.content}</span>)}
+              {line.map((token, tokenIndex) => (
+                <span
+                  key={tokenIndex}
+                  style={{
+                    color: token.color || "#e2e2e8",
+                    fontStyle: token.fontStyle === 1 ? "italic" : undefined,
+                    fontWeight: token.fontStyle === 2 ? "bold" : undefined,
+                  }}
+                >
+                  {token.content}
+                </span>
+              ))}
               {lineIndex < activeTokens.length - 1 ? "\n" : null}
             </Fragment>
           ))
@@ -112,7 +184,21 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
 }
 
 /** Renders one recursive call-flow node with source navigation and selection actions. */
-function CallDiffNodeRow({ fromRef, node, onSelect, source, toRef }: { fromRef: string; node: CallDiffNode; onSelect?: (selection: CallDiffSelection) => void; source: string[]; toRef: string }) {
+function CallDiffNodeRow({
+  depth = 0,
+  fromRef,
+  node,
+  onSelect,
+  source,
+  toRef,
+}: {
+  depth?: number;
+  fromRef: string;
+  node: CallDiffNode;
+  onSelect?: (selection: CallDiffSelection) => void;
+  source: string[];
+  toRef: string;
+}) {
   const ref = node.status === "removed" ? fromRef : toRef;
   const location = `${node.file}:${node.line}`;
   const sourceLine = node.snippet.trim() || node.label;
@@ -133,23 +219,43 @@ function CallDiffNodeRow({ fromRef, node, onSelect, source, toRef }: { fromRef: 
   return (
     <li className={`call-diff-node ${node.kind} ${status}`}>
       <div className="call-diff-node-line">
-        {onSelect ? (
-          <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
-            <span aria-hidden="true" className="call-diff-node-line-number">{node.line}</span>
-            <HighlightedCallCode file={node.file} text={sourceLine} />
-          </button>
-        ) : (
-          <a href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
-            <span aria-hidden="true" className="call-diff-node-line-number">{node.line}</span>
-            <HighlightedCallCode file={node.file} text={sourceLine} />
-          </a>
-        )}
-        {onSelect && <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}><ExternalLink size={12} /></a>}
+        <div className="call-diff-node-gutter">
+          <span aria-hidden="true" className="call-diff-node-line-number">{node.line}</span>
+        </div>
+        <div className="call-diff-node-content">
+          <div className="call-diff-tree-indent" aria-hidden="true">
+            {Array.from({ length: depth }, (_, i) => (
+              <span className="call-diff-indent-guide" key={i} />
+            ))}
+          </div>
+          {onSelect ? (
+            <button className="call-diff-node-select" onClick={selectNode} title={`Ask or annotate ${location}`} type="button">
+              <HighlightedCallCode file={node.file} text={sourceLine} />
+            </button>
+          ) : (
+            <a className="call-diff-node-link" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
+              <HighlightedCallCode file={node.file} text={sourceLine} />
+            </a>
+          )}
+          {onSelect && (
+            <a aria-label={`Open ${location}`} className="call-diff-node-source" href={sourceLocationUrl(source, ref, node.file, node.line)} title={`Open ${location}`}>
+              <ExternalLink size={12} />
+            </a>
+          )}
+        </div>
       </div>
       {children.length > 0 && (
-        <ol>
+        <ol className="call-diff-subtree">
           {children.map((child, index) => (
-            <CallDiffNodeRow fromRef={fromRef} key={`${child.key}-${child.line}-${index}`} node={child} onSelect={onSelect} source={source} toRef={toRef} />
+            <CallDiffNodeRow
+              depth={depth + 1}
+              fromRef={fromRef}
+              key={`${child.key}-${child.line}-${index}`}
+              node={child}
+              onSelect={onSelect}
+              source={source}
+              toRef={toRef}
+            />
           ))}
         </ol>
       )}

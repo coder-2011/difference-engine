@@ -2621,78 +2621,109 @@ button {
 }
 
 .call-diff-file-body {
-  padding: 5px 0;
+  padding: 0;
 }
 
 .call-diff-tree,
-.call-diff-tree ol {
+.call-diff-tree ol,
+.call-diff-subtree {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.call-diff-node > ol {
-  margin: 0 0 0 22px;
-  padding: 0 0 0 14px;
-  border-left: 1px solid #2b2b2f;
-}
-
 .call-diff-node-line {
   display: flex;
-  min-height: 33px;
-  align-items: center;
-  gap: 9px;
-  padding: 0 11px;
+  min-height: 28px;
+  align-items: stretch;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  transition: background 80ms ease-out;
 }
 
-.call-diff-node > .call-diff-node-line:hover {
-  background: #18181a;
+.call-diff-node-line:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.call-diff-node-line > a:not(.call-diff-node-source),
-.call-diff-node-select {
+.call-diff-node-gutter {
   display: flex;
-  min-width: 0;
-  flex: 1;
+  flex: none;
+  width: 52px;
+  min-width: 52px;
+  padding: 0 8px 0 12px;
   align-items: center;
-  gap: 10px;
+  border-right: 1px solid var(--line-soft);
+  user-select: none;
+  background: #0d0d0b;
 }
 
-.call-diff-node-select {
-  padding: 0;
+.call-diff-node-line-number {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: left;
+  width: 100%;
+  letter-spacing: 0.2px;
+}
+
+.call-diff-node-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  padding: 0 10px;
+  gap: 6px;
+}
+
+.call-diff-tree-indent {
+  display: flex;
+  align-self: stretch;
+  align-items: stretch;
+  flex: none;
+}
+
+.call-diff-indent-guide {
+  display: block;
+  position: relative;
+  width: 18px;
+  flex: none;
+  align-self: stretch;
+}
+
+.call-diff-indent-guide::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #252528;
+}
+
+.call-diff-node-select,
+.call-diff-node-link {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  padding: 2px 4px;
   border: 0;
   background: transparent;
   text-align: left;
-}
-
-.call-diff-node-select {
   cursor: pointer;
+  color: inherit;
+  text-decoration: none;
 }
 
 .call-diff-node-line code {
   min-width: 0;
   overflow: hidden;
-  color: #d9d9de;
+  color: #e2e2e8;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.5px;
+  line-height: 22px;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.call-diff-node.branch .call-diff-node-line code {
-  color: #cbb9f9;
-}
-
-.call-diff-node-line-number {
-  flex: none;
-  width: 4ch;
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 .call-diff-node-source {
@@ -2702,6 +2733,12 @@ button {
   margin-left: auto;
   padding: 4px;
   color: var(--faint);
+  opacity: 0;
+  transition: opacity 80ms ease-out, color 80ms ease-out;
+}
+
+.call-diff-node-line:hover .call-diff-node-source {
+  opacity: 1;
 }
 
 .call-diff-node-source:hover {
@@ -2709,23 +2746,41 @@ button {
 }
 
 .call-diff-node.added > .call-diff-node-line {
-  background: rgb(74 222 128 / 0.045);
+  background: rgba(74, 222, 128, 0.05);
 }
 
-.call-diff-node.added > .call-diff-node-line code {
-  color: #b9e8c6;
+.call-diff-node.added > .call-diff-node-line:hover {
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.call-diff-node.added > .call-diff-node-line .call-diff-node-gutter {
+  background: rgba(74, 222, 128, 0.09);
+  border-right-color: rgba(74, 222, 128, 0.2);
+}
+
+.call-diff-node.added > .call-diff-node-line .call-diff-node-line-number {
+  color: #4ade80;
 }
 
 .call-diff-node.removed > .call-diff-node-line {
-  background: rgb(251 113 133 / 0.045);
+  background: rgba(251, 113, 133, 0.05);
 }
 
-.call-diff-node.removed > .call-diff-node-line code {
-  color: #e7abb5;
+.call-diff-node.removed > .call-diff-node-line:hover {
+  background: rgba(251, 113, 133, 0.08);
+}
+
+.call-diff-node.removed > .call-diff-node-line .call-diff-node-gutter {
+  background: rgba(251, 113, 133, 0.09);
+  border-right-color: rgba(251, 113, 133, 0.2);
+}
+
+.call-diff-node.removed > .call-diff-node-line .call-diff-node-line-number {
+  color: #fb7185;
 }
 
 .call-diff-node.changed > .call-diff-node-line {
-  background: linear-gradient(90deg, rgb(74 222 128 / 0.045), rgb(251 113 133 / 0.045));
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.04), rgba(251, 113, 133, 0.04));
 }
 
 .call-diff-loading,
