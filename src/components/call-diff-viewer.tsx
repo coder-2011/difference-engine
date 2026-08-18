@@ -109,7 +109,9 @@ const LANGUAGE_MAP = {
 /** Resolves the proper Shiki-supported language ID for a source file. */
 function resolveLanguage(file: string): string {
   const ext = file.split(".").pop()?.toLowerCase() ?? "";
-  return LANGUAGE_MAP[ext] || getFiletypeFromFileName(file) || "text";
+  // SAFETY: `ext` is only used to index a static extension map and missing keys fallback to fileName detection.
+  const mappedLanguage = LANGUAGE_MAP[ext as keyof typeof LANGUAGE_MAP] as string | undefined;
+  return mappedLanguage || getFiletypeFromFileName(file) || "text";
 }
 
 const CALL_CODE_CACHE = new Map<string, SyntaxToken[][]>();
