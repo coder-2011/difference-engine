@@ -1183,6 +1183,109 @@ export async function postPullRequestAgentComment(
     : { line: comment.line, path: comment.path.trim(), side: comment.side, type: "line", url: created.html_url };
 }
 
+export type CommitFileChange = {
+  contents: string;
+  path: string;
+};
+
+export type CommitPushResult = {
+  branch: string;
+  commitSha: string;
+  message: string;
+  repository: string;
+};
+
+/** Commits modified files to the target GitHub branch and pushes the ref. */
+export async function createCommitAndPush(
+  source: string[],
+  token: string | undefined,
+  files: CommitFileChange[],
+  message: string,
+): Promise<CommitPushResult> {
+  const accessToken = requireGitHubToken(token);
+  const parsed = parseSource(source);
+
+  if (!files.length) {
+    throw new GitHubError("No file changes to commit", 400);
+  }
+
+  let headRepo: string;
+  let headBranch: string;
+  let headSha: string;
+
+  if (parsed.kind === "pull") {
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, accessToken);
+    headRepo = pullRequest.head.repo?.full_name ?? parsed.repository;
+    headBranch = pullRequest.head.ref;
+    headSha = pullRequest.head.sha;
+  } else if (parsed.kind === "repository") {
+    headRepo = parsed.repository;
+    const repoInfo = await githubRequest<Repository>(parsed.apiPath, accessToken);
+    headBranch = parsed.repositoryRef ?? repoInfo.default_branch;
+    const refData = await githubRequest<{ object: { sha: string } }>(
+      `/repos/${encodeRepositoryPath(headRepo)}/git/ref/heads/${encodeURIComponent(headBranch)}`,
+      accessToken,
+    );
+    headSha = refData.object.sha;
+  } else {
+    throw new GitHubError("Direct commits are supported on pull requests and repository branches", 400);
+  }
+
+  const encodedHeadRepo = encodeRepositoryPath(headRepo);
+
+  const headCommit = await githubRequest<{ tree: { sha: string } }>(
+    `/repos/${encodedHeadRepo}/git/commits/${headSha}`,
+    accessToken,
+  );
+  const baseTreeSha = headCommit.tree.sha;
+
+  const treeEntries = files.map((file) => ({
+    content: file.contents,
+    mode: "100644",
+    path: file.path,
+    type: "blob",
+  }));
+
+  const treeResponse = await githubResponse(
+    `/repos/${encodedHeadRepo}/git/trees`,
+    accessToken,
+    "POST",
+    {
+      base_tree: baseTreeSha,
+      tree: treeEntries,
+    },
+  );
+  const treeData = await treeResponse.json() as { sha: string };
+
+  const commitResponse = await githubResponse(
+    `/repos/${encodedHeadRepo}/git/commits`,
+    accessToken,
+    "POST",
+    {
+      message,
+      parents: [headSha],
+      tree: treeData.sha,
+    },
+  );
+  const commitData = await commitResponse.json() as { sha: string };
+
+  await githubResponse(
+    `/repos/${encodedHeadRepo}/git/refs/heads/${encodeURIComponent(headBranch)}`,
+    accessToken,
+    "PATCH",
+    {
+      sha: commitData.sha,
+    },
+  );
+
+  return {
+    branch: headBranch,
+    commitSha: commitData.sha,
+    message,
+    repository: headRepo,
+  };
+}
+
 /** Extracts unique destination paths from a standard Git patch. */
 function changedPathsFromDiff(diff: string): string[] {
   const paths = Array.from(diff.matchAll(/^\+\+\+ b\/(.+)$/gm), (match) => match[1]);

@@ -2852,6 +2852,79 @@ button {
   color: #ededf0;
 }
 
+.viewer-actions > button.commit-action {
+  border-color: #386f4a;
+  background: #142a1c;
+  color: #a4e6b8;
+  font-weight: 550;
+  padding: 0 9px;
+  gap: 6px;
+}
+
+.viewer-actions > button.commit-action:hover:not(:disabled) {
+  border-color: #4ea46c;
+  background: #1a3c26;
+  color: #c0f4d1;
+}
+
+.viewer-actions > button.commit-action:disabled {
+  border-color: #28282b;
+  background: #141416;
+  color: #5d5d64;
+  cursor: default;
+  opacity: 0.65;
+}
+
+.viewer-actions > button.commit-action.committing {
+  border-color: #3f7199;
+  background: #152535;
+  color: #a5d4fa;
+}
+
+.viewer-actions > button.commit-action.committed {
+  border-color: #4ea46c;
+  background: #1e462c;
+  color: #a4e6b8;
+  animation: copy-annotations-confirm 180ms ease-out;
+}
+
+.viewer-actions > button.edit-action {
+  border-color: #3a3842;
+  background: #1b1a1f;
+  color: #d2d0db;
+  font-weight: 550;
+  padding: 0 9px;
+  gap: 6px;
+}
+
+.viewer-actions > button.edit-action:hover {
+  border-color: #545060;
+  background: #25232b;
+  color: #fff;
+}
+
+.viewer-actions > button.edit-action.active {
+  border-color: #765da3;
+  background: #2a203d;
+  color: #dcc8ff;
+}
+
+.viewer-actions > button.edit-action .key-hint,
+.sidebar-bottom-action .key-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border: 1px solid #44404e;
+  border-radius: 4px;
+  background: #151419;
+  color: #9a96a8;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
+}
+
 .repository-search,
 .repository-compare {
   position: relative;
@@ -3150,6 +3223,51 @@ button {
 
 .annotation-sidebar:empty {
   display: none;
+}
+
+.sidebar-bottom-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: none;
+  width: 100%;
+  height: 36px;
+  border-top: 1px solid var(--line-soft);
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  background: #141412;
+  overflow: hidden;
+}
+
+.sidebar-bottom-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #a8a8b2;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 540;
+  transition: background 120ms ease-out, color 120ms ease-out;
+  user-select: none;
+  padding: 0 6px;
+}
+
+.sidebar-bottom-action + .sidebar-bottom-action {
+  border-left: 1px solid var(--line-soft);
+}
+
+.sidebar-bottom-action:hover {
+  background: #1e1e1a;
+  color: #f0f0f4;
+}
+
+.sidebar-bottom-action.active {
+  background: #241d32;
+  color: #d8c7ff;
 }
 
 .code-view-shell {

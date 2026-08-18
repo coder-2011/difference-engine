@@ -58,13 +58,18 @@ function treeHasChanges(node: CallDiffNode): boolean {
   return node.status !== "same" || node.children.some(treeHasChanges);
 }
 
+const CALL_CODE_CACHE = new Map<string, SyntaxToken[][]>();
+
 /** Renders a Call Flow source line with the same shared Shiki theme as the main diff. */
 function HighlightedCallCode({ file, text }: { file: string; text: string }) {
   const language = getFiletypeFromFileName(file);
   const key = `${file}\0${text}`;
-  const [highlight, setHighlight] = useState<{ key: string; tokens: SyntaxToken[][] }>();
+  const cachedTokens = CALL_CODE_CACHE.get(key);
+  const [highlight, setHighlight] = useState<{ key: string; tokens: SyntaxToken[][] } | null>(null);
 
   useEffect(() => {
+    if (CALL_CODE_CACHE.has(key)) return;
+
     let cancelled = false;
 
     void getSharedHighlighter({
@@ -75,6 +80,11 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
       lang: language,
       theme: "pierre-dark",
     })).then((result) => {
+      if (CALL_CODE_CACHE.size >= 1000) {
+        const firstKey = CALL_CODE_CACHE.keys().next().value;
+        if (firstKey) CALL_CODE_CACHE.delete(firstKey);
+      }
+      CALL_CODE_CACHE.set(key, result.tokens);
       if (!cancelled) setHighlight({ key, tokens: result.tokens });
     }).catch(() => {
       // The source line remains readable when an optional grammar cannot load.
@@ -85,13 +95,15 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
     };
   }, [key, language, text]);
 
+  const activeTokens = cachedTokens ?? (highlight?.key === key ? highlight.tokens : undefined);
+
   return (
     <code>
-      {highlight?.key === key
-        ? highlight.tokens.map((line, lineIndex) => (
+      {activeTokens
+        ? activeTokens.map((line, lineIndex) => (
             <Fragment key={lineIndex}>
               {line.map((token, tokenIndex) => <span key={tokenIndex} style={{ color: token.color }}>{token.content}</span>)}
-              {lineIndex < highlight.tokens.length - 1 ? "\n" : null}
+              {lineIndex < activeTokens.length - 1 ? "\n" : null}
             </Fragment>
           ))
         : text}

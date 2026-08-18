@@ -4,9 +4,9 @@ import type { CodeViewItem, CodeViewLineSelection, CodeViewOptions, FileDiffMeta
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
-import { CodeView } from "@pierre/diffs/react";
+import { CodeView, WorkerPoolContextProvider } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Rows3 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -210,10 +210,73 @@ export function DiffViewer({
   const [localAnnotations, setLocalAnnotations] = useState<LocalAnnotationMarker[]>([]);
   const [chatMarkers, setChatMarkers] = useState<ChatMarker[]>([]);
   const [resumeChat, setResumeChat] = useState<ChatResumeRequest>();
+  const [editMode, setEditMode] = useState(false);
+  const [editedFileCount, setEditedFileCount] = useState(0);
+  const [committing, setCommitting] = useState(false);
+  const [commitStatus, setCommitStatus] = useState("");
+  const editedFilesRef = useRef<Map<string, string>>(new Map());
+  const openChatRef = useRef<(() => void) | null>(null);
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
+
+  /** Commits all live in-memory file edits to GitHub with an auto-generated commit message. */
+  async function commitChanges(): Promise<void> {
+    if (editedFilesRef.current.size === 0 || committing) return;
+    if (!githubConnected) {
+      setCommitStatus("Sign in needed");
+      window.setTimeout(() => setCommitStatus(""), 2500);
+      return;
+    }
+
+    setCommitting(true);
+    setCommitStatus("Committing…");
+
+    const files = Array.from(editedFilesRef.current.entries()).map(([path, contents]) => ({
+      contents,
+      path,
+    }));
+
+    const path = source.map(encodeURIComponent).join("/");
+    try {
+      const response = await fetch(`/api/commit/${path}`, {
+        body: JSON.stringify({ files }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Commit failed");
+      }
+
+      setCommitStatus("Committed!");
+      editedFilesRef.current.clear();
+      setEditedFileCount(0);
+      window.setTimeout(() => setCommitStatus(""), 3000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Commit failed";
+      setCommitStatus(message.slice(0, 20));
+      window.setTimeout(() => setCommitStatus(""), 3000);
+    } finally {
+      setCommitting(false);
+    }
+  }
+
+  useEffect(() => {
+    /** Toggles deliberate edit mode with Command-Shift-E or Ctrl-Shift-E. */
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E");
+      if (isCommandShiftE) {
+        event.preventDefault();
+        setEditMode((mode) => !mode);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   /** Mounts the Call Flow view once so a request can survive a later tab switch. */
   const loadCallFlow = useCallback(() => {
@@ -306,22 +369,23 @@ export function DiffViewer({
     // DiffPage keys this viewer by source, so a worker always starts from the initial empty state.
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
-    let grammarPreloadStarted = false;
+    const preloadedLanguages = new Set<string>();
 
-    /** Starts the first needed grammar load without delaying already-parsed files. */
+    /** Starts grammar preloads across all unique languages present in parsed files. */
     function preloadInitialGrammar<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[]): void {
-      if (grammarPreloadStarted) return;
+      const newLangs = files
+        .map((file) => file.lang ?? getFiletypeFromFileName(file.name))
+        .filter((lang): lang is string => Boolean(lang) && !preloadedLanguages.has(lang));
 
-      const target = (filePath ? files.find((file) => file.name === filePath) : undefined) ?? files[0];
-      if (!target) return;
+      if (!newLangs.length) return;
+      for (const lang of newLangs) preloadedLanguages.add(lang);
 
-      grammarPreloadStarted = true;
       void preloadHighlighter({
-        langs: [target.lang ?? getFiletypeFromFileName(target.name)],
+        langs: newLangs,
         preferredHighlighter: "shiki-wasm",
         themes: ["pierre-dark"],
       }).catch(() => {
-        // CodeView still renders plain code if the initial grammar cannot preload.
+        // CodeView still renders plain code if an optional grammar cannot preload.
       });
     }
 
@@ -529,14 +593,39 @@ export function DiffViewer({
 
   const items = useMemo<CodeViewItem[]>(
     () => repository
-      ? codeFiles.map((file) => ({ id: file.name, type: "file", file, collapsed, version: collapsed ? 1 : 0 }))
-      : diffFiles.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
+      ? codeFiles.map((file) => ({
+          cacheKey: `repo:${file.name}`,
+          id: file.name,
+          type: "file",
+          file,
+          collapsed,
+          version: collapsed ? 1 : 0,
+        }))
+      : diffFiles.map((file) => ({
+          cacheKey: `diff:${file.name}:${file.cacheKey ?? file.type}`,
+          id: file.name,
+          type: "diff",
+          fileDiff: file,
+          collapsed,
+          version: collapsed ? 1 : 0,
+        })),
     [codeFiles, collapsed, diffFiles, repository],
   );
+  const workerPoolOptions = useMemo(() => ({
+    poolSize: typeof navigator !== "undefined" ? Math.min(Math.max(navigator.hardwareConcurrency || 2, 2), 4) : 4,
+    workerFactory: () => new Worker(new URL("../workers/diff-highlight.worker.ts", import.meta.url)),
+  }), []);
+  const workerHighlighterOptions = useMemo(() => ({
+    theme: "pierre-dark" as const,
+    preferredHighlighter: "shiki-wasm" as const,
+    useTokenTransformer: true,
+    tokenizeMaxLineLength: 5000,
+    maxLineDiffLength: 1000,
+  }), []);
   const codeViewOptions = useMemo<CodeViewOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
-    enableLineSelection: repository,
+    enableLineSelection: repository && !editMode,
     // Keep even one unchanged line behind the same user-controlled expander.
     collapsedContextThreshold: 0,
     // A clicked unchanged-lines separator should reveal its entire collapsed range.
@@ -545,6 +634,20 @@ export function DiffViewer({
     lineDiffType: "word-alt",
     overflow: "scroll",
     preferredHighlighter: "shiki-wasm",
+    useTokenTransformer: true,
+    tokenizeMaxLineLength: 5000,
+    maxLineDiffLength: 1000,
+    pointerEventsOnScroll: false,
+    layout: {
+      gap: 12,
+      paddingBottom: 24,
+      paddingTop: 0,
+    },
+    smoothScrollSettings: {
+      omega: 0.022,
+      positionEpsilon: 0.5,
+      velocityEpsilon: 0.01,
+    },
     stickyHeaders: true,
     theme: "pierre-dark",
     themeType: "dark",
@@ -556,36 +659,80 @@ export function DiffViewer({
 
       shadowRoot.querySelectorAll(".diffs-inline-comment-marker").forEach((marker) => marker.remove());
       const markers = inlineCommentMarkersByFile.get(context.item.id);
-      if (!markers?.length) return;
+      if (markers?.length) {
+        const gutters = [...shadowRoot.querySelectorAll<HTMLElement>("[data-column-number]")];
+        for (const marker of markers) {
+          for (const gutter of gutters) {
+            const lineNumber = Number(gutter.dataset.columnNumber);
+            const position = markerPosition(marker, lineNumber);
+            if (!position || Number.isNaN(lineNumber)) continue;
 
-      const gutters = [...shadowRoot.querySelectorAll<HTMLElement>("[data-column-number]")];
-      for (const marker of markers) {
-        for (const gutter of gutters) {
-          const lineNumber = Number(gutter.dataset.columnNumber);
-          const position = markerPosition(marker, lineNumber);
-          if (!position || Number.isNaN(lineNumber)) continue;
+            const lineType = gutter.dataset.lineType;
+            const column = gutter.closest("[data-code]");
+            const side = lineType === "change-deletion" || column?.hasAttribute("data-deletions") ? "deletions" : marker.side;
+            if (side !== marker.side) continue;
 
-          const lineType = gutter.dataset.lineType;
-          const column = gutter.closest("[data-code]");
-          const side = lineType === "change-deletion" || column?.hasAttribute("data-deletions") ? "deletions" : marker.side;
-          if (side !== marker.side) continue;
-
-          const element = document.createElement(marker.tone === "chat" ? "button" : "span");
-          element.className = "diffs-inline-comment-marker";
-          element.dataset.position = position;
-          element.dataset.tone = marker.tone;
-          element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 3}px`);
-          if (marker.tone === "chat" && marker.chatId && marker.markerId) {
-            element.classList.add("diffs-inline-chat-marker");
-            element.setAttribute("aria-label", "Resume Ask Diffs chat");
-            if (element instanceof HTMLButtonElement) element.type = "button";
-            element.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              resumeChatFromMarker(marker.chatId!, marker.markerId!);
-            });
+            const element = document.createElement(marker.tone === "chat" ? "button" : "span");
+            element.className = "diffs-inline-comment-marker";
+            element.dataset.position = position;
+            element.dataset.tone = marker.tone;
+            element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 3}px`);
+            if (marker.tone === "chat" && marker.chatId && marker.markerId) {
+              element.classList.add("diffs-inline-chat-marker");
+              element.setAttribute("aria-label", "Resume Ask Diffs chat");
+              if (element instanceof HTMLButtonElement) element.type = "button";
+              element.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                resumeChatFromMarker(marker.chatId!, marker.markerId!);
+              });
+            }
+            gutter.append(element);
           }
-          gutter.append(element);
+        }
+      }
+
+      // Configure in-place editing on code lines when editMode is active
+      const lineElements = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line], [data-code] [data-line]")];
+      for (const line of lineElements) {
+        if (editMode) {
+          const isDeletion = line.dataset.lineType === "deletion" || Boolean(line.closest("[data-deletions]"));
+          if (!isDeletion) {
+            line.contentEditable = "plaintext-only";
+            line.spellcheck = false;
+            line.dataset.editable = "true";
+
+            line.oninput = () => {
+              const filePath = context.item.id;
+              let allLines: string[];
+              if (repository) {
+                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line]")].map((el) => el.innerText.replace(/\r?\n$/, ""));
+              } else if (split) {
+                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-additions] [data-content] > [data-line]")].map((el) => el.innerText.replace(/\r?\n$/, ""));
+              } else {
+                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-unified] [data-content] > [data-line]")]
+                  .filter((el) => el.dataset.lineType !== "deletion")
+                  .map((el) => el.innerText.replace(/\r?\n$/, ""));
+              }
+              const currentContent = allLines.join("\n");
+              editedFilesRef.current.set(filePath, currentContent);
+              setEditedFileCount(editedFilesRef.current.size);
+            };
+
+            line.onkeydown = (event) => {
+              event.stopPropagation();
+            };
+          } else {
+            line.contentEditable = "false";
+            delete line.dataset.editable;
+            line.oninput = null;
+            line.onkeydown = null;
+          }
+        } else {
+          line.contentEditable = "false";
+          delete line.dataset.editable;
+          line.oninput = null;
+          line.onkeydown = null;
         }
       }
     },
@@ -597,9 +744,20 @@ export function DiffViewer({
         transition: transform 100ms ease-out;
       }
       [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
+      [data-editable="true"] {
+        cursor: text !important;
+        outline: none;
+      }
+      [data-editable="true"]:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      [data-editable="true"]:focus {
+        background: rgba(88, 166, 255, 0.09);
+        box-shadow: inset 2px 0 0 #58a6ff;
+      }
       ${INLINE_COMMENT_MARKER_CSS}
     `,
-  }), [inlineCommentMarkersByFile, repository, resumeChatFromMarker, split]);
+  }), [editMode, inlineCommentMarkersByFile, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
@@ -615,6 +773,27 @@ export function DiffViewer({
       <div className="file-sidebar-title">{repository ? "Files" : "Changed files"} <span>{files.length}</span></div>
       <FileTree model={model} aria-label={repository ? "Files" : "Changed files"} />
       <div className="annotation-sidebar" />
+      <div className="sidebar-bottom-bar">
+        <button
+          aria-label="Open Ask Diffs"
+          className="sidebar-bottom-action ask-diffs-btn"
+          onClick={() => openChatRef.current?.()}
+          type="button"
+        >
+          <Sparkles size={13} />
+          <span>Ask Diffs</span>
+        </button>
+        <button
+          aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
+          className={`sidebar-bottom-action edit-mode-btn${editMode ? " active" : ""}`}
+          onClick={() => setEditMode((mode) => !mode)}
+          type="button"
+        >
+          <Pencil size={13} />
+          <span>{editMode ? "Editing" : "Edit"}</span>
+          <kbd className="key-hint">⌘⇧E</kbd>
+        </button>
+      </div>
     </aside>
   );
   // Keep bounded Call Flow analysis alive behind Files Changed's streaming state.
@@ -669,6 +848,28 @@ export function DiffViewer({
               <RepositoryCompare currentRef={repositoryRef} defaultBranch={defaultBranch} repository={source.slice(0, 2).join("/")} />
             </div>
           )}
+          <button
+            aria-label="Commit and push changes to GitHub"
+            className={`commit-action${committing ? " committing" : ""}${commitStatus === "Committed!" ? " committed" : ""}`}
+            disabled={editedFileCount === 0 || committing}
+            onClick={() => void commitChanges()}
+            title={editedFileCount === 0 ? "Edit code to commit changes" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"}`}
+            type="button"
+          >
+            {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
+            <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
+          </button>
+          <button
+            aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Active" : ""}`}
+            className={`edit-action${editMode ? " active" : ""}`}
+            onClick={() => setEditMode((mode) => !mode)}
+            title="Toggle Edit mode (⌘⇧E)"
+            type="button"
+          >
+            <Pencil size={13} />
+            <span>{editMode ? "Editing" : "Edit"}</span>
+            <kbd className="key-hint">⌘⇧E</kbd>
+          </button>
           {!repository && (
             <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">
               <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw diff"}
@@ -697,16 +898,32 @@ export function DiffViewer({
           data-diff-selection-root
           style={codeViewStyle}
         >
-          <CodeView
-            ref={viewerRef}
-            items={items}
-            onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
-            options={codeViewOptions}
-          />
+          <WorkerPoolContextProvider highlighterOptions={workerHighlighterOptions} poolOptions={workerPoolOptions}>
+            <CodeView
+              ref={viewerRef}
+              items={items}
+              onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
+              options={codeViewOptions}
+            />
+          </WorkerPoolContextProvider>
         </div>
       </div>
       </>}
-      <SelectionQuestion aiEnabled={openAIConnected} annotationContainerKey={`${reviewView}-${sidebarOpen}`} annotationPaths={paths} githubConnected={githubConnected} onAnnotationsChange={setLocalAnnotations} onChatMarkersChange={setChatMarkers} onRevealSelection={revealSelection} programmaticSelection={callFlowSelection} resumeChat={resumeChat} source={source} />
+      <SelectionQuestion
+        aiEnabled={openAIConnected}
+        annotationContainerKey={`${reviewView}-${sidebarOpen}`}
+        annotationPaths={paths}
+        githubConnected={githubConnected}
+        onAnnotationsChange={setLocalAnnotations}
+        onChatMarkersChange={setChatMarkers}
+        onRegisterOpenChat={(fn) => {
+          openChatRef.current = fn;
+        }}
+        onRevealSelection={revealSelection}
+        programmaticSelection={callFlowSelection}
+        resumeChat={resumeChat}
+        source={source}
+      />
     </section>
   );
 }

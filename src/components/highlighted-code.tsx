@@ -37,6 +37,8 @@ const LANGUAGE_ALIASES = {
 } as const;
 
 const MAX_HIGHLIGHT_LENGTH = 20_000;
+const HIGHLIGHT_CACHE = new Map<string, string>();
+const MAX_CACHE_ENTRIES = 500;
 
 type SupportedLanguage = typeof LANGUAGE_ALIASES[keyof typeof LANGUAGE_ALIASES];
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
@@ -55,13 +57,23 @@ type MarkdownCodeBlockProps = {
 
 /** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
 async function highlightCode(source: string, language: SupportedLanguage): Promise<string> {
+  const cacheKey = `${language}\0${source}`;
+  const cached = HIGHLIGHT_CACHE.get(cacheKey);
+  if (cached) return cached;
+
   const { getSharedHighlighter } = await import("@pierre/diffs");
   const highlighter = await getSharedHighlighter({
     langs: [language],
     preferredHighlighter: "shiki-wasm",
     themes: ["pierre-dark"],
   });
-  return highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });
+  const html = highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });
+  if (HIGHLIGHT_CACHE.size >= MAX_CACHE_ENTRIES) {
+    const firstKey = HIGHLIGHT_CACHE.keys().next().value;
+    if (firstKey) HIGHLIGHT_CACHE.delete(firstKey);
+  }
+  HIGHLIGHT_CACHE.set(cacheKey, html);
+  return html;
 }
 
 /** Maps a fenced-Markdown class name to a bundled grammar, if one exists. */
@@ -124,11 +136,15 @@ export function HighlightedCode({ block = false, children, className, ...props }
   const language = supportedLanguage(className);
   const source = codeText(children);
   const deferredSource = useDeferredValue(source);
+  const cachedHtml = language && deferredSource.length <= MAX_HIGHLIGHT_LENGTH
+    ? HIGHLIGHT_CACHE.get(`${language}\0${deferredSource}`)
+    : undefined;
   const [highlighted, setHighlighted] = useState<HighlightedResult | null>(null);
 
   useEffect(() => {
     const highlightedLanguage = language;
     if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) return;
+    if (HIGHLIGHT_CACHE.has(`${highlightedLanguage}\0${deferredSource}`)) return;
 
     let cancelled = false;
 
@@ -145,14 +161,16 @@ export function HighlightedCode({ block = false, children, className, ...props }
     };
   }, [deferredSource, language]);
 
-  if (!language || source.length > MAX_HIGHLIGHT_LENGTH || source !== deferredSource || !highlighted || highlighted.language !== language || highlighted.source !== source) {
+  const activeHighlight = cachedHtml ? { html: cachedHtml, language, source: deferredSource } : highlighted;
+
+  if (!language || source.length > MAX_HIGHLIGHT_LENGTH || source !== deferredSource || !activeHighlight || activeHighlight.language !== language || activeHighlight.source !== source) {
     const code = <code className={className} {...props}>{children}</code>;
     return block ? <MarkdownCodeBlock className={className} source={source}><pre>{code}</pre></MarkdownCodeBlock> : code;
   }
 
   return (
     <MarkdownCodeBlock className={className} source={source}>
-      <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+      <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: activeHighlight.html }} />
     </MarkdownCodeBlock>
   );
 }

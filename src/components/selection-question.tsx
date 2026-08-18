@@ -4,7 +4,7 @@ import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 import { Check, ClipboardCopy, CornerDownLeft, GitFork, Github, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
-import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GitHubMarkdown, parseCodeReference, type CodeReference } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
@@ -151,6 +151,7 @@ type SelectionQuestionProps = {
   githubConnected: boolean;
   onAnnotationsChange?: (annotations: LocalAnnotationMarker[]) => void;
   onChatMarkersChange?: (markers: ChatMarker[]) => void;
+  onRegisterOpenChat?: (fn: () => void) => void;
   programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
   resumeChat?: ChatResumeRequest;
@@ -611,7 +612,12 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
+  const [prevChatZoom, setPrevChatZoom] = useState(chatZoom);
   const [chatZoomInput, setChatZoomInput] = useState(String(chatZoom));
+  if (prevChatZoom !== chatZoom) {
+    setPrevChatZoom(chatZoom);
+    setChatZoomInput(String(chatZoom));
+  }
   const [markers, setMarkers] = useState<ChatSession["markers"]>(chat.markers);
   const [priorHighlights, setPriorHighlights] = useState(chat.priorHighlights);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -653,10 +659,6 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     onMarkersChange(chat.id, markers);
   }, [chat.id, markers, onMarkersChange]);
 
-  useEffect(() => {
-    setChatZoomInput(String(chatZoom));
-  }, [chatZoom]);
-
   // Keep asynchronous Tab suggestions tied to the selection currently visible in this chat.
   useEffect(() => {
     selectionRef.current = selection;
@@ -686,22 +688,28 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     });
   }, [turns]);
 
-  useEffect(() => {
-    if (!selectionRequest || selectionRequest.chatId !== chat.id || lastSelectionRequestRef.current === selectionRequest.sequence) return;
-
-    lastSelectionRequestRef.current = selectionRequest.sequence;
+  const [lastHandledSelectionSequence, setLastHandledSelectionSequence] = useState<number | undefined>(undefined);
+  if (selectionRequest && selectionRequest.chatId === chat.id && lastHandledSelectionSequence !== selectionRequest.sequence) {
+    setLastHandledSelectionSequence(selectionRequest.sequence);
     const previousHighlight = selection.text.trim();
     if (previousHighlight && previousHighlight !== selectionRequest.selection.text) {
       setPriorHighlights((current) => [...current.filter((highlight) => highlight !== previousHighlight), previousHighlight].slice(-MAX_PRIOR_HIGHLIGHTS));
     }
     const nextSelection = { ...selectionRequest.selection, open: true };
-    selectionRef.current = nextSelection;
     setSelection(nextSelection);
     setSuggestion(DEFAULT_QUESTION);
+  }
+
+  useEffect(() => {
+    if (!selectionRequest || selectionRequest.chatId !== chat.id || lastSelectionRequestRef.current === selectionRequest.sequence) return;
+
+    lastSelectionRequestRef.current = selectionRequest.sequence;
+    const nextSelection = { ...selectionRequest.selection, open: true };
+    selectionRef.current = nextSelection;
     refreshSuggestion(nextSelection);
     followsConversationRef.current = true;
     window.setTimeout(() => inputRef.current?.focus(), 0);
-  }, [chat.id, refreshSuggestion, selection, selectionRequest]);
+  }, [chat.id, refreshSuggestion, selectionRequest]);
 
   useEffect(() => {
     return () => {
@@ -1440,13 +1448,16 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, githubConnected, onAnnotationsChange, onChatMarkersChange, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, githubConnected, onAnnotationsChange, onChatMarkersChange, onRegisterOpenChat, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [chatZoom, setChatZoom] = useState(storedChatZoom);
   const [annotationStore, setAnnotationStore] = useState<AnnotationStore>();
-  const annotations = annotationStore?.source === sourceKey ? annotationStore.annotations : [];
+  const annotations = useMemo(
+    () => (annotationStore?.source === sourceKey ? annotationStore.annotations : []),
+    [annotationStore, sourceKey],
+  );
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null);
   const [pendingSelection, setPendingSelection] = useState<CodeSelection | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
@@ -1456,6 +1467,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const [githubAnnotationPending, setGithubAnnotationPending] = useState<string>();
   const [chatMarkers, setChatMarkers] = useState<ChatMarker[]>([]);
   const [openChatIds, setOpenChatIds] = useState<string[]>([]);
+  const [chatSessions, setChatSessions] = useState<Map<string, ChatSession>>(() => new Map());
+  const [chatPositions, setChatPositions] = useState<Map<string, Point>>(() => new Map());
   const [activeChatId, setActiveChatId] = useState<string>();
   const [selectionRequest, setSelectionRequest] = useState<SelectionRequest>();
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1484,6 +1497,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   /** Stores one panel snapshot without making streamed tokens rerender the surrounding diff. */
   const updateChatSession = useCallback((chat: ChatSession): void => {
     chatSessionsRef.current.set(chat.id, chat);
+    setChatSessions((current) => {
+      const next = new Map(current);
+      next.set(chat.id, chat);
+      return next;
+    });
   }, []);
 
   /** Exposes only durable source locations for this chat's purple gutter markers. */
@@ -1519,7 +1537,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   }
 
   /** Opens a blank panel or a forked snapshot without closing any current conversation. */
-  function openChat(seed?: ChatSession): void {
+  const openChat = useCallback((seed?: ChatSession): void => {
     chatCounterRef.current += 1;
     const id = `chat-${chatCounterRef.current}`;
     const chat: ChatSession = seed
@@ -1534,15 +1552,23 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
         turns: [],
     };
     chatSessionsRef.current.set(id, chat);
+    setChatSessions((current) => {
+      const next = new Map(current);
+      next.set(id, chat);
+      return next;
+    });
     const position = adjacentChatPosition();
-    if (position) chatPositionsRef.current.set(id, position);
+    if (position) {
+      chatPositionsRef.current.set(id, position);
+      setChatPositions((current) => new Map(current).set(id, position));
+    }
     const nextChatIds = [...openChatIdsRef.current, id];
     openChatIdsRef.current = nextChatIds;
     setOpenChatIds(nextChatIds);
     focusChat(id);
     setPendingSelection(null);
     setSelection(null);
-  }
+  }, []);
 
   /** Opens an explicitly selected range as an independent new conversation. */
   function openPanel(codeSelection: CodeSelection | null = selection): void {
@@ -1572,6 +1598,11 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   /** Retains a closed panel's current state so its purple marker can resume it later. */
   function closeChat(chat: ChatSession): void {
     chatSessionsRef.current.set(chat.id, chat);
+    setChatSessions((current) => {
+      const next = new Map(current);
+      next.set(chat.id, chat);
+      return next;
+    });
     const nextChatIds = openChatIdsRef.current.filter((id) => id !== chat.id);
     openChatIdsRef.current = nextChatIds;
     setOpenChatIds(nextChatIds);
@@ -1583,7 +1614,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   }
 
   /** Keeps an existing marker-backed chat visible without duplicating its history. */
-  function reopenChat(chat: ChatSession): void {
+  const reopenChat = useCallback((chat: ChatSession): void => {
     if (!openChatIdsRef.current.includes(chat.id)) {
       const nextChatIds = [...openChatIdsRef.current, chat.id];
       openChatIdsRef.current = nextChatIds;
@@ -1592,7 +1623,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     focusChat(chat.id);
     setPendingSelection(null);
     setSelection(null);
-  }
+  }, []);
 
   useEffect(() => {
     // Notes and open chats belong to the current repository view and cannot be reused against a new source.
@@ -1615,6 +1646,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       openChatIdsRef.current = [];
       chatCounterRef.current = 0;
       chatPositionsRef.current.clear();
+      setChatPositions(new Map());
       chatSessionsRef.current.clear();
       setOpenChatIds([]);
       setActiveChatId(undefined);
@@ -1634,6 +1666,10 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     // Zoom is a user preference, unlike the PR-specific conversation and annotations above.
     storeChatZoom(chatZoom);
   }, [chatZoom]);
+
+  useEffect(() => {
+    onRegisterOpenChat?.(openChat);
+  }, [onRegisterOpenChat, openChat]);
 
   useEffect(() => {
     // The visible review tab owns the sidebar, so resolve its portal target only after that tab commits.
@@ -1656,13 +1692,13 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   useEffect(() => {
     if (!resumeChat || lastResumedChatSequenceRef.current === resumeChat.sequence) return;
 
-    const chat = chatSessionsRef.current.get(resumeChat.chatId);
+    const chat = chatSessions.get(resumeChat.chatId) ?? chatSessionsRef.current.get(resumeChat.chatId);
     const marker = chat?.markers.find((candidate) => candidate.id === resumeChat.markerId);
     if (!chat || !marker) return;
 
     lastResumedChatSequenceRef.current = resumeChat.sequence;
     reopenChat(chat);
-  }, [resumeChat]);
+  }, [chatSessions, reopenChat, resumeChat]);
 
   useEffect(() => {
     if (!programmaticSelection) return;
@@ -2034,17 +2070,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     <>
       {annotationList && annotationSidebar && createPortal(annotationList, annotationSidebar)}
 
-      {aiEnabled && (
-        <div className="ai-chat-actions">
-          <button aria-label="Open Ask Diffs" className="ai-chat-launch" onClick={() => openChat()} type="button">
-            <Sparkles size={14} /> <span>Ask Diffs</span>
-          </button>
-          {!annotationSidebar && <button aria-label={copyStatus === "Copied" ? "Annotations copied" : "Copy Annotations"} className={`copy-annotations${copyStatus === "Copied" ? " copied" : ""}`} disabled={!annotations.length} onClick={() => void copyAnnotations()} type="button">
-            {copyStatus === "Copied" ? <Check size={14} /> : <ClipboardCopy size={14} />} <span>Copy Annotations</span>
-          </button>}
-        </div>
-      )}
-
       {triggerSelection && !annotationDraft && (
         <div className="selection-actions" style={{ left: triggerSelection.x, top: triggerSelection.y }}>
           <button className="selection-trigger" onMouseDown={(event) => event.preventDefault()} onClick={() => openAnnotationComposer(triggerSelection)} type="button">
@@ -2091,7 +2116,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       )}
 
       {openChatIds.map((chatId) => {
-        const chat = chatSessionsRef.current.get(chatId);
+        const chat = chatSessions.get(chatId);
         if (!chat) return null;
 
         return (
@@ -2110,7 +2135,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             onModelAnnotation={addModelAnnotation}
             onRevealLocation={onRevealSelection}
             onShowSelection={showSelection}
-            position={chatPositionsRef.current.get(chat.id)}
+            position={chatPositions.get(chat.id)}
             selectionRequest={selectionRequest}
             source={source}
           />
