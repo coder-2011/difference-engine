@@ -1,6 +1,6 @@
 "use client";
 
-import type { CodeViewItem, CodeViewLineSelection, FileContents, FileDiffMetadata } from "@pierre/diffs";
+import type { CodeViewItem, CodeViewLineSelection, FileContents, FileDiffLoadedFiles, FileDiffMetadata } from "@pierre/diffs";
 import { Editor, type EditorOptions } from "@pierre/diffs/edit";
 import type { CodeViewHandle, CodeViewReactOptions, CreateEditor } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
@@ -129,6 +129,17 @@ function lineRangeFromHash(hash: string): { end: number; start: number } | null 
   return { end, start };
 }
 
+/** Reconstructs file text from Pierre patch line arrays, which keep trailing newlines when present. */
+function contentsFromDiffLines(lines: string[]): string {
+  if (lines.length === 0) return "";
+  return lines.some((line) => line.includes("\n")) ? lines.join("") : `${lines.join("\n")}\n`;
+}
+
+/** True when a keyboard event originated in Pierre's shadow-DOM contenteditable surface. */
+function isPierreEditorEvent(event: Event): boolean {
+  return event.composedPath().some((node) => node instanceof HTMLElement && node.isContentEditable);
+}
+
 /** Formats one repository file and selected range as a shareable viewer URL. */
 function repositoryFileUrl(source: string[], repositoryRef: string, filePath: string, start?: number, end?: number): string {
   const repository = source.slice(0, 2).map(encodeURIComponent).join("/");
@@ -244,7 +255,7 @@ export function DiffViewer({
         // SAFETY: CodeViewHandle.getEditor returns DiffsEditor; createDiffEditor always constructs Editor.
         const live = (viewer.getEditor(file.name) as Editor<undefined> | undefined)?.getFile()?.contents;
         if (live === undefined) continue;
-        const original = "contents" in file ? file.contents : file.additionLines.join("\n");
+        const original = "contents" in file ? file.contents : contentsFromDiffLines(file.additionLines);
         if (live === original) {
           editedFilesRef.current.delete(file.name);
         } else {
@@ -343,7 +354,7 @@ export function DiffViewer({
 
       const target = event.target instanceof HTMLElement ? event.target : null;
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-      const isCodeEditor = Boolean(target?.closest(".code-view-shell [contenteditable='true']"));
+      const isCodeEditor = isPierreEditorEvent(event);
 
       // Commit shortcut: Command-D / Ctrl-D, Command-Enter / Ctrl-Enter, or c then d chord
       const isCommandCommit = isCommand && (isD || isEnter);
@@ -550,7 +561,8 @@ export function DiffViewer({
 
   useEffect(() => {
     /** Clears the temporary annotation focus when the user clicks anywhere else. */
-    function clearRevealedSelection(): void {
+    function clearRevealedSelection(event: MouseEvent): void {
+      if (isPierreEditorEvent(event)) return;
       viewerRef.current?.clearSelectedLines();
     }
 
@@ -688,6 +700,31 @@ export function DiffViewer({
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
   const editorOptions = useMemo<EditorOptions<undefined>>(() => ({ persistState: true }), []);
   const canEdit = editMode && !isReadOnly;
+  const loadedDiffFilesRef = useRef(new Map<string, Promise<FileDiffLoadedFiles>>());
+
+  /** Hydrates GitHub patch diffs with full old/new file contents so Pierre can attach its editor. */
+  const loadDiffFiles = useCallback(async (fileDiff: FileDiffMetadata): Promise<FileDiffLoadedFiles> => {
+    const cacheKey = `${sourceKey}\0${fileDiff.name}\0${fileDiff.prevName ?? ""}\0${fileDiff.type}`;
+    const cached = loadedDiffFilesRef.current.get(cacheKey);
+    if (cached) return cached;
+
+    const path = source.map(encodeURIComponent).join("/");
+    const params = new URLSearchParams({ path: fileDiff.name, type: fileDiff.type });
+    if (fileDiff.prevName) params.set("prevPath", fileDiff.prevName);
+
+    const request = fetch(`/api/diff-files/${path}?${params}`).then(async (response): Promise<FileDiffLoadedFiles> => {
+      if (!response.ok) {
+        // SAFETY: The same-origin diff-files route returns this documented error envelope.
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error ?? `Could not load ${fileDiff.name} for editing`);
+      }
+      // SAFETY: The same-origin diff-files route returns Pierre's loaded old/new file pair.
+      return response.json() as Promise<FileDiffLoadedFiles>;
+    });
+    loadedDiffFilesRef.current.set(cacheKey, request);
+    request.catch(() => loadedDiffFilesRef.current.delete(cacheKey));
+    return request;
+  }, [source, sourceKey]);
 
   const rememberItemEdit = useCallback((item: CodeViewItem, file: FileContents) => {
     editedFilesRef.current.set(item.id, file.contents);
@@ -708,20 +745,39 @@ export function DiffViewer({
           edit: canEdit,
           version: (fileVersions[file.name] ?? 0) * 4 + (collapsed ? 1 : 0) + (canEdit ? 2 : 0),
         }))
-      : diffFiles.map((file) => ({
-          id: file.name,
-          type: "diff" as const,
-          fileDiff: file,
-          collapsed,
-          edit: canEdit,
-          version: (fileVersions[file.name] ?? 0) * 4 + (collapsed ? 1 : 0) + (canEdit ? 2 : 0),
-        })),
+      : diffFiles.map((file) => {
+          const version = (fileVersions[file.name] ?? 0) * 4 + (collapsed ? 1 : 0) + (canEdit ? 2 : 0);
+          if (canEdit && file.type === "new") {
+            return {
+              id: file.name,
+              type: "file" as const,
+              file: {
+                name: file.name,
+                contents: editedFilesRef.current.get(file.name) ?? contentsFromDiffLines(file.additionLines),
+                cacheKey: `${file.name}:${fileVersions[file.name] ?? 0}`,
+              },
+              collapsed,
+              edit: true,
+              version,
+            };
+          }
+
+          return {
+            id: file.name,
+            type: "diff" as const,
+            fileDiff: file,
+            collapsed,
+            edit: canEdit && file.type !== "deleted",
+            version,
+          };
+        }),
     [canEdit, codeFiles, collapsed, diffFiles, editedFileCount, fileVersions, repository],
   );
   const codeViewOptions = useMemo<CodeViewReactOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository && (!editMode || isReadOnly),
+    loadDiffFiles: repository ? undefined : loadDiffFiles,
     // Keep even one unchanged line behind the same user-controlled expander.
     collapsedContextThreshold: 0,
     // A clicked unchanged-lines separator should reveal its entire collapsed range.
@@ -784,7 +840,7 @@ export function DiffViewer({
       [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
       ${INLINE_COMMENT_MARKER_CSS}
     `,
-  }), [editMode, inlineCommentMarkersByFile, isReadOnly, repository, resumeChatFromMarker, split]);
+  }), [editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
@@ -813,7 +869,7 @@ export function DiffViewer({
         {!showingCallDiff && !isReadOnly && (
           <button
             aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
-            className={`sidebar-bottom-action edit-mode-btn${editMode ? " active" : ""}`}
+            className={`sidebar-bottom-action${editMode ? " active" : ""}`}
             onClick={toggleEditMode}
             type="button"
           >

@@ -62,8 +62,11 @@ async function handleInitialize(request: InitializeWorkerRequest) {
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
-  // SAFETY: InitializeWorkerRequest passes compatible render options.
-  renderOptions = request.renderOptions as RenderDiffOptions;
+  // SAFETY: InitializeWorkerRequest passes compatible render options; keep token transformer on for edit mode.
+  renderOptions = {
+    ...request.renderOptions,
+    useTokenTransformer: true,
+  } as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "initialize",
@@ -75,8 +78,11 @@ async function handleInitialize(request: InitializeWorkerRequest) {
 async function handleSetRenderOptions(request: SetRenderOptionsWorkerRequest) {
   const highlighter = await getHighlighter();
   attachResolvedThemes(request.resolvedThemes, highlighter);
-  // SAFETY: SetRenderOptionsWorkerRequest passes compatible render options.
-  renderOptions = request.renderOptions as RenderDiffOptions;
+  // SAFETY: SetRenderOptionsWorkerRequest passes compatible render options; keep token transformer on for edit mode.
+  renderOptions = {
+    ...request.renderOptions,
+    useTokenTransformer: true,
+  } as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "set-render-options",

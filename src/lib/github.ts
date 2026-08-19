@@ -280,6 +280,7 @@ type Commit = {
   };
   files?: unknown[];
   html_url: string;
+  parents?: Array<{ sha: string }>;
   sha: string;
   stats?: { additions: number; deletions: number };
 };
@@ -1566,6 +1567,118 @@ export async function getDiffResponse(source: string[], token?: string): Promise
 /** Encodes a repository path segment-by-segment for GitHub's contents endpoint. */
 function encodeRepositoryPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+const EDITABLE_FILE_SIZE_LIMIT = 1_048_576;
+
+export type LoadedDiffSideFile = {
+  cacheKey: string;
+  contents: string;
+  name: string;
+};
+
+export type LoadedDiffFiles = {
+  newFile: LoadedDiffSideFile;
+  oldFile: LoadedDiffSideFile | null;
+};
+
+export type LoadDiffFilesRequest = {
+  changeType: string;
+  path: string;
+  prevPath?: string;
+};
+
+/** Rejects repository paths that GitHub would treat as traversal or empty. */
+function requireRepositoryFilePath(path: string, label: string): string {
+  const normalized = path.trim();
+  if (!normalized || normalized.length > 1_024 || normalized.includes("\0") || normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new GitHubError(`${label} is not a valid repository path`, 400);
+  }
+  return normalized;
+}
+
+/** Resolves the before/after revisions Pierre needs to hydrate a patch-parsed diff. */
+async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token?: string): Promise<{ encodedHeadRepository: string; fromRef: string; toRef: string }> {
+  if (parsed.kind === "pull") {
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+    const headRepository = pullRequest.head.repo?.full_name ?? parsed.repository;
+    return {
+      encodedHeadRepository: headRepository.split("/").map(encodeURIComponent).join("/"),
+      fromRef: pullRequest.base.sha,
+      toRef: pullRequest.head.sha,
+    };
+  }
+
+  if (parsed.kind === "compare") {
+    const [fromRef, toRef] = parsed.value.split("...");
+    if (!fromRef || !toRef) throw new GitHubError("This comparison does not include both revisions", 400);
+    return { encodedHeadRepository: parsed.encodedRepository, fromRef, toRef };
+  }
+
+  if (parsed.kind === "commit") {
+    const commit = await githubRequest<Commit>(parsed.apiPath, token);
+    const fromRef = commit.parents?.[0]?.sha;
+    if (!fromRef) throw new GitHubError("The initial commit has no previous revision to compare", 400);
+    return { encodedHeadRepository: parsed.encodedRepository, fromRef, toRef: commit.sha };
+  }
+
+  throw new GitHubError("Full file contents are only loaded for pull requests, comparisons, and commits", 400);
+}
+
+/** Reads one textual GitHub file at a revision, failing closed for binaries and oversized blobs. */
+async function getTextFileAtRevision(encodedRepository: string, path: string, ref: string, token?: string): Promise<string> {
+  const file = await githubRequest<{ content?: string; encoding?: string; size?: number; type?: string }>(
+    `/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`,
+    token,
+  );
+  if (file.type === "dir") throw new GitHubError("That path is a directory", 400);
+  if ((file.size ?? 0) > EDITABLE_FILE_SIZE_LIMIT || file.encoding !== "base64" || !isString(file.content)) {
+    throw new GitHubError("This file is too large to load for editing", 413);
+  }
+
+  const text = Buffer.from(file.content.replaceAll("\n", ""), "base64").toString("utf8");
+  if (text.includes("\0")) throw new GitHubError("Binary files cannot be edited", 415);
+  return text;
+}
+
+/** Builds one Pierre FileContents payload from a GitHub path and revision. */
+async function getLoadedDiffSideFile(encodedRepository: string, path: string, ref: string, token?: string): Promise<LoadedDiffSideFile> {
+  return {
+    cacheKey: `${encodedRepository}@${ref}:${path}`,
+    contents: await getTextFileAtRevision(encodedRepository, path, ref, token),
+    name: path,
+  };
+}
+
+/** Fetches both sides of a patch-parsed diff so Pierre can attach its native editor. */
+export async function getLoadedDiffFiles(source: string[], token: string | undefined, request: LoadDiffFilesRequest): Promise<LoadedDiffFiles> {
+  const parsed = parseSource(source);
+  const path = requireRepositoryFilePath(request.path, "path");
+  const prevPath = request.prevPath ? requireRepositoryFilePath(request.prevPath, "prevPath") : undefined;
+  const { encodedHeadRepository, fromRef, toRef } = await getDiffRevisionPair(parsed, token);
+  const changeType = request.changeType.trim();
+
+  if (changeType === "rename-pure") {
+    return { newFile: await getLoadedDiffSideFile(encodedHeadRepository, path, toRef, token), oldFile: null };
+  }
+
+  const oldPath = prevPath ?? path;
+  if (changeType === "new") {
+    return { newFile: await getLoadedDiffSideFile(encodedHeadRepository, path, toRef, token), oldFile: null };
+  }
+
+  if (changeType === "deleted") {
+    return {
+      newFile: { cacheKey: `${parsed.encodedRepository}@${fromRef}:${oldPath}:deleted`, contents: "", name: path },
+      oldFile: await getLoadedDiffSideFile(parsed.encodedRepository, oldPath, fromRef, token),
+    };
+  }
+
+  const [oldFile, newFile] = await Promise.all([
+    getLoadedDiffSideFile(parsed.encodedRepository, oldPath, fromRef, token),
+    getLoadedDiffSideFile(encodedHeadRepository, path, toRef, token),
+  ]);
+  return { newFile, oldFile };
 }
 
 /** Reads one bounded text file at a specific revision, treating absent or oversized files as unavailable. */
