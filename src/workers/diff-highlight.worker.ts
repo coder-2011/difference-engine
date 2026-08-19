@@ -20,7 +20,7 @@ import type {
   RenderFileRequest,
   SetRenderOptionsWorkerRequest,
   WorkerRequest,
-} from "@pierre/diffs/worker/types";
+} from "@pierre/diffs/worker";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
