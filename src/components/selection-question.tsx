@@ -506,7 +506,7 @@ function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouse
     let cancelled = false;
     void getSharedHighlighter({
       langs: [language],
-      preferredHighlighter: "shiki-wasm",
+      preferredHighlighter: "shiki-js",
       themes: ["pierre-dark"],
     }).then((highlighter) => highlighter.codeToTokens(codeSelection.text, {
       lang: language,

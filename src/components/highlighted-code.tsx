@@ -64,7 +64,7 @@ async function highlightCode(source: string, language: SupportedLanguage): Promi
   const { getSharedHighlighter } = await import("@pierre/diffs");
   const highlighter = await getSharedHighlighter({
     langs: [language],
-    preferredHighlighter: "shiki-wasm",
+    preferredHighlighter: "shiki-js",
     themes: ["pierre-dark"],
   });
   const html = highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });

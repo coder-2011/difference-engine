@@ -133,7 +133,7 @@ function HighlightedCallCode({ file, text }: { file: string; text: string }) {
 
     void getSharedHighlighter({
       langs: [language],
-      preferredHighlighter: "shiki-wasm",
+      preferredHighlighter: "shiki-js",
       themes: ["pierre-dark"],
     })
       .then((highlighter) =>

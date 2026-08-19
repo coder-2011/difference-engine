@@ -270,6 +270,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         ? currentMethod
         : initialMergeMethod(refreshedMergeMethods));
       if (result.celebrate) setCelebrating(true);
+      // SAFETY: The in-check above verifies that `action.action` is a valid key of `ACTION_MESSAGES`.
       const actionMessage = action.action in ACTION_MESSAGES
         ? ACTION_MESSAGES[action.action as keyof typeof ACTION_MESSAGES]
         : undefined;

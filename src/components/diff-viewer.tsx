@@ -384,7 +384,7 @@ export function DiffViewer({
 
       void preloadHighlighter({
         langs: newLangs,
-        preferredHighlighter: "shiki-wasm",
+        preferredHighlighter: "shiki-js",
         themes: ["pierre-dark"],
       }).catch(() => {
         // CodeView still renders plain code if an optional grammar cannot preload.
