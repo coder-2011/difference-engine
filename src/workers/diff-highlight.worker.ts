@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import type { FileDiffMetadata, RenderDiffOptions, RenderFileOptions, RepositoryFile, ThemeRegistrationResolved } from "@pierre/diffs";
+import type { FileContents, FileDiffMetadata, RenderDiffOptions, RenderFileOptions, ThemeRegistrationResolved } from "@pierre/diffs";
 import {
   attachResolvedLanguages,
   attachResolvedThemes,
@@ -35,7 +35,7 @@ type SetRenderOptionsRequest = {
 type RenderFileRequest = {
   customExtensionMap?: Record<string, string>;
   customExtensionsVersion?: number;
-  file: RepositoryFile;
+  file: FileContents;
   id: string;
   resolvedLanguages?: Array<{ data: unknown; name: string }>;
   type: "file";
