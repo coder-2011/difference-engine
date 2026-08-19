@@ -1,6 +1,13 @@
 /// <reference lib="webworker" />
 
-import type { FileContents, FileDiffMetadata, RenderDiffOptions, RenderFileOptions, ThemeRegistrationResolved } from "@pierre/diffs";
+import type {
+  DiffsHighlighter,
+  FileContents,
+  FileDiffMetadata,
+  RenderDiffOptions,
+  RenderFileOptions,
+  ThemeRegistrationResolved,
+} from "@pierre/diffs";
 import {
   attachResolvedLanguages,
   attachResolvedThemes,
@@ -52,7 +59,7 @@ type RenderDiffRequest = {
 
 type WorkerRequest = InitializeRequest | SetRenderOptionsRequest | RenderFileRequest | RenderDiffRequest;
 
-let highlighterPromise: ReturnType<typeof createHighlighterCore> | undefined;
+let highlighterPromise: Promise<DiffsHighlighter> | undefined;
 let renderOptions: RenderDiffOptions = {
   lineDiffType: "word-alt",
   maxLineDiffLength: 1000,
@@ -61,13 +68,14 @@ let renderOptions: RenderDiffOptions = {
   useTokenTransformer: true,
 };
 
-async function getHighlighter() {
+async function getHighlighter(): Promise<DiffsHighlighter> {
   if (!highlighterPromise) {
+    // SAFETY: createHighlighterCore returns a Shiki instance structurally compatible with DiffsHighlighter.
     highlighterPromise = createHighlighterCore({
       engine: createJavaScriptRegexEngine(),
       langs: [],
       themes: [],
-    });
+    }) as Promise<DiffsHighlighter>;
   }
   return highlighterPromise;
 }
