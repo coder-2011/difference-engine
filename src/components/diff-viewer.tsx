@@ -268,16 +268,22 @@ export function DiffViewer({
   useEffect(() => {
     /** Toggles deliberate edit mode with Command-Shift-E or Ctrl-Shift-E. */
     const handleKeyDown = (event: KeyboardEvent): void => {
-      const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E");
+      const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
       if (isCommandShiftE) {
         if (reviewViewRef.current === "call-flow") return;
         event.preventDefault();
-        setEditMode((mode) => !mode);
+        event.stopPropagation();
+        setEditMode((mode) => {
+          if (mode && document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+          }
+          return !mode;
+        });
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
   /** Mounts the Call Flow view once so a request can survive a later tab switch. */
@@ -685,7 +691,10 @@ export function DiffViewer({
             };
 
             line.onkeydown = (event) => {
-              event.stopPropagation();
+              const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
+              if (!isCommandShiftE) {
+                event.stopPropagation();
+              }
             };
           } else {
             line.contentEditable = "false";
