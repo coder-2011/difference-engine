@@ -2943,29 +2943,7 @@ button {
   animation: copy-annotations-confirm 180ms ease-out;
 }
 
-.viewer-actions > button.edit-action {
-  border-color: #3a3842;
-  background: #1b1a1f;
-  color: #d2d0db;
-  font-weight: 550;
-  padding: 0 9px;
-  gap: 6px;
-}
-
-.viewer-actions > button.edit-action:hover {
-  border-color: #545060;
-  background: #25232b;
-  color: #fff;
-}
-
-.viewer-actions > button.edit-action.active {
-  border-color: #765da3;
-  background: #2a203d;
-  color: #dcc8ff;
-}
-
 .viewer-actions > button.commit-action .key-hint,
-.viewer-actions > button.edit-action .key-hint,
 .sidebar-bottom-action .key-hint {
   display: inline-flex;
   align-items: center;
