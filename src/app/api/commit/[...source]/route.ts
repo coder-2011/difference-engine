@@ -5,6 +5,9 @@ import { getOpenAIAccess, isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const COMMIT_SUBJECT_MODEL = process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna";
+const COMMIT_SUBJECT_FALLBACK_MODEL = "gpt-5.3-codex-spark";
+const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Write a concise, one-line git commit subject for the following modified files. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.";
 
 type RouteContext = {
   params: Promise<{ source: string[] }>;
@@ -32,6 +35,41 @@ function fallbackCommitSubject(files: CommitFileChange[]): string {
   return `update ${files.length} files`;
 }
 
+/** Asks one Codex model for a commit subject. Returns an empty string when that model cannot answer. */
+async function requestCommitSubject(access: { accessToken: string; session: { accountId: string } }, model: string, summary: string): Promise<string> {
+  const upstream = await fetch(CODEX_RESPONSES_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${access.accessToken}`,
+      "chatgpt-account-id": access.session.accountId,
+      "Content-Type": "application/json",
+      "OpenAI-Beta": "responses=experimental",
+    },
+    body: JSON.stringify({
+      model,
+      instructions: COMMIT_SUBJECT_INSTRUCTIONS,
+      input: [{ role: "user", content: [{ type: "input_text", text: summary }] }],
+      parallel_tool_calls: false,
+      reasoning: { effort: "low" },
+      service_tier: "priority",
+      store: false,
+      stream: false,
+      tools: [],
+    }),
+  });
+
+  if (!upstream.ok) return "";
+
+  const payload: unknown = await upstream.json().catch(() => null);
+  if (!isRecord(payload) || !Array.isArray(payload.output)) return "";
+  return payload.output.flatMap((item) => (
+    isRecord(item) && Array.isArray(item.content)
+      ? item.content.flatMap((content) => isRecord(content) && content.type === "output_text" && isString(content.text) ? [content.text] : [])
+      : []
+  )).join("");
+}
+
 /** Generates a concise git commit subject following Naman's writing style. */
 async function generateCommitSubject(files: CommitFileChange[]): Promise<string> {
   const fallback = fallbackCommitSubject(files);
@@ -49,44 +87,18 @@ async function generateCommitSubject(files: CommitFileChange[]): Promise<string>
     .map((file) => `File: ${file.path}\nContent preview:\n${file.contents.slice(0, 1_500)}`)
     .join("\n\n---\n\n");
 
-  try {
-    const upstream = await fetch(CODEX_RESPONSES_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${access.accessToken}`,
-        "chatgpt-account-id": access.session.accountId,
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "responses=experimental",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna",
-        instructions: "You generate concise git commit subjects following Naman's style. Write a concise, one-line git commit subject for the following modified files. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.",
-        input: [{ role: "user", content: [{ type: "input_text", text: summary }] }],
-        parallel_tool_calls: false,
-        reasoning: { effort: "low" },
-        service_tier: "priority",
-        store: false,
-        stream: false,
-        tools: [],
-      }),
-    });
+  const models = [COMMIT_SUBJECT_MODEL, COMMIT_SUBJECT_FALLBACK_MODEL].filter((model, index, list) => list.indexOf(model) === index);
 
-    if (!upstream.ok) return fallback;
-
-    const payload: unknown = await upstream.json().catch(() => null);
-    if (!isRecord(payload) || !Array.isArray(payload.output)) return fallback;
-
-    const text = payload.output.flatMap((item) => (
-      isRecord(item) && Array.isArray(item.content)
-        ? item.content.flatMap((content) => isRecord(content) && content.type === "output_text" && isString(content.text) ? [content.text] : [])
-        : []
-    )).join("");
-
-    return cleanCommitMessage(text, fallback);
-  } catch {
-    return fallback;
+  for (const model of models) {
+    try {
+      const text = await requestCommitSubject(access, model, summary);
+      if (text.trim()) return cleanCommitMessage(text, fallback);
+    } catch {
+      continue;
+    }
   }
+
+  return fallback;
 }
 
 /** Handles committing modified files to GitHub with automated commit message generation. */
