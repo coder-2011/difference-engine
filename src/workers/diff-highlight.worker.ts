@@ -62,6 +62,7 @@ async function handleInitialize(request: InitializeWorkerRequest) {
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
+  // SAFETY: InitializeWorkerRequest passes compatible render options.
   renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
@@ -74,6 +75,7 @@ async function handleInitialize(request: InitializeWorkerRequest) {
 async function handleSetRenderOptions(request: SetRenderOptionsWorkerRequest) {
   const highlighter = await getHighlighter();
   attachResolvedThemes(request.resolvedThemes, highlighter);
+  // SAFETY: SetRenderOptionsWorkerRequest passes compatible render options.
   renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
@@ -94,6 +96,7 @@ async function handleRenderFile(request: RenderFileRequest) {
     tokenizeMaxLineLength: renderOptions.tokenizeMaxLineLength,
     useTokenTransformer: renderOptions.useTokenTransformer,
   };
+  // SAFETY: RenderFileRequest file payload matches the expected FileContents structure.
   const result = renderFileWithHighlighter(request.file as FileContents, highlighter, fileOptions);
   self.postMessage({
     id: request.id,
@@ -111,6 +114,7 @@ async function handleRenderDiff(request: RenderDiffRequest) {
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
+  // SAFETY: RenderDiffRequest diff payload matches the expected FileDiffMetadata structure.
   const result = renderDiffWithHighlighter(request.diff as FileDiffMetadata, highlighter, renderOptions);
   self.postMessage({
     id: request.id,

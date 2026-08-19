@@ -705,51 +705,294 @@ export function DiffViewer({
       }
 
       // Configure in-place editing on code lines when editMode is active
+      /** Gets the selection for a node, supporting ShadowRoot. */
+      const getSelectionForNode = (targetNode: Node | null): Selection | null => {
+        if (!targetNode) return window.getSelection();
+        const root = targetNode.getRootNode();
+        if (root instanceof ShadowRoot && "getSelection" in root) {
+          // SAFETY: Chromium and standard ShadowRoot implementations expose getSelection for internal node selections.
+          const shadowSelection = (root as ShadowRoot & { getSelection?: () => Selection | null }).getSelection?.();
+          if (shadowSelection) return shadowSelection;
+        }
+        return window.getSelection();
+      };
+
+      /** Returns the character offset of the caret within the element. */
+      const getCaretOffset = (element: HTMLElement): number => {
+        const selection = getSelectionForNode(element);
+        if (!selection || selection.rangeCount === 0) return 0;
+        const range = selection.getRangeAt(0);
+        if (!element.contains(range.startContainer)) return 0;
+        const preRange = range.cloneRange();
+        preRange.selectNodeContents(element);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        return preRange.toString().length;
+      };
+
+      /** Sets the caret position within an editable line. */
+      const setCaretOffset = (element: HTMLElement, offset: number): void => {
+        const selection = getSelectionForNode(element);
+        if (!selection) return;
+        const range = document.createRange();
+        let remaining = offset;
+        let targetNode: Node = element;
+        let targetOffset = 0;
+
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let textNode = walker.nextNode();
+
+        while (textNode) {
+          const len = textNode.textContent?.length ?? 0;
+          if (remaining <= len) {
+            targetNode = textNode;
+            targetOffset = remaining;
+            break;
+          }
+          remaining -= len;
+          targetNode = textNode;
+          targetOffset = len;
+          textNode = walker.nextNode();
+        }
+
+        if (targetNode.nodeType === Node.TEXT_NODE) {
+          range.setStart(targetNode, targetOffset);
+          range.collapse(true);
+        } else {
+          if (!element.firstChild) {
+            const emptyText = document.createTextNode("");
+            element.appendChild(emptyText);
+            range.setStart(emptyText, 0);
+          } else {
+            range.selectNodeContents(element);
+          }
+          range.collapse(false);
+        }
+
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+
+      /** Serializes current live in-memory changes into the editedFilesRef map. */
+      const saveEditedContent = (): void => {
+        const filePath = context.item.id;
+        let lineElementsToRead: HTMLElement[];
+        if (repository) {
+          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line]")];
+        } else if (split) {
+          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-additions] [data-content] > [data-line]")];
+        } else {
+          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-unified] [data-content] > [data-line]")]
+            .filter((el) => el.dataset.lineType !== "deletion");
+        }
+
+        const allLines: string[] = [];
+        for (const el of lineElementsToRead) {
+          const text = el.innerText.replace(/\r?\n$/, "");
+          const sublines = text.split(/\r?\n/);
+          for (const subline of sublines) {
+            allLines.push(subline);
+          }
+        }
+        const currentContent = allLines.join("\n");
+        editedFilesRef.current.set(filePath, currentContent);
+        setEditedFileCount(editedFilesRef.current.size);
+      };
+
+      /** Sets up interactive multi-line editing handlers on a line element. */
+      const setupEditableLine = (line: HTMLElement): void => {
+        line.contentEditable = "plaintext-only";
+        line.spellcheck = false;
+        line.dataset.editable = "true";
+        line.oninput = saveEditedContent;
+
+        line.onkeydown = (event: KeyboardEvent) => {
+          const isCommand = event.metaKey || event.ctrlKey;
+          const isCommandShiftE = isCommand && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
+          const isCommandCommit = isCommand && (event.key === "d" || event.key === "D" || event.code === "KeyD" || event.key === "Enter" || event.code === "Enter");
+          if (isCommandShiftE || isCommandCommit) return;
+
+          const offset = getCaretOffset(line);
+          const text = line.textContent ?? "";
+          const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
+          const idx = allEditable.indexOf(line);
+
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            const before = text.slice(0, offset);
+            const after = text.slice(offset);
+            line.textContent = before;
+
+            const newLine = document.createElement("div");
+            newLine.className = line.className;
+            newLine.dataset.line = "";
+            newLine.dataset.editable = "true";
+            newLine.dataset.lineType = line.dataset.lineType || "addition";
+            newLine.contentEditable = "plaintext-only";
+            newLine.spellcheck = false;
+            newLine.textContent = after;
+            setupEditableLine(newLine);
+
+            line.after(newLine);
+            newLine.focus();
+            setCaretOffset(newLine, 0);
+            saveEditedContent();
+            return;
+          }
+
+          if (event.key === "Backspace" && offset === 0 && !getSelectionForNode(line)?.toString()) {
+            if (idx > 0) {
+              event.preventDefault();
+              event.stopPropagation();
+              const prev = allEditable[idx - 1];
+              const prevLen = prev.textContent?.length ?? 0;
+              prev.textContent = (prev.textContent ?? "") + text;
+              line.remove();
+              prev.focus();
+              setCaretOffset(prev, prevLen);
+              saveEditedContent();
+            }
+            return;
+          }
+
+          if (event.key === "Delete" && offset === text.length && !getSelectionForNode(line)?.toString()) {
+            if (idx < allEditable.length - 1) {
+              event.preventDefault();
+              event.stopPropagation();
+              const next = allEditable[idx + 1];
+              line.textContent = text + (next.textContent ?? "");
+              next.remove();
+              line.focus();
+              setCaretOffset(line, offset);
+              saveEditedContent();
+            }
+            return;
+          }
+
+          if (event.key === "ArrowUp") {
+            if (idx > 0) {
+              event.preventDefault();
+              event.stopPropagation();
+              const prev = allEditable[idx - 1];
+              prev.focus();
+              setCaretOffset(prev, Math.min(offset, prev.textContent?.length ?? 0));
+            }
+            return;
+          }
+
+          if (event.key === "ArrowDown") {
+            if (idx < allEditable.length - 1) {
+              event.preventDefault();
+              event.stopPropagation();
+              const next = allEditable[idx + 1];
+              next.focus();
+              setCaretOffset(next, Math.min(offset, next.textContent?.length ?? 0));
+            }
+            return;
+          }
+
+          if (event.key === "ArrowLeft" && offset === 0 && !getSelectionForNode(line)?.toString()) {
+            if (idx > 0) {
+              event.preventDefault();
+              event.stopPropagation();
+              const prev = allEditable[idx - 1];
+              prev.focus();
+              setCaretOffset(prev, prev.textContent?.length ?? 0);
+            }
+            return;
+          }
+
+          if (event.key === "ArrowRight" && offset === text.length && !getSelectionForNode(line)?.toString()) {
+            if (idx < allEditable.length - 1) {
+              event.preventDefault();
+              event.stopPropagation();
+              const next = allEditable[idx + 1];
+              next.focus();
+              setCaretOffset(next, 0);
+            }
+            return;
+          }
+
+          if (event.key === "Tab") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.shiftKey) {
+              if (text.startsWith("  ")) {
+                line.textContent = text.slice(2);
+                setCaretOffset(line, Math.max(0, offset - 2));
+              } else if (text.startsWith(" ")) {
+                line.textContent = text.slice(1);
+                setCaretOffset(line, Math.max(0, offset - 1));
+              }
+            } else {
+              const before = text.slice(0, offset);
+              const after = text.slice(offset);
+              line.textContent = `${before}  ${after}`;
+              setCaretOffset(line, offset + 2);
+            }
+            saveEditedContent();
+            return;
+          }
+
+          event.stopPropagation();
+        };
+
+        line.onpaste = (event: ClipboardEvent) => {
+          const pasteText = event.clipboardData?.getData("text/plain") ?? "";
+          if (!pasteText.includes("\n") && !pasteText.includes("\r")) return;
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          const offset = getCaretOffset(line);
+          const currentText = line.textContent ?? "";
+          const before = currentText.slice(0, offset);
+          const after = currentText.slice(offset);
+
+          const pastedLines = pasteText.split(/\r?\n/);
+          line.textContent = before + pastedLines[0];
+
+          let lastLine = line;
+          for (let i = 1; i < pastedLines.length; i++) {
+            const isLast = i === pastedLines.length - 1;
+            const newLine = document.createElement("div");
+            newLine.className = line.className;
+            newLine.dataset.line = "";
+            newLine.dataset.editable = "true";
+            newLine.dataset.lineType = line.dataset.lineType || "addition";
+            newLine.contentEditable = "plaintext-only";
+            newLine.spellcheck = false;
+            newLine.textContent = isLast ? pastedLines[i] + after : pastedLines[i];
+            setupEditableLine(newLine);
+            lastLine.after(newLine);
+            lastLine = newLine;
+          }
+
+          lastLine.focus();
+          setCaretOffset(lastLine, pastedLines[pastedLines.length - 1].length);
+          saveEditedContent();
+        };
+      };
+
       const lineElements = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line], [data-code] [data-line]")];
       for (const line of lineElements) {
         if (editMode) {
           const isDeletion = line.dataset.lineType === "deletion" || Boolean(line.closest("[data-deletions]"));
           if (!isDeletion) {
-            line.contentEditable = "plaintext-only";
-            line.spellcheck = false;
-            line.dataset.editable = "true";
-
-            line.oninput = () => {
-              const filePath = context.item.id;
-              let allLines: string[];
-              if (repository) {
-                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line]")].map((el) => el.innerText.replace(/\r?\n$/, ""));
-              } else if (split) {
-                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-additions] [data-content] > [data-line]")].map((el) => el.innerText.replace(/\r?\n$/, ""));
-              } else {
-                allLines = [...shadowRoot.querySelectorAll<HTMLElement>("[data-unified] [data-content] > [data-line]")]
-                  .filter((el) => el.dataset.lineType !== "deletion")
-                  .map((el) => el.innerText.replace(/\r?\n$/, ""));
-              }
-              const currentContent = allLines.join("\n");
-              editedFilesRef.current.set(filePath, currentContent);
-              setEditedFileCount(editedFilesRef.current.size);
-            };
-
-            line.onkeydown = (event) => {
-              const isCommand = event.metaKey || event.ctrlKey;
-              const isCommandShiftE = isCommand && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
-              const isCommandCommit = isCommand && (event.key === "d" || event.key === "D" || event.code === "KeyD" || event.key === "Enter" || event.code === "Enter");
-              if (!isCommandShiftE && !isCommandCommit) {
-                event.stopPropagation();
-              }
-            };
+            setupEditableLine(line);
           } else {
             line.contentEditable = "false";
             delete line.dataset.editable;
             line.oninput = null;
             line.onkeydown = null;
+            line.onpaste = null;
           }
         } else {
           line.contentEditable = "false";
           delete line.dataset.editable;
           line.oninput = null;
           line.onkeydown = null;
+          line.onpaste = null;
         }
       }
     },
