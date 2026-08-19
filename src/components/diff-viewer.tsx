@@ -1,10 +1,11 @@
 "use client";
 
-import type { CodeViewItem, CodeViewLineSelection, CodeViewOptions, FileDiffMetadata } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewItem, CodeViewLineSelection, FileContents, FileDiffMetadata } from "@pierre/diffs";
+import { Editor, type EditorOptions } from "@pierre/diffs/edit";
+import type { CodeViewHandle, CodeViewReactOptions, CreateEditor } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
-import { CodeView, WorkerPoolContext } from "@pierre/diffs/react";
+import { CodeView, EditProvider, WorkerPoolContext } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { Check, ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -107,6 +108,8 @@ const INLINE_COMMENT_MARKER_CSS = `
 `;
 
 configureDiffHighlighting();
+
+const createDiffEditor: CreateEditor<undefined> = (options: EditorOptions<undefined>) => new Editor(options);
 
 /** Maps Diffs' change vocabulary onto Trees' git-status vocabulary. */
 function gitStatusForFile(file: FileDiffMetadata): GitStatus {
@@ -233,6 +236,23 @@ export function DiffViewer({
   /** Commits all live in-memory file edits to GitHub with an auto-generated commit message. */
   const commitChanges = useCallback(async (): Promise<void> => {
     if (committing || isReadOnly) return;
+
+    const viewer = viewerRef.current;
+    if (viewer) {
+      const tracked = repository ? (repositoryFiles ?? EMPTY_REPOSITORY_FILES) : (parsedFiles ?? EMPTY_FILES);
+      for (const file of tracked) {
+        // SAFETY: CodeViewHandle.getEditor returns DiffsEditor; createDiffEditor always constructs Editor.
+        const live = (viewer.getEditor(file.name) as Editor<undefined> | undefined)?.getFile()?.contents;
+        if (live === undefined) continue;
+        const original = "contents" in file ? file.contents : file.additionLines.join("\n");
+        if (live === original) {
+          editedFilesRef.current.delete(file.name);
+        } else {
+          editedFilesRef.current.set(file.name, live);
+        }
+      }
+    }
+
     if (editedFilesRef.current.size === 0) {
       setCommitStatus("No changes");
       window.setTimeout(() => setCommitStatus(""), 2000);
@@ -266,6 +286,17 @@ export function DiffViewer({
       }
 
       setCommitStatus("Committed!");
+      if (repository) {
+        setRepositoryFiles((prev) => prev?.map((file) => {
+          const edited = editedFilesRef.current.get(file.name);
+          return edited === undefined ? file : { ...file, contents: edited };
+        }));
+      }
+      setFileVersions((prev) => {
+        const next = { ...prev };
+        for (const [name] of editedFilesRef.current) next[name] = (next[name] || 0) + 1;
+        return next;
+      });
       editedFilesRef.current.clear();
       setEditedFileCount(0);
       window.setTimeout(() => setCommitStatus(""), 3000);
@@ -276,42 +307,18 @@ export function DiffViewer({
     } finally {
       setCommitting(false);
     }
-  }, [committing, githubConnected, isReadOnly, source]);
+  }, [committing, githubConnected, isReadOnly, parsedFiles, repository, repositoryFiles, source]);
 
-  /** Toggles inline edit mode and synchronizes modified file state. */
+  /** Toggles Pierre edit mode. Item `edit`/`version` drive the native multi-line editor. */
   const toggleEditMode = useCallback(() => {
     if (isReadOnly) return;
     setEditMode((mode) => {
-      if (mode) {
-        // Exiting edit mode: sync live edits so CodeView re-highlights with full syntax highlighting
-        if (editedFilesRef.current.size > 0) {
-          if (repository) {
-            setRepositoryFiles((prevFiles) => {
-              if (!prevFiles) return prevFiles;
-              return prevFiles.map((file) => {
-                const edited = editedFilesRef.current.get(file.name);
-                if (edited !== undefined && edited !== file.contents) {
-                  return { ...file, contents: edited };
-                }
-                return file;
-              });
-            });
-          }
-          setFileVersions((prev) => {
-            const next = { ...prev };
-            for (const [name] of editedFilesRef.current) {
-              next[name] = (next[name] || 0) + 1;
-            }
-            return next;
-          });
-        }
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
+      if (mode && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
       }
       return !mode;
     });
-  }, [isReadOnly, repository]);
+  }, [isReadOnly]);
 
   useEffect(() => {
     let lastKey = "";
@@ -336,14 +343,14 @@ export function DiffViewer({
 
       const target = event.target instanceof HTMLElement ? event.target : null;
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-      const isCodeLine = target?.dataset?.editable === "true";
+      const isCodeEditor = Boolean(target?.closest(".code-view-shell [contenteditable='true']"));
 
       // Commit shortcut: Command-D / Ctrl-D, Command-Enter / Ctrl-Enter, or c then d chord
       const isCommandCommit = isCommand && (isD || isEnter);
       const now = Date.now();
-      const isCSequenceD = !isInput && !isCodeLine && !isCommand && isD && lastKey.toLowerCase() === "c" && (now - lastKeyTime < 1000);
+      const isCSequenceD = !isInput && !isCodeEditor && !isCommand && isD && lastKey.toLowerCase() === "c" && (now - lastKeyTime < 1000);
 
-      if (!isInput && !isCodeLine && !isCommand && isC) {
+      if (!isInput && !isCodeEditor && !isCommand && isC) {
         lastKey = "c";
         lastKeyTime = now;
       } else if (!isC) {
@@ -679,26 +686,39 @@ export function DiffViewer({
   }, []);
 
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
+  const editorOptions = useMemo<EditorOptions<undefined>>(() => ({ persistState: true }), []);
+  const canEdit = editMode && !isReadOnly;
+
+  const rememberItemEdit = useCallback((item: CodeViewItem, file: FileContents) => {
+    editedFilesRef.current.set(item.id, file.contents);
+    setEditedFileCount(editedFilesRef.current.size);
+  }, []);
 
   const items = useMemo<CodeViewItem[]>(
     () => repository
       ? codeFiles.map((file) => ({
           id: file.name,
-          type: "file",
-          file,
+          type: "file" as const,
+          file: {
+            name: file.name,
+            contents: canEdit ? file.contents : (editedFilesRef.current.get(file.name) ?? file.contents),
+            cacheKey: `${file.name}:${fileVersions[file.name] ?? 0}`,
+          },
           collapsed,
-          version: (fileVersions[file.name] ?? 0) * 2 + (collapsed ? 1 : 0),
+          edit: canEdit,
+          version: (fileVersions[file.name] ?? 0) * 4 + (collapsed ? 1 : 0) + (canEdit ? 2 : 0),
         }))
       : diffFiles.map((file) => ({
           id: file.name,
-          type: "diff",
+          type: "diff" as const,
           fileDiff: file,
           collapsed,
-          version: (fileVersions[file.name] ?? 0) * 2 + (collapsed ? 1 : 0),
+          edit: canEdit,
+          version: (fileVersions[file.name] ?? 0) * 4 + (collapsed ? 1 : 0) + (canEdit ? 2 : 0),
         })),
-    [codeFiles, collapsed, diffFiles, fileVersions, repository],
+    [canEdit, codeFiles, collapsed, diffFiles, editedFileCount, fileVersions, repository],
   );
-  const codeViewOptions = useMemo<CodeViewOptions<undefined>>(() => ({
+  const codeViewOptions = useMemo<CodeViewReactOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository && (!editMode || isReadOnly),
@@ -753,408 +773,8 @@ export function DiffViewer({
           }
         }
       }
-
-      // Configure in-place editing on code lines when editMode is active and document is not read-only
-      if (isReadOnly) {
-        const lineElements = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line], [data-code] [data-line]")];
-        for (const line of lineElements) {
-          line.contentEditable = "false";
-          delete line.dataset.editable;
-          line.oninput = null;
-          line.onkeydown = null;
-          line.onpaste = null;
-        }
-        return;
-      }
-      /** Gets the selection for a node, supporting ShadowRoot. */
-      const getSelectionForNode = (targetNode: Node | null): Selection | null => {
-        if (!targetNode) return window.getSelection();
-        const root = targetNode.getRootNode();
-        if (root instanceof ShadowRoot && "getSelection" in root) {
-          // SAFETY: Chromium and standard ShadowRoot implementations expose getSelection for internal node selections.
-          const shadowSelection = (root as ShadowRoot & { getSelection?: () => Selection | null }).getSelection?.();
-          if (shadowSelection) return shadowSelection;
-        }
-        return window.getSelection();
-      };
-
-      /** Returns the character offset of the caret within the element. */
-      const getCaretOffset = (element: HTMLElement): number => {
-        const selection = getSelectionForNode(element);
-        if (!selection || selection.rangeCount === 0) return 0;
-        const range = selection.getRangeAt(0);
-        if (!element.contains(range.startContainer)) return 0;
-        const preRange = range.cloneRange();
-        preRange.selectNodeContents(element);
-        preRange.setEnd(range.startContainer, range.startOffset);
-        return preRange.toString().length;
-      };
-
-      /** Sets the caret position within an editable line. */
-      const setCaretOffset = (element: HTMLElement, offset: number): void => {
-        const selection = getSelectionForNode(element);
-        if (!selection) return;
-        const range = document.createRange();
-        let remaining = offset;
-        let targetNode: Node = element;
-        let targetOffset = 0;
-
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        let textNode = walker.nextNode();
-
-        while (textNode) {
-          const len = textNode.textContent?.length ?? 0;
-          if (remaining <= len) {
-            targetNode = textNode;
-            targetOffset = remaining;
-            break;
-          }
-          remaining -= len;
-          targetNode = textNode;
-          targetOffset = len;
-          textNode = walker.nextNode();
-        }
-
-        if (targetNode.nodeType === Node.TEXT_NODE) {
-          range.setStart(targetNode, targetOffset);
-          range.collapse(true);
-        } else {
-          if (!element.firstChild) {
-            const emptyText = document.createTextNode("");
-            element.appendChild(emptyText);
-            range.setStart(emptyText, 0);
-          } else {
-            range.selectNodeContents(element);
-          }
-          range.collapse(false);
-        }
-
-        selection.removeAllRanges();
-        selection.addRange(range);
-      };
-
-      /** Serializes current live in-memory changes into the editedFilesRef map. */
-      const saveEditedContent = (): void => {
-        const filePath = context.item.id;
-        let lineElementsToRead: HTMLElement[];
-        if (repository) {
-          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line]")];
-        } else if (split) {
-          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-additions] [data-content] > [data-line]")];
-        } else {
-          lineElementsToRead = [...shadowRoot.querySelectorAll<HTMLElement>("[data-unified] [data-content] > [data-line]")]
-            .filter((el) => el.dataset.lineType !== "deletion");
-        }
-
-        const allLines: string[] = [];
-        for (const el of lineElementsToRead) {
-          const text = el.innerText.replace(/\r?\n$/, "");
-          const sublines = text.split(/\r?\n/);
-          for (const subline of sublines) {
-            allLines.push(subline);
-          }
-        }
-        const currentContent = allLines.join("\n");
-        editedFilesRef.current.set(filePath, currentContent);
-        setEditedFileCount(editedFilesRef.current.size);
-      };
-
-      /** Handles deleting any multi-line or cross-node selection before applying key actions. */
-      const handleSelectionDeletion = (): boolean => {
-        const selection = getSelectionForNode(shadowRoot);
-        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-        const range = selection.getRangeAt(0);
-        const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
-        const startEl = (range.startContainer instanceof HTMLElement ? range.startContainer : range.startContainer.parentElement)?.closest<HTMLElement>("[data-editable=\"true\"]");
-        const endEl = (range.endContainer instanceof HTMLElement ? range.endContainer : range.endContainer.parentElement)?.closest<HTMLElement>("[data-editable=\"true\"]");
-
-        if (!startEl || !endEl) return false;
-
-        if (startEl === endEl) {
-          const startOffset = getCaretOffset(startEl);
-          const selText = selection.toString();
-          const curText = startEl.textContent ?? "";
-          startEl.textContent = curText.slice(0, startOffset) + curText.slice(startOffset + selText.length);
-          startEl.focus();
-          setCaretOffset(startEl, startOffset);
-          saveEditedContent();
-          return true;
-        }
-
-        const startIdx = allEditable.indexOf(startEl);
-        const endIdx = allEditable.indexOf(endEl);
-        if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-          const startOffset = getCaretOffset(startEl);
-          const endOffset = getCaretOffset(endEl);
-          const startText = (startEl.textContent ?? "").slice(0, startOffset);
-          const endText = (endEl.textContent ?? "").slice(endOffset);
-
-          for (let i = endIdx; i > startIdx; i--) {
-            allEditable[i].remove();
-          }
-          startEl.textContent = startText + endText;
-          startEl.focus();
-          setCaretOffset(startEl, startOffset);
-          saveEditedContent();
-          return true;
-        }
-
-        return false;
-      };
-
-      /** Sets up interactive multi-line editing handlers on a line element. */
-      const setupEditableLine = (line: HTMLElement): void => {
-        line.contentEditable = "plaintext-only";
-        line.spellcheck = false;
-        line.dataset.editable = "true";
-        line.oninput = saveEditedContent;
-
-        line.onkeydown = (event: KeyboardEvent) => {
-          const isCommand = event.metaKey || event.ctrlKey;
-          const isCommandShiftE = isCommand && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
-          const isCommandCommit = isCommand && (event.key === "d" || event.key === "D" || event.code === "KeyD" || event.key === "Enter" || event.code === "Enter");
-          if (isCommandShiftE || isCommandCommit) return;
-
-          // Select all editable lines with Cmd+A
-          if (isCommand && (event.key === "a" || event.key === "A" || event.code === "KeyA")) {
-            event.preventDefault();
-            event.stopPropagation();
-            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
-            if (allEditable.length > 0) {
-              const selection = getSelectionForNode(shadowRoot);
-              if (selection) {
-                const range = document.createRange();
-                range.setStart(allEditable[0], 0);
-                range.setEnd(allEditable[allEditable.length - 1], (allEditable[allEditable.length - 1].textContent ?? "").length);
-                selection.removeAllRanges();
-                selection.addRange(range);
-              }
-            }
-            return;
-          }
-
-          if (event.key === "Backspace") {
-            if (handleSelectionDeletion()) {
-              event.preventDefault();
-              event.stopPropagation();
-              return;
-            }
-            const offset = getCaretOffset(line);
-            const text = line.textContent ?? "";
-            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
-            const idx = allEditable.indexOf(line);
-            if (offset === 0 && idx > 0) {
-              event.preventDefault();
-              event.stopPropagation();
-              const prev = allEditable[idx - 1];
-              const prevLen = (prev.textContent ?? "").length;
-              prev.textContent = (prev.textContent ?? "") + text;
-              line.remove();
-              prev.focus();
-              setCaretOffset(prev, prevLen);
-              saveEditedContent();
-              return;
-            }
-          }
-
-          if (event.key === "Delete") {
-            if (handleSelectionDeletion()) {
-              event.preventDefault();
-              event.stopPropagation();
-              return;
-            }
-            const offset = getCaretOffset(line);
-            const text = line.textContent ?? "";
-            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
-            const idx = allEditable.indexOf(line);
-            if (offset === text.length && idx < allEditable.length - 1) {
-              event.preventDefault();
-              event.stopPropagation();
-              const next = allEditable[idx + 1];
-              line.textContent = text + (next.textContent ?? "");
-              next.remove();
-              line.focus();
-              setCaretOffset(line, offset);
-              saveEditedContent();
-              return;
-            }
-          }
-
-          // Typing regular character over a selection
-          if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-            if (handleSelectionDeletion()) {
-              event.preventDefault();
-              event.stopPropagation();
-              const curOffset = getCaretOffset(line);
-              const curText = line.textContent ?? "";
-              line.textContent = curText.slice(0, curOffset) + event.key + curText.slice(curOffset);
-              setCaretOffset(line, curOffset + 1);
-              saveEditedContent();
-              return;
-            }
-          }
-
-          const offset = getCaretOffset(line);
-          const text = line.textContent ?? "";
-          const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
-          const idx = allEditable.indexOf(line);
-
-          if (event.key === "Enter") {
-            event.preventDefault();
-            event.stopPropagation();
-            handleSelectionDeletion();
-            const currentOffset = getCaretOffset(line);
-            const currentText = line.textContent ?? "";
-            const before = currentText.slice(0, currentOffset);
-            const after = currentText.slice(currentOffset);
-            line.textContent = before;
-
-            const newLine = document.createElement("div");
-            newLine.className = line.className;
-            newLine.dataset.line = "";
-            newLine.dataset.editable = "true";
-            newLine.dataset.lineType = line.dataset.lineType || "addition";
-            newLine.contentEditable = "plaintext-only";
-            newLine.spellcheck = false;
-            newLine.textContent = after;
-            setupEditableLine(newLine);
-
-            line.after(newLine);
-            newLine.focus();
-            setCaretOffset(newLine, 0);
-            saveEditedContent();
-            return;
-          }
-
-          if (event.key === "ArrowUp") {
-            if (idx > 0) {
-              event.preventDefault();
-              event.stopPropagation();
-              const prev = allEditable[idx - 1];
-              prev.focus();
-              setCaretOffset(prev, Math.min(offset, (prev.textContent ?? "").length));
-            }
-            return;
-          }
-
-          if (event.key === "ArrowDown") {
-            if (idx < allEditable.length - 1) {
-              event.preventDefault();
-              event.stopPropagation();
-              const next = allEditable[idx + 1];
-              next.focus();
-              setCaretOffset(next, Math.min(offset, (next.textContent ?? "").length));
-            }
-            return;
-          }
-
-          if (event.key === "ArrowLeft" && offset === 0) {
-            if (idx > 0) {
-              event.preventDefault();
-              event.stopPropagation();
-              const prev = allEditable[idx - 1];
-              prev.focus();
-              setCaretOffset(prev, (prev.textContent ?? "").length);
-            }
-            return;
-          }
-
-          if (event.key === "ArrowRight" && offset === text.length) {
-            if (idx < allEditable.length - 1) {
-              event.preventDefault();
-              event.stopPropagation();
-              const next = allEditable[idx + 1];
-              next.focus();
-              setCaretOffset(next, 0);
-            }
-            return;
-          }
-
-          if (event.key === "Tab") {
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.shiftKey) {
-              if (text.startsWith("  ")) {
-                line.textContent = text.slice(2);
-                setCaretOffset(line, Math.max(0, offset - 2));
-              } else if (text.startsWith(" ")) {
-                line.textContent = text.slice(1);
-                setCaretOffset(line, Math.max(0, offset - 1));
-              }
-            } else {
-              const before = text.slice(0, offset);
-              const after = text.slice(offset);
-              line.textContent = `${before}  ${after}`;
-              setCaretOffset(line, offset + 2);
-            }
-            saveEditedContent();
-            return;
-          }
-
-          event.stopPropagation();
-        };
-
-        line.onpaste = (event: ClipboardEvent) => {
-          const pasteText = event.clipboardData?.getData("text/plain") ?? "";
-          if (!pasteText.includes("\n") && !pasteText.includes("\r")) return;
-
-          event.preventDefault();
-          event.stopPropagation();
-          handleSelectionDeletion();
-
-          const offset = getCaretOffset(line);
-          const currentText = line.textContent ?? "";
-          const before = currentText.slice(0, offset);
-          const after = currentText.slice(offset);
-
-          const pastedLines = pasteText.split(/\r?\n/);
-          line.textContent = before + pastedLines[0];
-
-          let lastLine = line;
-          for (let i = 1; i < pastedLines.length; i++) {
-            const isLast = i === pastedLines.length - 1;
-            const newLine = document.createElement("div");
-            newLine.className = line.className;
-            newLine.dataset.line = "";
-            newLine.dataset.editable = "true";
-            newLine.dataset.lineType = line.dataset.lineType || "addition";
-            newLine.contentEditable = "plaintext-only";
-            newLine.spellcheck = false;
-            newLine.textContent = isLast ? pastedLines[i] + after : pastedLines[i];
-            setupEditableLine(newLine);
-            lastLine.after(newLine);
-            lastLine = newLine;
-          }
-
-          lastLine.focus();
-          setCaretOffset(lastLine, pastedLines[pastedLines.length - 1].length);
-          saveEditedContent();
-        };
-      };
-
-      const lineElements = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line], [data-code] [data-line]")];
-      for (const line of lineElements) {
-        if (editMode) {
-          const isDeletion = line.dataset.lineType === "deletion" || Boolean(line.closest("[data-deletions]"));
-          if (!isDeletion) {
-            setupEditableLine(line);
-          } else {
-            line.contentEditable = "false";
-            delete line.dataset.editable;
-            line.oninput = null;
-            line.onkeydown = null;
-            line.onpaste = null;
-          }
-        } else {
-          line.contentEditable = "false";
-          delete line.dataset.editable;
-          line.oninput = null;
-          line.onkeydown = null;
-          line.onpaste = null;
-        }
-      }
     },
-    // Pierre renders separators in a shadow root, so make each hidden range's disclosure state explicit there.
+    useTokenTransformer: true,
     unsafeCSS: `
       [data-expand-index] [data-expand-button] [data-icon] { display: none; }
       [data-expand-index] [data-expand-button]::before {
@@ -1162,17 +782,6 @@ export function DiffViewer({
         transition: transform 100ms ease-out;
       }
       [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
-      [data-editable="true"] {
-        cursor: text !important;
-        outline: none;
-      }
-      [data-editable="true"]:hover {
-        background: rgba(255, 255, 255, 0.04);
-      }
-      [data-editable="true"]:focus {
-        background: rgba(88, 166, 255, 0.09);
-        box-shadow: inset 2px 0 0 #58a6ff;
-      }
       ${INLINE_COMMENT_MARKER_CSS}
     `,
   }), [editMode, inlineCommentMarkersByFile, isReadOnly, repository, resumeChatFromMarker, split]);
@@ -1311,12 +920,17 @@ export function DiffViewer({
           style={codeViewStyle}
         >
           <WorkerPoolContext.Provider value={workerPool}>
-            <CodeView
-              ref={viewerRef}
-              items={items}
-              onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
-              options={codeViewOptions}
-            />
+            <EditProvider createEditor={createDiffEditor}>
+              <CodeView
+                ref={viewerRef}
+                editorOptions={editorOptions}
+                items={items}
+                onItemEditChange={rememberItemEdit}
+                onItemEditComplete={rememberItemEdit}
+                onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
+                options={codeViewOptions}
+              />
+            </EditProvider>
           </WorkerPoolContext.Provider>
         </div>
       </div>
