@@ -2,6 +2,7 @@
 
 import type {
   DiffsHighlighter,
+  ExtensionFormatMap,
   FileContents,
   FileDiffMetadata,
   RenderDiffOptions,
@@ -48,7 +49,7 @@ async function getHighlighter(): Promise<DiffsHighlighter> {
   return highlighterPromise;
 }
 
-function syncCustomExtensions(version?: number, map?: Record<string, string>) {
+function syncCustomExtensions(version?: number, map?: ExtensionFormatMap) {
   if (version != null && map != null) {
     replaceCustomExtensions(version, map);
   }
