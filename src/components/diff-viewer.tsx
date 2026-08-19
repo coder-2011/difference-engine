@@ -223,8 +223,13 @@ export function DiffViewer({
   const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
 
   /** Commits all live in-memory file edits to GitHub with an auto-generated commit message. */
-  async function commitChanges(): Promise<void> {
-    if (editedFilesRef.current.size === 0 || committing) return;
+  const commitChanges = useCallback(async (): Promise<void> => {
+    if (committing) return;
+    if (editedFilesRef.current.size === 0) {
+      setCommitStatus("No changes");
+      window.setTimeout(() => setCommitStatus(""), 2000);
+      return;
+    }
     if (!githubConnected) {
       setCommitStatus("Sign in needed");
       window.setTimeout(() => setCommitStatus(""), 2500);
@@ -263,13 +268,22 @@ export function DiffViewer({
     } finally {
       setCommitting(false);
     }
-  }
+  }, [committing, githubConnected, source]);
 
   useEffect(() => {
-    /** Toggles deliberate edit mode with Command-Shift-E or Ctrl-Shift-E. */
+    let lastKey = "";
+    let lastKeyTime = 0;
+
+    /** Handles global keyboard shortcuts for editing (Cmd-Shift-E) and committing (Cmd-D / c+d). */
     const handleKeyDown = (event: KeyboardEvent): void => {
-      const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
-      if (isCommandShiftE) {
+      const isCommand = event.metaKey || event.ctrlKey;
+      const isE = event.key === "e" || event.key === "E" || event.code === "KeyE";
+      const isD = event.key === "d" || event.key === "D" || event.code === "KeyD";
+      const isC = event.key === "c" || event.key === "C" || event.code === "KeyC";
+      const isEnter = event.key === "Enter" || event.code === "Enter";
+
+      // Toggle edit mode with Command-Shift-E or Ctrl-Shift-E
+      if (isCommand && event.shiftKey && isE) {
         if (reviewViewRef.current === "call-flow") return;
         event.preventDefault();
         event.stopPropagation();
@@ -279,12 +293,39 @@ export function DiffViewer({
           }
           return !mode;
         });
+        return;
+      }
+
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
+      const isCodeLine = target?.dataset?.editable === "true";
+
+      // Commit shortcut: Command-D / Ctrl-D, Command-Enter / Ctrl-Enter, or c then d chord
+      const isCommandCommit = isCommand && (isD || isEnter);
+      const now = Date.now();
+      const isCSequenceD = !isInput && !isCodeLine && !isCommand && isD && lastKey.toLowerCase() === "c" && (now - lastKeyTime < 1000);
+
+      if (!isInput && !isCodeLine && !isCommand && isC) {
+        lastKey = "c";
+        lastKeyTime = now;
+      } else if (!isC) {
+        lastKey = "";
+      }
+
+      if (isCommandCommit || isCSequenceD) {
+        if (reviewViewRef.current === "call-flow") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        void commitChanges();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [commitChanges]);
 
   /** Mounts the Call Flow view once so a request can survive a later tab switch. */
   const loadCallFlow = useCallback(() => {
@@ -691,8 +732,10 @@ export function DiffViewer({
             };
 
             line.onkeydown = (event) => {
-              const isCommandShiftE = (event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
-              if (!isCommandShiftE) {
+              const isCommand = event.metaKey || event.ctrlKey;
+              const isCommandShiftE = isCommand && event.shiftKey && (event.key === "e" || event.key === "E" || event.code === "KeyE");
+              const isCommandCommit = isCommand && (event.key === "d" || event.key === "D" || event.code === "KeyD" || event.key === "Enter" || event.code === "Enter");
+              if (!isCommandShiftE && !isCommandCommit) {
                 event.stopPropagation();
               }
             };
@@ -825,15 +868,16 @@ export function DiffViewer({
             </div>
           )}
           <button
-            aria-label="Commit and push changes to GitHub"
+            aria-label="Commit and push changes to GitHub (⌘D / c+d)"
             className={`commit-action${committing ? " committing" : ""}${commitStatus === "Committed!" ? " committed" : ""}`}
             disabled={editedFileCount === 0 || committing}
             onClick={() => void commitChanges()}
-            title={editedFileCount === 0 ? "Edit code to commit changes" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"}`}
+            title={editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"} (⌘D)`}
             type="button"
           >
             {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
             <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
+            <kbd className="key-hint">⌘D</kbd>
           </button>
           {!repository && (
             <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">

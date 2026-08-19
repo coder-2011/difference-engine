@@ -2964,6 +2964,7 @@ button {
   color: #dcc8ff;
 }
 
+.viewer-actions > button.commit-action .key-hint,
 .viewer-actions > button.edit-action .key-hint,
 .sidebar-bottom-action .key-hint {
   display: inline-flex;
@@ -2978,6 +2979,12 @@ button {
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.2px;
+}
+
+.viewer-actions > button.commit-action .key-hint {
+  border-color: #2e5a3c;
+  background: #0f2015;
+  color: #82c898;
 }
 
 .repository-search,
