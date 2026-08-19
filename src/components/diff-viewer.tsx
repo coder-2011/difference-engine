@@ -826,17 +826,6 @@ export function DiffViewer({
             {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
             <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
           </button>
-          <button
-            aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Active" : ""}`}
-            className={`edit-action${editMode ? " active" : ""}`}
-            onClick={() => setEditMode((mode) => !mode)}
-            title="Toggle Edit mode (⌘⇧E)"
-            type="button"
-          >
-            <Pencil size={13} />
-            <span>{editMode ? "Editing" : "Edit"}</span>
-            <kbd className="key-hint">⌘⇧E</kbd>
-          </button>
           {!repository && (
             <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">
               <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw diff"}
