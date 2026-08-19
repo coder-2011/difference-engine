@@ -2908,39 +2908,60 @@ button {
 }
 
 .viewer-actions > button.commit-action {
-  border-color: #386f4a;
-  background: #142a1c;
-  color: #a4e6b8;
   font-weight: 550;
   padding: 0 9px;
   gap: 6px;
 }
 
-.viewer-actions > button.commit-action:hover:not(:disabled) {
+.viewer-actions > button.commit-action.ready {
+  border-color: #386f4a;
+  background: #142a1c;
+  color: #a4e6b8;
+}
+
+.viewer-actions > button.commit-action.ready:hover:not(:disabled) {
   border-color: #4ea46c;
   background: #1a3c26;
   color: #c0f4d1;
 }
 
 .viewer-actions > button.commit-action:disabled {
-  border-color: #28282b;
-  background: #141416;
-  color: #5d5d64;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
   cursor: default;
-  opacity: 0.65;
+  opacity: 0.55;
 }
 
-.viewer-actions > button.commit-action.committing {
+.viewer-actions > button.commit-action.committing,
+.viewer-actions > button.commit-action.committing:disabled {
   border-color: #3f7199;
   background: #152535;
   color: #a5d4fa;
+  cursor: progress;
+  opacity: 1;
 }
 
-.viewer-actions > button.commit-action.committed {
+.viewer-actions > button.commit-action.committed,
+.viewer-actions > button.commit-action.committed:disabled {
   border-color: #4ea46c;
   background: #1e462c;
   color: #a4e6b8;
+  opacity: 1;
   animation: copy-annotations-confirm 180ms ease-out;
+}
+
+.viewer-actions > button.commit-action.error,
+.viewer-actions > button.commit-action.error:disabled {
+  border-color: #7a3b48;
+  background: #2a151a;
+  color: #f0b4bd;
+  opacity: 1;
+}
+
+.viewer-actions > button.commit-action .spinner {
+  margin-bottom: 0;
+  flex: none;
 }
 
 .viewer-actions > button.commit-action .key-hint,
@@ -2959,7 +2980,8 @@ button {
   letter-spacing: 0.2px;
 }
 
-.viewer-actions > button.commit-action .key-hint {
+.viewer-actions > button.commit-action.ready .key-hint,
+.viewer-actions > button.commit-action.committed .key-hint {
   border-color: #2e5a3c;
   background: #0f2015;
   color: #82c898;
@@ -3320,6 +3342,7 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overflow-anchor: none;
   background: #0d0d0a;
 }
 
@@ -3327,6 +3350,8 @@ button {
 .code-view-shell > div:not(.question-panel):not(.selection-actions):not(.ai-chat-actions):not(.annotation-list) {
   height: 100%;
   overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
 }
 
 .diff-loading,

@@ -236,17 +236,44 @@ export function DiffViewer({
   const [fileVersions, setFileVersions] = useState<Record<string, number>>({});
   const [editedFileCount, setEditedFileCount] = useState(0);
   const [committing, setCommitting] = useState(false);
-  const [commitStatus, setCommitStatus] = useState("");
+  const [commitStatus, setCommitStatus] = useState<"committed" | "error" | "">("");
+  const [commitError, setCommitError] = useState("");
   const editedFilesRef = useRef<Map<string, string>>(new Map());
+  const editBaselinesRef = useRef<Map<string, string>>(new Map());
+  const committingRef = useRef(false);
+  const commitStatusTimerRef = useRef<number>(0);
   const openChatRef = useRef<(() => void) | null>(null);
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
 
+  useEffect(() => {
+    editedFilesRef.current.clear();
+    editBaselinesRef.current.clear();
+    setEditedFileCount(0);
+    setCommitStatus("");
+    setCommitError("");
+  }, [sourceKey]);
+
+  /** Records or clears a dirty file only when the editor text differs from the last saved baseline. */
+  const syncEditedFile = useCallback((path: string, contents: string): void => {
+    if (committingRef.current) return;
+
+    const baselines = editBaselinesRef.current;
+    const baseline = baselines.get(path);
+    if (baseline === undefined) {
+      baselines.set(path, contents);
+      return;
+    }
+    if (contents === baseline) editedFilesRef.current.delete(path);
+    else editedFilesRef.current.set(path, contents);
+    setEditedFileCount(editedFilesRef.current.size);
+  }, []);
+
   /** Commits all live in-memory file edits to GitHub with an auto-generated commit message. */
   const commitChanges = useCallback(async (): Promise<void> => {
-    if (committing || isReadOnly) return;
+    if (committingRef.current || isReadOnly) return;
 
     const viewer = viewerRef.current;
     if (viewer) {
@@ -255,28 +282,30 @@ export function DiffViewer({
         // SAFETY: CodeViewHandle.getEditor returns DiffsEditor; createDiffEditor always constructs Editor.
         const live = (viewer.getEditor(file.name) as Editor<undefined> | undefined)?.getFile()?.contents;
         if (live === undefined) continue;
-        const original = "contents" in file ? file.contents : contentsFromDiffLines(file.additionLines);
-        if (live === original) {
-          editedFilesRef.current.delete(file.name);
-        } else {
-          editedFilesRef.current.set(file.name, live);
-        }
+        syncEditedFile(file.name, live);
       }
     }
 
+    window.clearTimeout(commitStatusTimerRef.current);
+    setCommitStatus("");
+    setCommitError("");
+
     if (editedFilesRef.current.size === 0) {
-      setCommitStatus("No changes");
-      window.setTimeout(() => setCommitStatus(""), 2000);
+      setEditedFileCount(0);
       return;
     }
     if (!githubConnected) {
-      setCommitStatus("Sign in needed");
-      window.setTimeout(() => setCommitStatus(""), 2500);
+      setCommitStatus("error");
+      setCommitError("Sign in needed");
+      commitStatusTimerRef.current = window.setTimeout(() => {
+        setCommitStatus("");
+        setCommitError("");
+      }, 2500);
       return;
     }
 
+    committingRef.current = true;
     setCommitting(true);
-    setCommitStatus("Committing…");
 
     const files = Array.from(editedFilesRef.current.entries()).map(([path, contents]) => ({
       contents,
@@ -296,7 +325,7 @@ export function DiffViewer({
         throw new Error(data?.error || "Commit failed");
       }
 
-      setCommitStatus("Committed!");
+      for (const file of files) editBaselinesRef.current.set(file.path, file.contents);
       if (repository) {
         setRepositoryFiles((prev) => prev?.map((file) => {
           const edited = editedFilesRef.current.get(file.name);
@@ -305,20 +334,26 @@ export function DiffViewer({
       }
       setFileVersions((prev) => {
         const next = { ...prev };
-        for (const [name] of editedFilesRef.current) next[name] = (next[name] || 0) + 1;
+        for (const file of files) next[file.path] = (next[file.path] || 0) + 1;
         return next;
       });
       editedFilesRef.current.clear();
       setEditedFileCount(0);
-      window.setTimeout(() => setCommitStatus(""), 3000);
+      setCommitStatus("committed");
+      commitStatusTimerRef.current = window.setTimeout(() => setCommitStatus(""), 2000);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Commit failed";
-      setCommitStatus(message.slice(0, 20));
-      window.setTimeout(() => setCommitStatus(""), 3000);
+      setCommitStatus("error");
+      setCommitError(message.slice(0, 28));
+      commitStatusTimerRef.current = window.setTimeout(() => {
+        setCommitStatus("");
+        setCommitError("");
+      }, 3000);
     } finally {
+      committingRef.current = false;
       setCommitting(false);
     }
-  }, [committing, githubConnected, isReadOnly, parsedFiles, repository, repositoryFiles, source]);
+  }, [githubConnected, isReadOnly, parsedFiles, repository, repositoryFiles, source, syncEditedFile]);
 
   /** Toggles Pierre edit mode. Item `edit`/`version` drive the native multi-line editor. */
   const toggleEditMode = useCallback(() => {
@@ -687,6 +722,7 @@ export function DiffViewer({
 
     /** Hands downward wheel movement to the page until the review header is above the diff. */
     const revealWorkspace = (event: WheelEvent): void => {
+      if (editMode) return;
       if (event.target instanceof Element && event.target.closest(".question-panel")) return;
       if (event.deltaY <= 0 || workspace.getBoundingClientRect().top <= 51) return;
       event.preventDefault();
@@ -695,10 +731,19 @@ export function DiffViewer({
 
     workspace.addEventListener("wheel", revealWorkspace, { capture: true, passive: false });
     return () => workspace.removeEventListener("wheel", revealWorkspace, { capture: true });
-  }, []);
+  }, [editMode]);
+
+  useEffect(() => {
+    if (!editMode) return;
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const top = workspace.getBoundingClientRect().top;
+    if (top > 51) window.scrollBy({ top: top - 51, behavior: "auto" });
+  }, [editMode]);
 
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
-  const editorOptions = useMemo<EditorOptions<undefined>>(() => ({ persistState: true }), []);
+  // CodeView already retains per-item editors. persistState would restore the shared list scrollTop per file.
+  const editorOptions = useMemo<EditorOptions<undefined>>(() => ({}), []);
   const canEdit = editMode && !isReadOnly;
   const loadedDiffFilesRef = useRef(new Map<string, Promise<FileDiffLoadedFiles>>());
 
@@ -727,9 +772,8 @@ export function DiffViewer({
   }, [source, sourceKey]);
 
   const rememberItemEdit = useCallback((item: CodeViewItem, file: FileContents) => {
-    editedFilesRef.current.set(item.id, file.contents);
-    setEditedFileCount(editedFilesRef.current.size);
-  }, []);
+    syncEditedFile(item.id, file.contents);
+  }, [syncEditedFile]);
 
   const items = useMemo<CodeViewItem[]>(
     () => repository
@@ -771,7 +815,7 @@ export function DiffViewer({
             version,
           };
         }),
-    [canEdit, codeFiles, collapsed, diffFiles, editedFileCount, fileVersions, repository],
+    [canEdit, codeFiles, collapsed, diffFiles, fileVersions, repository],
   );
   const codeViewOptions = useMemo<CodeViewReactOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
@@ -935,15 +979,16 @@ export function DiffViewer({
           )}
           {!isReadOnly && (
             <button
+              aria-busy={committing}
               aria-label="Commit and push changes to GitHub (⌘D / c+d)"
-              className={`commit-action${committing ? " committing" : ""}${commitStatus === "Committed!" ? " committed" : ""}`}
-              disabled={editedFileCount === 0 || committing}
+              className={`commit-action${editedFileCount > 0 && !committing && commitStatus === "" ? " ready" : ""}${committing ? " committing" : ""}${commitStatus === "committed" ? " committed" : ""}${commitStatus === "error" ? " error" : ""}`}
+              disabled={committing || editedFileCount === 0}
               onClick={() => void commitChanges()}
-              title={editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"} (⌘D)`}
+              title={committing ? "Committing changes…" : editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : "Commit and push changes (⌘D)"}
               type="button"
             >
-              {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
-              <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
+              {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "committed" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
+              <span>{committing ? "Committing" : commitStatus === "committed" ? "Committed" : commitError || "Commit"}</span>
               <kbd className="key-hint">⌘D</kbd>
             </button>
           )}
