@@ -6,7 +6,6 @@ import type {
   FileDiffMetadata,
   RenderDiffOptions,
   RenderFileOptions,
-  ThemeRegistrationResolved,
 } from "@pierre/diffs";
 import {
   attachResolvedLanguages,
@@ -15,49 +14,18 @@ import {
   renderFileWithHighlighter,
   replaceCustomExtensions,
 } from "@pierre/diffs";
+import type {
+  InitializeWorkerRequest,
+  RenderDiffRequest,
+  RenderFileRequest,
+  SetRenderOptionsWorkerRequest,
+  WorkerRequest,
+} from "@pierre/diffs/worker/types";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 
 configureDiffHighlighting();
-
-type InitializeRequest = {
-  customExtensionMap?: Record<string, string>;
-  customExtensionsVersion?: number;
-  id: string;
-  preferredHighlighter?: string;
-  renderOptions: RenderDiffOptions;
-  resolvedLanguages?: Array<{ data: unknown; name: string }>;
-  resolvedThemes: ThemeRegistrationResolved[];
-  type: "initialize";
-};
-
-type SetRenderOptionsRequest = {
-  id: string;
-  renderOptions: RenderDiffOptions;
-  resolvedThemes: ThemeRegistrationResolved[];
-  type: "set-render-options";
-};
-
-type RenderFileRequest = {
-  customExtensionMap?: Record<string, string>;
-  customExtensionsVersion?: number;
-  file: FileContents;
-  id: string;
-  resolvedLanguages?: Array<{ data: unknown; name: string }>;
-  type: "file";
-};
-
-type RenderDiffRequest = {
-  customExtensionMap?: Record<string, string>;
-  customExtensionsVersion?: number;
-  diff: FileDiffMetadata;
-  id: string;
-  resolvedLanguages?: Array<{ data: unknown; name: string }>;
-  type: "diff";
-};
-
-type WorkerRequest = InitializeRequest | SetRenderOptionsRequest | RenderFileRequest | RenderDiffRequest;
 
 let highlighterPromise: Promise<DiffsHighlighter> | undefined;
 let renderOptions: RenderDiffOptions = {
@@ -86,14 +54,14 @@ function syncCustomExtensions(version?: number, map?: Record<string, string>) {
   }
 }
 
-async function handleInitialize(request: InitializeRequest) {
+async function handleInitialize(request: InitializeWorkerRequest) {
   const highlighter = await getHighlighter();
   syncCustomExtensions(request.customExtensionsVersion, request.customExtensionMap);
   attachResolvedThemes(request.resolvedThemes, highlighter);
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
-  renderOptions = request.renderOptions;
+  renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "initialize",
@@ -102,10 +70,10 @@ async function handleInitialize(request: InitializeRequest) {
   });
 }
 
-async function handleSetRenderOptions(request: SetRenderOptionsRequest) {
+async function handleSetRenderOptions(request: SetRenderOptionsWorkerRequest) {
   const highlighter = await getHighlighter();
   attachResolvedThemes(request.resolvedThemes, highlighter);
-  renderOptions = request.renderOptions;
+  renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "set-render-options",
@@ -125,7 +93,7 @@ async function handleRenderFile(request: RenderFileRequest) {
     tokenizeMaxLineLength: renderOptions.tokenizeMaxLineLength,
     useTokenTransformer: renderOptions.useTokenTransformer,
   };
-  const result = renderFileWithHighlighter(request.file, highlighter, fileOptions);
+  const result = renderFileWithHighlighter(request.file as FileContents, highlighter, fileOptions);
   self.postMessage({
     id: request.id,
     options: fileOptions,
@@ -142,7 +110,7 @@ async function handleRenderDiff(request: RenderDiffRequest) {
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
-  const result = renderDiffWithHighlighter(request.diff, highlighter, renderOptions);
+  const result = renderDiffWithHighlighter(request.diff as FileDiffMetadata, highlighter, renderOptions);
   self.postMessage({
     id: request.id,
     options: renderOptions,
