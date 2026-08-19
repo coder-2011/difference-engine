@@ -1215,6 +1215,9 @@ export async function createCommitAndPush(
 
   if (parsed.kind === "pull") {
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, accessToken);
+    if (pullRequest.state !== "open" || pullRequest.merged) {
+      throw new GitHubError("Cannot commit changes to a merged or closed pull request", 400);
+    }
     headRepo = pullRequest.head.repo?.full_name ?? parsed.repository;
     headBranch = pullRequest.head.ref;
     headSha = pullRequest.head.sha;

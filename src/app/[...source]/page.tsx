@@ -118,6 +118,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         githubConnected={githubConnected}
         key={sourceKey}
         openAIConnected={openAIConnected}
+        pullRequestState={document.pullRequest?.state}
         repositoryRef={document.repositoryRef}
         reviewThreads={document.pullRequest?.reviewThreads}
         source={source}

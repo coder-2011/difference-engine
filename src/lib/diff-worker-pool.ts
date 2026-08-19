@@ -7,7 +7,7 @@ let workerPoolSingleton: WorkerPoolManager | undefined;
 export function getDiffWorkerPool(): WorkerPoolManager | undefined {
   if (!globalThis.window) return undefined;
 
-  if (!workerPoolSingleton || !workerPoolSingleton.isWorkingPool()) {
+  if (!workerPoolSingleton || workerPoolSingleton.getStats().workersFailed) {
     configureDiffHighlighting();
 
     const poolSize = Math.min(Math.max(globalThis.navigator?.hardwareConcurrency || 2, 2), 4);

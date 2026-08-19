@@ -32,6 +32,7 @@ type DiffViewerProps = {
   filePath?: string;
   githubConnected: boolean;
   openAIConnected: boolean;
+  pullRequestState?: "closed" | "merged" | "open";
   repositoryRef?: string;
   reviewThreads?: PullRequestReviewThread[];
   source: string[];
@@ -186,11 +187,17 @@ export function DiffViewer({
   filePath,
   githubConnected,
   openAIConnected,
+  pullRequestState,
   repositoryRef,
   reviewThreads = EMPTY_REVIEW_THREADS,
   source,
 }: DiffViewerProps) {
   const repository = defaultBranch !== undefined;
+  const isMerged = pullRequestState === "merged";
+  const isClosed = pullRequestState === "closed";
+  const isCommit = source[2] === "commit";
+  const isCompare = source[2] === "compare";
+  const isReadOnly = isMerged || isClosed || isCommit || isCompare;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
   const sourceKey = source.join("\0");
   const changedLineCount = additions !== undefined && deletions !== undefined ? additions + deletions : undefined;
@@ -212,6 +219,7 @@ export function DiffViewer({
   const [chatMarkers, setChatMarkers] = useState<ChatMarker[]>([]);
   const [resumeChat, setResumeChat] = useState<ChatResumeRequest>();
   const [editMode, setEditMode] = useState(false);
+  const [fileVersions, setFileVersions] = useState<Record<string, number>>({});
   const [editedFileCount, setEditedFileCount] = useState(0);
   const [committing, setCommitting] = useState(false);
   const [commitStatus, setCommitStatus] = useState("");
@@ -224,7 +232,7 @@ export function DiffViewer({
 
   /** Commits all live in-memory file edits to GitHub with an auto-generated commit message. */
   const commitChanges = useCallback(async (): Promise<void> => {
-    if (committing) return;
+    if (committing || isReadOnly) return;
     if (editedFilesRef.current.size === 0) {
       setCommitStatus("No changes");
       window.setTimeout(() => setCommitStatus(""), 2000);
@@ -268,7 +276,42 @@ export function DiffViewer({
     } finally {
       setCommitting(false);
     }
-  }, [committing, githubConnected, source]);
+  }, [committing, githubConnected, isReadOnly, source]);
+
+  /** Toggles inline edit mode and synchronizes modified file state. */
+  const toggleEditMode = useCallback(() => {
+    if (isReadOnly) return;
+    setEditMode((mode) => {
+      if (mode) {
+        // Exiting edit mode: sync live edits so CodeView re-highlights with full syntax highlighting
+        if (editedFilesRef.current.size > 0) {
+          if (repository) {
+            setRepositoryFiles((prevFiles) => {
+              if (!prevFiles) return prevFiles;
+              return prevFiles.map((file) => {
+                const edited = editedFilesRef.current.get(file.name);
+                if (edited !== undefined && edited !== file.contents) {
+                  return { ...file, contents: edited };
+                }
+                return file;
+              });
+            });
+          }
+          setFileVersions((prev) => {
+            const next = { ...prev };
+            for (const [name] of editedFilesRef.current) {
+              next[name] = (next[name] || 0) + 1;
+            }
+            return next;
+          });
+        }
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+      }
+      return !mode;
+    });
+  }, [isReadOnly, repository]);
 
   useEffect(() => {
     let lastKey = "";
@@ -284,15 +327,10 @@ export function DiffViewer({
 
       // Toggle edit mode with Command-Shift-E or Ctrl-Shift-E
       if (isCommand && event.shiftKey && isE) {
-        if (reviewViewRef.current === "call-flow") return;
+        if (reviewViewRef.current === "call-flow" || isReadOnly) return;
         event.preventDefault();
         event.stopPropagation();
-        setEditMode((mode) => {
-          if (mode && document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur();
-          }
-          return !mode;
-        });
+        toggleEditMode();
         return;
       }
 
@@ -313,7 +351,7 @@ export function DiffViewer({
       }
 
       if (isCommandCommit || isCSequenceD) {
-        if (reviewViewRef.current === "call-flow") return;
+        if (reviewViewRef.current === "call-flow" || isReadOnly) return;
         event.preventDefault();
         event.stopPropagation();
         if (document.activeElement instanceof HTMLElement) {
@@ -325,7 +363,7 @@ export function DiffViewer({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [commitChanges]);
+  }, [commitChanges, isReadOnly, toggleEditMode]);
 
   /** Mounts the Call Flow view once so a request can survive a later tab switch. */
   const loadCallFlow = useCallback(() => {
@@ -644,14 +682,26 @@ export function DiffViewer({
 
   const items = useMemo<CodeViewItem[]>(
     () => repository
-      ? codeFiles.map((file) => ({ id: file.name, type: "file", file, collapsed, version: collapsed ? 1 : 0 }))
-      : diffFiles.map((file) => ({ id: file.name, type: "diff", fileDiff: file, collapsed, version: collapsed ? 1 : 0 })),
-    [codeFiles, collapsed, diffFiles, repository],
+      ? codeFiles.map((file) => ({
+          id: file.name,
+          type: "file",
+          file,
+          collapsed,
+          version: (fileVersions[file.name] ?? 0) * 2 + (collapsed ? 1 : 0),
+        }))
+      : diffFiles.map((file) => ({
+          id: file.name,
+          type: "diff",
+          fileDiff: file,
+          collapsed,
+          version: (fileVersions[file.name] ?? 0) * 2 + (collapsed ? 1 : 0),
+        })),
+    [codeFiles, collapsed, diffFiles, fileVersions, repository],
   );
   const codeViewOptions = useMemo<CodeViewOptions<undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
-    enableLineSelection: repository && !editMode,
+    enableLineSelection: repository && (!editMode || isReadOnly),
     // Keep even one unchanged line behind the same user-controlled expander.
     collapsedContextThreshold: 0,
     // A clicked unchanged-lines separator should reveal its entire collapsed range.
@@ -704,7 +754,18 @@ export function DiffViewer({
         }
       }
 
-      // Configure in-place editing on code lines when editMode is active
+      // Configure in-place editing on code lines when editMode is active and document is not read-only
+      if (isReadOnly) {
+        const lineElements = [...shadowRoot.querySelectorAll<HTMLElement>("[data-content] > [data-line], [data-code] [data-line]")];
+        for (const line of lineElements) {
+          line.contentEditable = "false";
+          delete line.dataset.editable;
+          line.oninput = null;
+          line.onkeydown = null;
+          line.onpaste = null;
+        }
+        return;
+      }
       /** Gets the selection for a node, supporting ShadowRoot. */
       const getSelectionForNode = (targetNode: Node | null): Selection | null => {
         if (!targetNode) return window.getSelection();
@@ -798,6 +859,49 @@ export function DiffViewer({
         setEditedFileCount(editedFilesRef.current.size);
       };
 
+      /** Handles deleting any multi-line or cross-node selection before applying key actions. */
+      const handleSelectionDeletion = (): boolean => {
+        const selection = getSelectionForNode(shadowRoot);
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+        const range = selection.getRangeAt(0);
+        const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
+        const startEl = (range.startContainer instanceof HTMLElement ? range.startContainer : range.startContainer.parentElement)?.closest<HTMLElement>("[data-editable=\"true\"]");
+        const endEl = (range.endContainer instanceof HTMLElement ? range.endContainer : range.endContainer.parentElement)?.closest<HTMLElement>("[data-editable=\"true\"]");
+
+        if (!startEl || !endEl) return false;
+
+        if (startEl === endEl) {
+          const startOffset = getCaretOffset(startEl);
+          const selText = selection.toString();
+          const curText = startEl.textContent ?? "";
+          startEl.textContent = curText.slice(0, startOffset) + curText.slice(startOffset + selText.length);
+          startEl.focus();
+          setCaretOffset(startEl, startOffset);
+          saveEditedContent();
+          return true;
+        }
+
+        const startIdx = allEditable.indexOf(startEl);
+        const endIdx = allEditable.indexOf(endEl);
+        if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
+          const startOffset = getCaretOffset(startEl);
+          const endOffset = getCaretOffset(endEl);
+          const startText = (startEl.textContent ?? "").slice(0, startOffset);
+          const endText = (endEl.textContent ?? "").slice(endOffset);
+
+          for (let i = endIdx; i > startIdx; i--) {
+            allEditable[i].remove();
+          }
+          startEl.textContent = startText + endText;
+          startEl.focus();
+          setCaretOffset(startEl, startOffset);
+          saveEditedContent();
+          return true;
+        }
+
+        return false;
+      };
+
       /** Sets up interactive multi-line editing handlers on a line element. */
       const setupEditableLine = (line: HTMLElement): void => {
         line.contentEditable = "plaintext-only";
@@ -811,6 +915,85 @@ export function DiffViewer({
           const isCommandCommit = isCommand && (event.key === "d" || event.key === "D" || event.code === "KeyD" || event.key === "Enter" || event.code === "Enter");
           if (isCommandShiftE || isCommandCommit) return;
 
+          // Select all editable lines with Cmd+A
+          if (isCommand && (event.key === "a" || event.key === "A" || event.code === "KeyA")) {
+            event.preventDefault();
+            event.stopPropagation();
+            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
+            if (allEditable.length > 0) {
+              const selection = getSelectionForNode(shadowRoot);
+              if (selection) {
+                const range = document.createRange();
+                range.setStart(allEditable[0], 0);
+                range.setEnd(allEditable[allEditable.length - 1], (allEditable[allEditable.length - 1].textContent ?? "").length);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
+            }
+            return;
+          }
+
+          if (event.key === "Backspace") {
+            if (handleSelectionDeletion()) {
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+            const offset = getCaretOffset(line);
+            const text = line.textContent ?? "";
+            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
+            const idx = allEditable.indexOf(line);
+            if (offset === 0 && idx > 0) {
+              event.preventDefault();
+              event.stopPropagation();
+              const prev = allEditable[idx - 1];
+              const prevLen = (prev.textContent ?? "").length;
+              prev.textContent = (prev.textContent ?? "") + text;
+              line.remove();
+              prev.focus();
+              setCaretOffset(prev, prevLen);
+              saveEditedContent();
+              return;
+            }
+          }
+
+          if (event.key === "Delete") {
+            if (handleSelectionDeletion()) {
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+            const offset = getCaretOffset(line);
+            const text = line.textContent ?? "";
+            const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
+            const idx = allEditable.indexOf(line);
+            if (offset === text.length && idx < allEditable.length - 1) {
+              event.preventDefault();
+              event.stopPropagation();
+              const next = allEditable[idx + 1];
+              line.textContent = text + (next.textContent ?? "");
+              next.remove();
+              line.focus();
+              setCaretOffset(line, offset);
+              saveEditedContent();
+              return;
+            }
+          }
+
+          // Typing regular character over a selection
+          if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            if (handleSelectionDeletion()) {
+              event.preventDefault();
+              event.stopPropagation();
+              const curOffset = getCaretOffset(line);
+              const curText = line.textContent ?? "";
+              line.textContent = curText.slice(0, curOffset) + event.key + curText.slice(curOffset);
+              setCaretOffset(line, curOffset + 1);
+              saveEditedContent();
+              return;
+            }
+          }
+
           const offset = getCaretOffset(line);
           const text = line.textContent ?? "";
           const allEditable = [...shadowRoot.querySelectorAll<HTMLElement>("[data-editable=\"true\"]")];
@@ -819,8 +1002,11 @@ export function DiffViewer({
           if (event.key === "Enter") {
             event.preventDefault();
             event.stopPropagation();
-            const before = text.slice(0, offset);
-            const after = text.slice(offset);
+            handleSelectionDeletion();
+            const currentOffset = getCaretOffset(line);
+            const currentText = line.textContent ?? "";
+            const before = currentText.slice(0, currentOffset);
+            const after = currentText.slice(currentOffset);
             line.textContent = before;
 
             const newLine = document.createElement("div");
@@ -840,42 +1026,13 @@ export function DiffViewer({
             return;
           }
 
-          if (event.key === "Backspace" && offset === 0 && !getSelectionForNode(line)?.toString()) {
-            if (idx > 0) {
-              event.preventDefault();
-              event.stopPropagation();
-              const prev = allEditable[idx - 1];
-              const prevLen = prev.textContent?.length ?? 0;
-              prev.textContent = (prev.textContent ?? "") + text;
-              line.remove();
-              prev.focus();
-              setCaretOffset(prev, prevLen);
-              saveEditedContent();
-            }
-            return;
-          }
-
-          if (event.key === "Delete" && offset === text.length && !getSelectionForNode(line)?.toString()) {
-            if (idx < allEditable.length - 1) {
-              event.preventDefault();
-              event.stopPropagation();
-              const next = allEditable[idx + 1];
-              line.textContent = text + (next.textContent ?? "");
-              next.remove();
-              line.focus();
-              setCaretOffset(line, offset);
-              saveEditedContent();
-            }
-            return;
-          }
-
           if (event.key === "ArrowUp") {
             if (idx > 0) {
               event.preventDefault();
               event.stopPropagation();
               const prev = allEditable[idx - 1];
               prev.focus();
-              setCaretOffset(prev, Math.min(offset, prev.textContent?.length ?? 0));
+              setCaretOffset(prev, Math.min(offset, (prev.textContent ?? "").length));
             }
             return;
           }
@@ -886,23 +1043,23 @@ export function DiffViewer({
               event.stopPropagation();
               const next = allEditable[idx + 1];
               next.focus();
-              setCaretOffset(next, Math.min(offset, next.textContent?.length ?? 0));
+              setCaretOffset(next, Math.min(offset, (next.textContent ?? "").length));
             }
             return;
           }
 
-          if (event.key === "ArrowLeft" && offset === 0 && !getSelectionForNode(line)?.toString()) {
+          if (event.key === "ArrowLeft" && offset === 0) {
             if (idx > 0) {
               event.preventDefault();
               event.stopPropagation();
               const prev = allEditable[idx - 1];
               prev.focus();
-              setCaretOffset(prev, prev.textContent?.length ?? 0);
+              setCaretOffset(prev, (prev.textContent ?? "").length);
             }
             return;
           }
 
-          if (event.key === "ArrowRight" && offset === text.length && !getSelectionForNode(line)?.toString()) {
+          if (event.key === "ArrowRight" && offset === text.length) {
             if (idx < allEditable.length - 1) {
               event.preventDefault();
               event.stopPropagation();
@@ -943,6 +1100,7 @@ export function DiffViewer({
 
           event.preventDefault();
           event.stopPropagation();
+          handleSelectionDeletion();
 
           const offset = getCaretOffset(line);
           const currentText = line.textContent ?? "";
@@ -1017,7 +1175,7 @@ export function DiffViewer({
       }
       ${INLINE_COMMENT_MARKER_CSS}
     `,
-  }), [editMode, inlineCommentMarkersByFile, repository, resumeChatFromMarker, split]);
+  }), [editMode, inlineCommentMarkersByFile, isReadOnly, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
@@ -1043,11 +1201,11 @@ export function DiffViewer({
           <Sparkles size={13} />
           <span>Ask Diffs</span>
         </button>
-        {!showingCallDiff && (
+        {!showingCallDiff && !isReadOnly && (
           <button
             aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
             className={`sidebar-bottom-action edit-mode-btn${editMode ? " active" : ""}`}
-            onClick={() => setEditMode((mode) => !mode)}
+            onClick={toggleEditMode}
             type="button"
           >
             <Pencil size={13} />
@@ -1110,18 +1268,20 @@ export function DiffViewer({
               <RepositoryCompare currentRef={repositoryRef} defaultBranch={defaultBranch} repository={source.slice(0, 2).join("/")} />
             </div>
           )}
-          <button
-            aria-label="Commit and push changes to GitHub (⌘D / c+d)"
-            className={`commit-action${committing ? " committing" : ""}${commitStatus === "Committed!" ? " committed" : ""}`}
-            disabled={editedFileCount === 0 || committing}
-            onClick={() => void commitChanges()}
-            title={editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"} (⌘D)`}
-            type="button"
-          >
-            {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
-            <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
-            <kbd className="key-hint">⌘D</kbd>
-          </button>
+          {!isReadOnly && (
+            <button
+              aria-label="Commit and push changes to GitHub (⌘D / c+d)"
+              className={`commit-action${committing ? " committing" : ""}${commitStatus === "Committed!" ? " committed" : ""}`}
+              disabled={editedFileCount === 0 || committing}
+              onClick={() => void commitChanges()}
+              title={editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : `Commit and push ${editedFileCount} modified ${editedFileCount === 1 ? "file" : "files"} (⌘D)`}
+              type="button"
+            >
+              {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "Committed!" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
+              <span>{commitStatus || (editedFileCount > 0 ? `Commit (${editedFileCount})` : "Commit")}</span>
+              <kbd className="key-hint">⌘D</kbd>
+            </button>
+          )}
           {!repository && (
             <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">
               <ClipboardCopy size={14} /> {rawDiffCopyStatus || "Copy raw diff"}
