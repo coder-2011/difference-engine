@@ -40,6 +40,7 @@ const ACTION_MESSAGES = {
   "edit-body": "Pull request body updated on GitHub.",
   "edit-title": "Pull request title updated on GitHub.",
   merge: "Pull request merged on GitHub.",
+  ready: "Pull request is ready for review.",
   reply: "Reply posted to GitHub.",
   review: "Review submitted to GitHub.",
   "resolve-thread": "Review thread resolved on GitHub.",
@@ -264,8 +265,8 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   }
 
   /** Reloads the PR conversation from GitHub, ignoring overlapping stale responses. */
-  async function refreshWorkspace(): Promise<void> {
-    if (pendingActionRef.current) return;
+  async function refreshWorkspace(allowPendingAction = false): Promise<void> {
+    if (pendingActionRef.current && !allowPendingAction) return;
 
     const generation = refreshGenerationRef.current + 1;
     refreshGenerationRef.current = generation;
@@ -275,7 +276,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       const response = await fetch(`/api/pull-request/${path}`);
       // SAFETY: The same-origin pull-request GET route returns this workspace envelope.
       const result = await response.json() as { error?: string; workspace?: PullRequestWorkspace };
-      if (!response.ok || !result.workspace || generation !== refreshGenerationRef.current || pendingActionRef.current) return;
+      if (!response.ok || !result.workspace || generation !== refreshGenerationRef.current || (pendingActionRef.current && !allowPendingAction)) return;
       applyWorkspace(result.workspace);
     } catch {
       return;
@@ -341,6 +342,8 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       return true;
     } catch (error) {
       setMessage({ error: true, text: error instanceof Error ? error.message : "GitHub could not complete this action" });
+      // The ready state may have changed in another tab while this action was in flight.
+      if (action.action === "ready") void refreshWorkspace(true);
       return false;
     } finally {
       setPendingAction(undefined);

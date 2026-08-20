@@ -1146,9 +1146,10 @@ export async function performPullRequestAction(source: string[], token: string |
   }
 
   if (action.action === "ready") {
-    if (pullRequest.state !== "open" || pullRequest.merged || !pullRequest.draft || !capabilities?.viewerCanUpdate) {
-      throw new GitHubError("GitHub does not allow this pull request to be marked ready for review", 403);
-    }
+    if (pullRequest.state !== "open" || pullRequest.merged) throw new GitHubError("This pull request is already closed or merged.", 409);
+    if (!capabilities?.viewerCanUpdate) throw new GitHubError("You no longer have permission to mark this pull request ready for review.", 403);
+    // A different tab can complete this idempotent action after the workspace renders its button.
+    if (!pullRequest.draft) return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
 
     await githubGraphql<{ markPullRequestReadyForReview: { pullRequest: { id: string } } }>(accessToken, `mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
       markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
