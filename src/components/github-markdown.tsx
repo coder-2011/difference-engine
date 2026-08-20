@@ -1,3 +1,5 @@
+"use client";
+
 import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import type { ComponentPropsWithoutRef } from "react";

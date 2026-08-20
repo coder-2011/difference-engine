@@ -1,11 +1,19 @@
 "use client";
 
-import { getFiletypeFromFileName } from "@pierre/diffs";
+import { getFiletypeFromFileName, getSharedHighlighter, preloadHighlighter } from "@pierre/diffs";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { Children, cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
+import { Children, cloneElement, Fragment, isValidElement, useEffect, useState } from "react";
 import { configureDiffHighlighting, highlighterLanguage } from "@/lib/diff-highlighting";
 
 configureDiffHighlighting();
+
+void preloadHighlighter({
+  langs: ["bash", "c", "cpp", "diff", "go", "javascript", "json", "python", "rust", "tsx", "typescript"],
+  preferredHighlighter: "shiki-js",
+  themes: ["pierre-dark"],
+}).catch(() => {
+  // Individual blocks still load a grammar on demand if this preload is skipped.
+});
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   bash: "bash",
@@ -52,16 +60,18 @@ const LANGUAGE_ALIASES: Record<string, string> = {
 };
 
 const MAX_HIGHLIGHT_LENGTH = 20_000;
-const HIGHLIGHT_CACHE = new Map<string, string>();
+const HIGHLIGHT_CACHE = new Map<string, TokenLine[]>();
 const MAX_CACHE_ENTRIES = 500;
 
+type TokenLine = Array<{ color?: string; content: string }>;
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
   block?: boolean;
+  node?: { properties?: { className?: string | string[] } };
 };
 type HighlightedResult = {
-  html: string;
   language: string;
   source: string;
+  tokens: TokenLine[];
 };
 type MarkdownCodeBlockProps = {
   children: React.ReactNode;
@@ -69,26 +79,25 @@ type MarkdownCodeBlockProps = {
   source: string;
 };
 
-/** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
-async function highlightCode(source: string, language: string): Promise<string> {
+/** Tokenizes one block through the same Pierre highlighter as annotation snippets. */
+async function highlightTokens(source: string, language: string): Promise<TokenLine[]> {
   const cacheKey = `${language}\0${source}`;
   const cached = HIGHLIGHT_CACHE.get(cacheKey);
   if (cached) return cached;
 
-  const { getSharedHighlighter } = await import("@pierre/diffs");
   const lang = highlighterLanguage(language);
   const highlighter = await getSharedHighlighter({
     langs: [lang],
     preferredHighlighter: "shiki-js",
     themes: ["pierre-dark"],
   });
-  const html = highlighter.codeToHtml(source, { lang, theme: "pierre-dark" });
+  const tokens = (await highlighter.codeToTokens(source, { lang, theme: "pierre-dark" })).tokens;
   if (HIGHLIGHT_CACHE.size >= MAX_CACHE_ENTRIES) {
     const firstKey = HIGHLIGHT_CACHE.keys().next().value;
     if (firstKey) HIGHLIGHT_CACHE.delete(firstKey);
   }
-  HIGHLIGHT_CACHE.set(cacheKey, html);
-  return html;
+  HIGHLIGHT_CACHE.set(cacheKey, tokens);
+  return tokens;
 }
 
 /** Joins React, HAST, or string class names before matching a fence language. */
@@ -116,13 +125,14 @@ function supportedLanguage(className: unknown): string | null {
 
 /** Picks a grammar for unlabeled review fences from distinctive source tokens. */
 function inferredLanguage(source: string): string | null {
+  if (!source.trim()) return null;
   if (/^diff --git |\n@@ [+-]\d/m.test(source) || /^\s*[+-]{3} [ab]\//m.test(source)) return "diff";
   if (/\bstd::|\bnamespace\s+\w+|^\s*#\s*include\b|\bcuda[A-Z_]\w*|__global__|__device__|__host__|<<<|\btemplate\s*</m.test(source)) return "cpp";
   if (/\bfn\s+\w+|\blet\s+mut\b|\bimpl\s+\w+|\bpub(?:lic)?\s+(?:struct|enum|fn)\b/.test(source)) return "rust";
   if (/\bdef\s+\w+|^\s*from\s+\w+\s+import\b/m.test(source)) return "python";
   if (/\bexport\s+|:\s*(?:string|number|boolean)\b|\binterface\s+\w+/.test(source)) return /<\/|\/>/.test(source) ? "tsx" : "typescript";
   if (/\bfunc\s+\w+\(|^\s*package\s+\w+/m.test(source)) return "go";
-  return null;
+  return "cpp";
 }
 
 /** Converts React's Markdown children into the exact source sent to the highlighter. */
@@ -140,7 +150,7 @@ function codeText(children: CodeProps["children"]): string {
 
 /** Wraps code in a fence longer than any backtick run already inside it. */
 function fencedMarkdown(source: string, className?: string): string {
-  const language = className?.match(/language-([^\s]+)/)?.[1] ?? "";
+  const language = classNameText(className).match(/language-([^\s]+)/)?.[1] ?? "";
   let fenceLength = 3;
 
   for (const match of source.matchAll(/`+/g)) {
@@ -179,26 +189,50 @@ function MarkdownCodeBlock({ children, className, source }: MarkdownCodeBlockPro
   );
 }
 
-/** Renders inline code normally and fenced code with an asynchronously loaded Shiki grammar. */
-export function HighlightedCode({ block = false, children, className, ...props }: CodeProps) {
+/** Renders colored token spans for one highlighted fence. */
+function HighlightedSource({ tokens }: { tokens: TokenLine[] }) {
+  return (
+    <pre className="highlighted-code">
+      <code>
+        {tokens.map((line, lineIndex) => (
+          <Fragment key={lineIndex}>
+            {line.map((token, tokenIndex) => (
+              <span key={tokenIndex} style={token.color ? { color: token.color } : undefined}>{token.content}</span>
+            ))}
+            {lineIndex < tokens.length - 1 ? "\n" : null}
+          </Fragment>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+/** Renders inline code normally and fenced code with Pierre syntax tokens. */
+export function HighlightedCode({ block = false, children, className, node, ...props }: CodeProps) {
   const source = codeText(children);
-  const language = supportedLanguage(className) ?? (block ? inferredLanguage(source) : null);
-  const deferredSource = useDeferredValue(source);
-  const cachedHtml = language && deferredSource.length <= MAX_HIGHLIGHT_LENGTH
-    ? HIGHLIGHT_CACHE.get(`${language}\0${deferredSource}`)
+  const fenceClass = className ?? node?.properties?.className;
+  const isFence = block || Boolean(supportedLanguage(fenceClass)) || source.includes("\n");
+  const language = supportedLanguage(fenceClass) ?? (isFence ? inferredLanguage(source) : null);
+  const cachedTokens = language && source.length <= MAX_HIGHLIGHT_LENGTH
+    ? HIGHLIGHT_CACHE.get(`${language}\0${source}`)
     : undefined;
   const [highlighted, setHighlighted] = useState<HighlightedResult | null>(null);
 
   useEffect(() => {
     const highlightedLanguage = language;
-    if (!highlightedLanguage || deferredSource.length > MAX_HIGHLIGHT_LENGTH) return;
-    if (HIGHLIGHT_CACHE.has(`${highlightedLanguage}\0${deferredSource}`)) return;
+    if (!highlightedLanguage || source.length > MAX_HIGHLIGHT_LENGTH) return;
 
     let cancelled = false;
 
-    void highlightCode(deferredSource, highlightedLanguage)
-      .then((html) => {
-        if (!cancelled) setHighlighted({ html, language: highlightedLanguage, source: deferredSource });
+    void highlightTokens(source, highlightedLanguage)
+      .then((tokens) => {
+        if (!cancelled) setHighlighted({ language: highlightedLanguage, source, tokens });
+      })
+      .catch(() => {
+        if (highlightedLanguage === "cpp" || cancelled) return;
+        return highlightTokens(source, "cpp").then((tokens) => {
+          if (!cancelled) setHighlighted({ language: "cpp", source, tokens });
+        });
       })
       .catch(() => {
         if (!cancelled) setHighlighted(null);
@@ -207,18 +241,16 @@ export function HighlightedCode({ block = false, children, className, ...props }
     return () => {
       cancelled = true;
     };
-  }, [deferredSource, language]);
+  }, [language, source]);
 
-  const activeHighlight = cachedHtml ? { html: cachedHtml, language, source: deferredSource } : highlighted;
+  const tokens = cachedTokens
+    ?? (highlighted && highlighted.source === source && (highlighted.language === language || highlighted.language === "cpp") ? highlighted.tokens : undefined);
 
-  if (!language || source.length > MAX_HIGHLIGHT_LENGTH || source !== deferredSource || !activeHighlight || activeHighlight.language !== language || activeHighlight.source !== source) {
-    const code = <code className={className} {...props}>{children}</code>;
-    return block ? <MarkdownCodeBlock className={className} source={source}><pre>{code}</pre></MarkdownCodeBlock> : code;
-  }
+  if (!isFence) return <code className={className} {...props}>{children}</code>;
 
   return (
-    <MarkdownCodeBlock className={className} source={source}>
-      <div className="highlighted-code" dangerouslySetInnerHTML={{ __html: activeHighlight.html }} />
+    <MarkdownCodeBlock className={classNameText(fenceClass)} source={source}>
+      {tokens ? <HighlightedSource tokens={tokens} /> : <pre><code className={className} {...props}>{children}</code></pre>}
     </MarkdownCodeBlock>
   );
 }
