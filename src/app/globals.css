@@ -506,8 +506,18 @@ button {
   line-height: 1;
 }
 
+.url-field {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+}
+
 .url-form input {
   min-width: 0;
+  flex: 1;
   height: 100%;
   border: 0;
   outline: 0;
@@ -515,6 +525,28 @@ button {
   color: #dedde1;
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.url-key-hint {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid #44404e;
+  border-radius: 4px;
+  background: #151419;
+  color: #9a96a8;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.url-field:focus-within .url-key-hint {
+  visibility: hidden;
 }
 
 .url-form input::placeholder {

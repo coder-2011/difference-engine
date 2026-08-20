@@ -1,9 +1,10 @@
 import Image from "next/image";
-import { CornerDownLeft, Github, GitPullRequest, LockKeyhole } from "lucide-react";
+import { Github, GitPullRequest, LockKeyhole } from "lucide-react";
 import { auth } from "@/auth";
 import { Brand } from "@/components/brand";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestList } from "@/components/pull-request-list";
+import { UrlForm } from "@/components/url-form";
 import { isGitHubConnected, listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
@@ -56,17 +57,7 @@ export default async function Home({ searchParams }: HomeProps) {
       </nav>
 
       <section className="hero">
-        <form className="url-form" action={openSource}>
-          <span className="url-prompt" aria-hidden="true">›</span>
-          <input
-            name="url"
-            type="text"
-            required
-            aria-label="GitHub URL or pull request request"
-            placeholder="paste a github url or type what you want open"
-          />
-          <button aria-label="Open diff"><CornerDownLeft size={13} /><span>to open</span></button>
-        </form>
+        <UrlForm action={openSource} />
         {params.error && <p className="form-error">{params.error}</p>}
 
         <div className="replace-hint" aria-label="Replace github.com with diffs.naman.world">
