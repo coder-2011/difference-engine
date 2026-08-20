@@ -1249,9 +1249,17 @@ button {
 .markdown-body pre {
   padding: 11px;
   overflow: auto;
+  overflow-wrap: normal;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #09090a;
+}
+
+.markdown-body pre code,
+.markdown-body .highlighted-code code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
 }
 
 .markdown-body a {
@@ -1659,9 +1667,23 @@ button {
 .pr-comment-markdown pre {
   padding: 8px;
   overflow-x: auto;
+  overflow-wrap: normal;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: #0b0b0c;
+}
+
+.pr-comment-markdown pre,
+.pr-comment-markdown .highlighted-code,
+.pr-comment-markdown .markdown-code-block {
+  overflow-wrap: normal;
+}
+
+.pr-comment-markdown pre code,
+.pr-comment-markdown .highlighted-code code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
 }
 
 .pr-review-thread {

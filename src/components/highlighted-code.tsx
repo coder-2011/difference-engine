@@ -1,17 +1,20 @@
 "use client";
 
-import type { ComponentPropsWithoutRef } from "react";
+import { getFiletypeFromFileName } from "@pierre/diffs";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { Children, cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
 
-const LANGUAGE_ALIASES = {
+const LANGUAGE_ALIASES: Record<string, string> = {
   bash: "bash",
   c: "c",
   "c++": "cpp",
+  console: "bash",
   cpp: "cpp",
   css: "css",
   cu: "cpp",
   cuh: "cpp",
   cuda: "cpp",
+  diff: "diff",
   go: "go",
   html: "html",
   java: "java",
@@ -21,32 +24,36 @@ const LANGUAGE_ALIASES = {
   jsx: "jsx",
   markdown: "markdown",
   md: "markdown",
+  output: "text",
+  patch: "diff",
+  plaintext: "text",
   python: "python",
   py: "python",
   rs: "rust",
   rust: "rust",
-  shell: "bash",
   sh: "bash",
+  shell: "bash",
   sql: "sql",
+  suggestion: "diff",
+  text: "text",
   ts: "typescript",
   tsx: "tsx",
   typescript: "typescript",
   xml: "xml",
   yaml: "yaml",
   yml: "yaml",
-} as const;
+};
 
 const MAX_HIGHLIGHT_LENGTH = 20_000;
 const HIGHLIGHT_CACHE = new Map<string, string>();
 const MAX_CACHE_ENTRIES = 500;
 
-type SupportedLanguage = typeof LANGUAGE_ALIASES[keyof typeof LANGUAGE_ALIASES];
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
   block?: boolean;
 };
 type HighlightedResult = {
   html: string;
-  language: SupportedLanguage;
+  language: string;
   source: string;
 };
 type MarkdownCodeBlockProps = {
@@ -56,7 +63,7 @@ type MarkdownCodeBlockProps = {
 };
 
 /** Highlights one block through the same Pierre WASM singleton and theme as the diff viewer. */
-async function highlightCode(source: string, language: SupportedLanguage): Promise<string> {
+async function highlightCode(source: string, language: string): Promise<string> {
   const cacheKey = `${language}\0${source}`;
   const cached = HIGHLIGHT_CACHE.get(cacheKey);
   if (cached) return cached;
@@ -76,18 +83,39 @@ async function highlightCode(source: string, language: SupportedLanguage): Promi
   return html;
 }
 
-/** Maps a fenced-Markdown class name to a bundled grammar, if one exists. */
-function supportedLanguage(className?: string): SupportedLanguage | null {
-  const match = className?.match(/language-([^\s]+)/)?.[1]?.toLowerCase();
-  if (!match) return null;
+/** Joins React, HAST, or string class names before matching a fence language. */
+function classNameText(className: unknown): string {
+  if (typeof className === "string") return className;
+  if (Array.isArray(className)) return className.filter((part) => typeof part === "string").join(" ");
+  return "";
+}
 
-  // SAFETY: `match` is only used to index a static grammar alias table and missing keys return null.
-  return LANGUAGE_ALIASES[match as keyof typeof LANGUAGE_ALIASES] ?? null;
+/** Maps a fenced-Markdown class name to a Pierre grammar, including path and citation fences. */
+function supportedLanguage(className: unknown): string | null {
+  const token = classNameText(className).match(/language-([^\s]+)/)?.[1];
+  if (!token) return null;
+
+  const name = token.toLowerCase();
+  const aliased = LANGUAGE_ALIASES[name];
+  if (aliased) return aliased;
+
+  const fromPath = getFiletypeFromFileName(token);
+  if (fromPath !== "text") return fromPath;
+  const fromExtension = getFiletypeFromFileName(`file.${name}`);
+  return fromExtension === "text" ? null : fromExtension;
 }
 
 /** Converts React's Markdown children into the exact source sent to the highlighter. */
+function nodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return nodeText(node.props.children);
+  return "";
+}
+
 function codeText(children: CodeProps["children"]): string {
-  return String(children).replace(/\n$/, "");
+  return nodeText(children).replace(/\n$/, "");
 }
 
 /** Wraps code in a fence longer than any backtick run already inside it. */
