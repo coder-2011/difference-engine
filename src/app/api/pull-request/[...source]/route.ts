@@ -23,6 +23,8 @@ function parsePullRequestAction(value: JsonValue): PullRequestAction | null {
 
   if (value.action === "close") return { action: "close" };
 
+  if (value.action === "reopen") return { action: "reopen" };
+
   if (value.action === "edit-title" && isString(value.title)) {
     return { action: "edit-title", title: value.title };
   }

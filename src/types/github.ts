@@ -103,6 +103,7 @@ export type PullRequestTimelineEvent = {
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
+  canReopen: boolean;
   canEditBody: boolean;
   canManageMerge: boolean;
   canMarkReady: boolean;
@@ -125,6 +126,7 @@ export type PullRequestAction =
   | { action: "comment"; body: string }
   | { action: "reply"; body: string; commentId: number }
   | { action: "close" }
+  | { action: "reopen" }
   | { action: "edit-body"; body: string }
   | { action: "edit-title"; title: string }
   | { action: "merge"; method: PullRequestMergeMethod }

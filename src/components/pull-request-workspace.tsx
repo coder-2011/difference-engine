@@ -36,6 +36,7 @@ export const PR_WORKSPACE_REFRESH_EVENT = "pr-workspace-refresh";
 const ACTION_MESSAGES = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
+  reopen: "Pull request reopened on GitHub.",
   "edit-body": "Pull request body updated on GitHub.",
   "edit-title": "Pull request title updated on GitHub.",
   merge: "Pull request merged on GitHub.",
@@ -576,7 +577,16 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         )}
 
         {workspace.state === "merged" && <div className="pr-resolution merged"><CheckCircle2 size={14} /> Merged on GitHub</div>}
-        {workspace.state === "closed" && <div className="pr-resolution closed"><CircleX size={14} /> Closed on GitHub</div>}
+        {workspace.state === "closed" && (
+          <div className="pr-resolution closed">
+            <CircleX size={14} /> Closed on GitHub
+            {workspace.canReopen && (
+              <button className="reopen-pr-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "reopen" })} type="button">
+                <GitPullRequest size={13} /> Reopen
+              </button>
+            )}
+          </div>
+        )}
         {message && <p className={`pr-action-message ${message.error ? "error" : ""}`} role="status">{message.text}</p>}
       </aside>
     </section>

@@ -886,9 +886,9 @@ function summarizeWorkflowRun(run: WorkflowRun): PullRequestWorkflowRun {
   };
 }
 
-/** Loads the controls that only an open pull request can render or act on. */
+/** Loads merge, close, and reopen controls for any unmerged pull request. */
 async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string) {
-  if (pullRequest.state !== "open" || pullRequest.merged) {
+  if (pullRequest.merged) {
     return { capabilities: undefined, workflowRuns: [] };
   }
 
@@ -966,6 +966,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
   return {
     canClose: state === "open" && Boolean(capabilities?.viewerCanClose),
     canComment: Boolean(token) && !pullRequest.locked,
+    canReopen: state === "closed" && Boolean(capabilities?.viewerCanClose || capabilities?.viewerCanUpdate),
     canEditBody: Boolean(capabilities?.viewerCanUpdate),
     canManageMerge: state === "open" && !pullRequest.draft && Boolean(capabilities?.viewerCanWrite && capabilities.mergeMethods.length),
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
@@ -1005,6 +1006,21 @@ async function currentPullRequest(parsed: ReturnType<typeof parseSource>, token:
     getPullRequestCapabilities(parsed, Number(parsed.value), token),
   ]);
   return { capabilities, pullRequest };
+}
+
+/** Reopens a PR GitHub closed because its head branch was renamed. */
+async function reopenPullRequestIfClosed(parsed: ReturnType<typeof parseSource>, token: string): Promise<void> {
+  for (const delay of [0, 500, 1500, 3000]) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+    if (pullRequest.merged || pullRequest.state === "open") return;
+    try {
+      await githubMutation(parsed.apiPath, token, "PATCH", { state: "open" });
+      return;
+    } catch {
+      // GitHub finishes branch renames in the background before reopen is allowed.
+    }
+  }
 }
 
 /** Runs one GitHub-native PR action and returns the refreshed UI state plus confirmed merge status. */
@@ -1062,6 +1078,8 @@ export async function performPullRequestAction(source: string[], token: string |
     const repositoryPath = headRepository.split("/").map(encodeURIComponent).join("/");
     const branchPath = pullRequest.head.ref.split("/").map(encodeURIComponent).join("/");
     await githubMutation(`/repos/${repositoryPath}/branches/${branchPath}/rename`, accessToken, "POST", { new_name: name });
+    // GitHub closes a PR whose head branch is renamed. Reopen once the new ref exists.
+    await reopenPullRequestIfClosed(parsed, accessToken);
     return { celebrate: false, workspace: await getPullRequestWorkspace(source, accessToken) };
   }
 
@@ -1088,6 +1106,13 @@ export async function performPullRequestAction(source: string[], token: string |
       throw new GitHubError("GitHub does not allow this pull request to be closed", 403);
     }
     await githubMutation(parsed.apiPath, accessToken, "PATCH", { state: "closed" });
+  }
+
+  if (action.action === "reopen") {
+    if (pullRequest.state !== "closed" || pullRequest.merged || !(capabilities?.viewerCanClose || capabilities?.viewerCanUpdate)) {
+      throw new GitHubError("GitHub does not allow this pull request to be reopened", 403);
+    }
+    await githubMutation(parsed.apiPath, accessToken, "PATCH", { state: "open" });
   }
 
   if (action.action === "merge") {
