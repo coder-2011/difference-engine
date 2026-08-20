@@ -2,7 +2,7 @@
 
 import { getFiletypeFromFileName, getSharedHighlighter, preloadHighlighter } from "@pierre/diffs";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { Children, cloneElement, Fragment, isValidElement, useEffect, useState } from "react";
+import { Children, cloneElement, Fragment, isValidElement, useEffect, useState, type ComponentType } from "react";
 import { configureDiffHighlighting, highlighterLanguage } from "@/lib/diff-highlighting";
 
 configureDiffHighlighting();
@@ -132,7 +132,34 @@ function inferredLanguage(source: string): string | null {
   if (/\bdef\s+\w+|^\s*from\s+\w+\s+import\b/m.test(source)) return "python";
   if (/\bexport\s+|:\s*(?:string|number|boolean)\b|\binterface\s+\w+/.test(source)) return /<\/|\/>/.test(source) ? "tsx" : "typescript";
   if (/\bfunc\s+\w+\(|^\s*package\s+\w+/m.test(source)) return "go";
-  return "cpp";
+  return null;
+}
+
+/** True when a `<pre>` is review prose (headings, Path/Comment, emphasis) rather than source. */
+function looksLikeMarkdown(source: string): boolean {
+  if (/^(?:Path|Line|Comment):/m.test(source)) return true;
+  if (/^#{1,6}\s/m.test(source)) return true;
+  if (/^>\s/m.test(source)) return true;
+  if (/\*\*[^*\n]+\*\*/.test(source) && !/^\s*#\s*include\b/m.test(source)) return true;
+  return false;
+}
+
+/** Renders a misclassified review `<pre>` as GitHub Markdown without importing that module at load time. */
+function NestedMarkdown({ source }: { source: string }) {
+  const [Renderer, setRenderer] = useState<ComponentType<{ children: string }> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import("./github-markdown").then((module) => {
+      if (!cancelled) setRenderer(() => module.GitHubMarkdown);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!Renderer) return <div className="markdown-prose">{source}</div>;
+  return <Renderer>{source}</Renderer>;
 }
 
 /** Converts React's Markdown children into the exact source sent to the highlighter. */
@@ -211,8 +238,9 @@ function HighlightedSource({ tokens }: { tokens: TokenLine[] }) {
 export function HighlightedCode({ block = false, children, className, node, ...props }: CodeProps) {
   const source = codeText(children);
   const fenceClass = className ?? node?.properties?.className;
-  const isFence = block || Boolean(supportedLanguage(fenceClass)) || source.includes("\n");
-  const language = supportedLanguage(fenceClass) ?? (isFence ? inferredLanguage(source) : null);
+  const taggedLanguage = supportedLanguage(fenceClass);
+  const isFence = block || Boolean(taggedLanguage);
+  const language = taggedLanguage ?? (isFence && !looksLikeMarkdown(source) ? inferredLanguage(source) : null);
   const cachedTokens = language && source.length <= MAX_HIGHLIGHT_LENGTH
     ? HIGHLIGHT_CACHE.get(`${language}\0${source}`)
     : undefined;
@@ -247,6 +275,7 @@ export function HighlightedCode({ block = false, children, className, node, ...p
     ?? (highlighted && highlighted.source === source && (highlighted.language === language || highlighted.language === "cpp") ? highlighted.tokens : undefined);
 
   if (!isFence) return <code className={className} {...props}>{children}</code>;
+  if (!taggedLanguage && looksLikeMarkdown(source)) return <NestedMarkdown source={source} />;
 
   return (
     <MarkdownCodeBlock className={classNameText(fenceClass)} source={source}>

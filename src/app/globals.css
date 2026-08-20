@@ -1635,6 +1635,32 @@ button {
   line-height: 1.56;
 }
 
+.pr-comment-markdown strong {
+  color: #e8e8ec;
+  font-weight: 650;
+}
+
+.pr-comment-markdown h1,
+.pr-comment-markdown h2,
+.pr-comment-markdown h3 {
+  margin: 10px 0 6px;
+  color: #d7d7da;
+  font-size: 12px;
+}
+
+.pr-comment-markdown hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.pr-comment-markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 8px;
+  border-left: 3px solid #4d4d56;
+  color: #9a9aa3;
+}
+
 .pr-comment-markdown > :first-child {
   margin-top: 0;
 }

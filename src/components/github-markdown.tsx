@@ -60,6 +60,27 @@ function markGitHubAlerts(node: MarkdownNode): void {
   node.children?.forEach(markGitHubAlerts);
 }
 
+/** Turns GitHub-style single newlines inside paragraphs into hard line breaks. */
+function remarkSoftBreaks() {
+  return insertSoftBreaks;
+}
+
+/** Walks Markdown paragraphs and splits text on newlines without touching fenced code. */
+function insertSoftBreaks(node: MarkdownNode): void {
+  if (node.type === "code") return;
+  if (node.type === "paragraph" && node.children) {
+    node.children = node.children.flatMap((child) => {
+      if (child.type !== "text" || !isString(child.value) || !child.value.includes("\n")) return [child];
+      return child.value.split("\n").flatMap((part, index) => {
+        const nodes: MarkdownNode[] = index > 0 ? [{ type: "break" }] : [];
+        if (part) nodes.push({ type: "text", value: part });
+        return nodes;
+      });
+    });
+  }
+  node.children?.forEach(insertSoftBreaks);
+}
+
 /** Parses one repository-relative location only when the viewer can reveal its file. */
 export function parseCodeReference(value: string, paths: ReadonlySet<string>): CodeReference | undefined {
   const match = value.match(CODE_REFERENCE);
@@ -144,7 +165,7 @@ function MarkdownTable({ children, ...props }: ComponentPropsWithoutRef<"table">
 }
 
 const MARKDOWN_COMPONENTS = { code: HighlightedCode, pre: MarkdownPre, table: MarkdownTable };
-const MARKDOWN_PLUGINS = [remarkGfm, githubAlerts];
+const MARKDOWN_PLUGINS = [remarkGfm, remarkSoftBreaks, githubAlerts];
 const REHYPE_PLUGINS = [rehypeRaw];
 
 /** Renders GitHub-flavored Markdown, including tables and native GitHub alert callouts. */
