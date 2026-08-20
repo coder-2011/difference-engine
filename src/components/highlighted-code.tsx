@@ -8,8 +8,10 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   bash: "bash",
   c: "c",
   "c++": "cpp",
+  cc: "cpp",
   console: "bash",
   cpp: "cpp",
+  cxx: "cpp",
   css: "css",
   cu: "cpp",
   cuh: "cpp",
@@ -92,17 +94,29 @@ function classNameText(className: unknown): string {
 
 /** Maps a fenced-Markdown class name to a Pierre grammar, including path and citation fences. */
 function supportedLanguage(className: unknown): string | null {
-  const token = classNameText(className).match(/language-([^\s]+)/)?.[1];
+  const token = classNameText(className).match(/language-([^\s]+)/)?.[1]
+    ?? classNameText(className).match(/highlight-source-([^\s]+)/)?.[1];
   if (!token) return null;
 
   const name = token.toLowerCase();
   const aliased = LANGUAGE_ALIASES[name];
-  if (aliased) return aliased;
+  if (aliased && aliased !== "text") return aliased;
 
   const fromPath = getFiletypeFromFileName(token);
   if (fromPath !== "text") return fromPath;
   const fromExtension = getFiletypeFromFileName(`file.${name}`);
   return fromExtension === "text" ? null : fromExtension;
+}
+
+/** Picks a grammar for unlabeled review fences from distinctive source tokens. */
+function inferredLanguage(source: string): string | null {
+  if (/^diff --git |\n@@ [+-]\d/m.test(source) || /^\s*[+-]{3} [ab]\//m.test(source)) return "diff";
+  if (/\bstd::|\bnamespace\s+\w+|^\s*#\s*include\b|\bcuda[A-Z_]\w*|\btemplate\s*</m.test(source)) return "cpp";
+  if (/\bfn\s+\w+|\blet\s+mut\b|\bimpl\s+\w+|\bpub(?:lic)?\s+(?:struct|enum|fn)\b/.test(source)) return "rust";
+  if (/\bdef\s+\w+|^\s*from\s+\w+\s+import\b/m.test(source)) return "python";
+  if (/\bexport\s+|:\s*(?:string|number|boolean)\b|\binterface\s+\w+/.test(source)) return /<\/|\/>/.test(source) ? "tsx" : "typescript";
+  if (/\bfunc\s+\w+\(|^\s*package\s+\w+/m.test(source)) return "go";
+  return null;
 }
 
 /** Converts React's Markdown children into the exact source sent to the highlighter. */
@@ -161,8 +175,8 @@ function MarkdownCodeBlock({ children, className, source }: MarkdownCodeBlockPro
 
 /** Renders inline code normally and fenced code with an asynchronously loaded Shiki grammar. */
 export function HighlightedCode({ block = false, children, className, ...props }: CodeProps) {
-  const language = supportedLanguage(className);
   const source = codeText(children);
+  const language = supportedLanguage(className) ?? (block ? inferredLanguage(source) : null);
   const deferredSource = useDeferredValue(source);
   const cachedHtml = language && deferredSource.length <= MAX_HIGHLIGHT_LENGTH
     ? HIGHLIGHT_CACHE.get(`${language}\0${deferredSource}`)
@@ -203,12 +217,13 @@ export function HighlightedCode({ block = false, children, className, ...props }
   );
 }
 
-/** Passes block context to code renderers while preserving ordinary preformatted content. */
-export function MarkdownPre({ children }: ComponentPropsWithoutRef<"pre">) {
+/** Passes block context and any `pre` language class through to the code renderer. */
+export function MarkdownPre({ children, className, lang }: ComponentPropsWithoutRef<"pre">) {
   const code = Children.toArray(children)[0];
   if (isValidElement<CodeProps>(code)) {
-    return cloneElement(code, { block: true });
+    const languageClass = classNameText(code.props.className) || classNameText(className) || (lang ? `language-${lang}` : "");
+    return cloneElement(code, { block: true, className: languageClass || code.props.className });
   }
 
-  return <pre>{children}</pre>;
+  return <pre className={className} lang={lang}>{children}</pre>;
 }
