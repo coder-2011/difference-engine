@@ -5,8 +5,8 @@ import { getOpenAIAccess, isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
-const COMMIT_SUBJECT_MODEL = process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna";
-const COMMIT_SUBJECT_FALLBACK_MODEL = "gpt-5.3-codex-spark";
+const COMMIT_SUBJECT_MODEL = "gpt-5.3-codex-spark";
+const COMMIT_SUBJECT_FALLBACK_MODEL = process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna";
 const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Write a concise, one-line git commit subject for the following modified files. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.";
 
 type RouteContext = {
