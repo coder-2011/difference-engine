@@ -64,10 +64,16 @@ const HIGHLIGHT_CACHE = new Map<string, TokenLine[]>();
 const MAX_CACHE_ENTRIES = 500;
 
 type TokenLine = Array<{ color?: string; content: string }>;
+type MarkdownNode = {
+  position?: { start?: { offset?: number } };
+  properties?: { className?: string | string[] };
+};
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
   block?: boolean;
-  node?: { properties?: { className?: string | string[] } };
+  node?: MarkdownNode;
+  rawPreformattedMarkup?: boolean;
 };
+type PreProps = ComponentPropsWithoutRef<"pre"> & { node?: MarkdownNode };
 type HighlightedResult = {
   language: string;
   source: string;
@@ -235,7 +241,7 @@ function HighlightedSource({ tokens }: { tokens: TokenLine[] }) {
 }
 
 /** Renders inline code normally and fenced code with Pierre syntax tokens. */
-export function HighlightedCode({ block = false, children, className, node, ...props }: CodeProps) {
+export function HighlightedCode({ block = false, children, className, node, rawPreformattedMarkup = false, ...props }: CodeProps) {
   const source = codeText(children);
   const fenceClass = className ?? node?.properties?.className;
   const taggedLanguage = supportedLanguage(fenceClass);
@@ -275,7 +281,7 @@ export function HighlightedCode({ block = false, children, className, node, ...p
     ?? (highlighted && highlighted.source === source && (highlighted.language === language || highlighted.language === "cpp") ? highlighted.tokens : undefined);
 
   if (!isFence) return <code className={className} {...props}>{children}</code>;
-  if (!taggedLanguage && looksLikeMarkdown(source)) return <NestedMarkdown source={source} />;
+  if (rawPreformattedMarkup && !taggedLanguage && looksLikeMarkdown(source)) return <NestedMarkdown source={source} />;
 
   return (
     <MarkdownCodeBlock className={classNameText(fenceClass)} source={source}>
@@ -285,11 +291,15 @@ export function HighlightedCode({ block = false, children, className, node, ...p
 }
 
 /** Passes block context and any `pre` language class through to the code renderer. */
-export function MarkdownPre({ children, className, lang }: ComponentPropsWithoutRef<"pre">) {
+export function MarkdownPre({ children, className, lang, node }: PreProps) {
   const code = Children.toArray(children)[0];
   if (isValidElement<CodeProps>(code)) {
     const languageClass = classNameText(code.props.className) || classNameText(className) || (lang ? `language-${lang}` : "");
-    return cloneElement(code, { block: true, className: languageClass || code.props.className });
+    // Markdown fences share their source start with the code node, unlike raw <pre><code> markup.
+    const preStart = node?.position?.start?.offset;
+    const codeStart = code.props.node?.position?.start?.offset;
+    const rawPreformattedMarkup = preStart !== undefined && codeStart !== undefined && preStart !== codeStart;
+    return cloneElement(code, { block: true, className: languageClass || code.props.className, rawPreformattedMarkup });
   }
 
   return <pre className={className} lang={lang}>{children}</pre>;
