@@ -77,7 +77,9 @@ export type PullRequestReviewThread = {
 };
 
 export type PullRequestCommit = {
+  additions?: number;
   author: string;
+  deletions?: number;
   message: string;
   sha: string;
 };

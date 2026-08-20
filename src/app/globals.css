@@ -1580,6 +1580,23 @@ button {
   white-space: nowrap;
 }
 
+.pr-commit-changes {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.pr-commit-changes .additions {
+  color: var(--green);
+}
+
+.pr-commit-changes .deletions {
+  color: var(--red);
+}
+
 .pr-comment {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);

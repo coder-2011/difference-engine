@@ -20,6 +20,7 @@ import type {
 } from "@/types/github";
 
 const GITHUB_API = "https://api.github.com";
+const COMMIT_STATS_REQUEST_CONCURRENCY = 8;
 
 type GitHubUser = {
   avatar_url: string;
@@ -188,6 +189,7 @@ type PullRequestCommitRecord = {
     message: string;
   };
   sha: string;
+  stats?: { additions: number; deletions: number };
 };
 
 type WorkflowRun = {
@@ -747,7 +749,9 @@ function summarizeReviewThread(
 /** Maps GitHub's nested commit response into the compact PR conversation record. */
 function summarizePullRequestCommit(commit: PullRequestCommitRecord): PullRequestCommit {
   return {
+    additions: commit.stats?.additions,
     author: commit.author?.login ?? commit.commit.author?.name ?? "Unknown author",
+    deletions: commit.stats?.deletions,
     message: commit.commit.message,
     sha: commit.sha,
   };
@@ -795,7 +799,21 @@ function summarizeTimelineEvent(event: GitHubTimelineEvent): PullRequestTimeline
 async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestCommitList> {
   try {
     const commits = await githubAllItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token);
-    return { commits: commits.map(summarizePullRequestCommit), unavailable: false };
+    const detailedCommits: PullRequestCommitRecord[] = [];
+
+    // Keep the expanded commit list responsive without flooding GitHub with detail requests.
+    for (let index = 0; index < commits.length; index += COMMIT_STATS_REQUEST_CONCURRENCY) {
+      const details = await Promise.all(commits.slice(index, index + COMMIT_STATS_REQUEST_CONCURRENCY).map(async (commit) => {
+        try {
+          return await githubRequest<PullRequestCommitRecord>(`/repos/${parsed.encodedRepository}/commits/${encodeURIComponent(commit.sha)}`, token);
+        } catch {
+          return commit;
+        }
+      }));
+      detailedCommits.push(...details);
+    }
+
+    return { commits: detailedCommits.map(summarizePullRequestCommit), unavailable: false };
   } catch {
     return { commits: [], unavailable: true };
   }

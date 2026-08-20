@@ -443,6 +443,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               {workspace.commits.map((commit) => (
                 <article className="pr-commit" key={commit.sha}>
                   <span className="pr-commit-message" title={commit.message}>{commitSummary(commit.message)}</span>
+                  {commit.additions !== undefined && commit.deletions !== undefined && (
+                    <span aria-label={`${commit.additions} additions and ${commit.deletions} deletions`} className="pr-commit-changes"><span className="additions">+{commit.additions.toLocaleString()}</span><span className="deletions">−{commit.deletions.toLocaleString()}</span></span>
+                  )}
                   <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}</span>
                 </article>
               ))}
