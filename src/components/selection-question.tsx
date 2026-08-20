@@ -466,7 +466,7 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
     const lineStart = document.createRange();
     lineStart.selectNodeContents(endLine);
     lineStart.collapse(true);
-    if (range.compareBoundaryPoints(Range.START_TO_END, lineStart) === 0) {
+    if (range.compareBoundaryPoints(Range.END_TO_START, lineStart) === 0) {
       const lineRoot = root instanceof ShadowRoot ? root : document;
       const lines = Array.from(lineRoot.querySelectorAll("[data-line]"));
       const endIndex = lines.indexOf(endLine);
