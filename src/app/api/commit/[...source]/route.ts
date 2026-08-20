@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createCommitAndPush, GitHubError, type CommitFileChange } from "@/lib/github";
+import { createCommitAndPush, getCommitSubjectContext, GitHubError, type CommitFileChange } from "@/lib/github";
 import { isRecord, isString } from "@/lib/json";
 import { getOpenAIAccess, isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
@@ -7,7 +7,7 @@ import { getGitHubAccessToken } from "@/lib/session";
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const COMMIT_SUBJECT_MODEL = "gpt-5.3-codex-spark";
 const COMMIT_SUBJECT_FALLBACK_MODEL = process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna";
-const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Write a concise, one-line git commit subject for the following modified files. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.";
+const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Use the repository tree, README, pull request description, and the unified diffs of the files being committed. Describe these edits, not the whole pull request, unless the edits are the whole change. Write a concise, one-line git commit subject. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.";
 
 type RouteContext = {
   params: Promise<{ source: string[] }>;
@@ -71,7 +71,7 @@ async function requestCommitSubject(access: { accessToken: string; session: { ac
 }
 
 /** Generates a concise git commit subject following Naman's writing style. */
-async function generateCommitSubject(files: CommitFileChange[]): Promise<string> {
+async function generateCommitSubject(source: string[], files: CommitFileChange[], token: string): Promise<string> {
   const fallback = fallbackCommitSubject(files);
 
   let access;
@@ -83,9 +83,15 @@ async function generateCommitSubject(files: CommitFileChange[]): Promise<string>
 
   if (!access) return fallback;
 
-  const summary = files
+  let summary = files
     .map((file) => `File: ${file.path}\nContent preview:\n${file.contents.slice(0, 1_500)}`)
     .join("\n\n---\n\n");
+
+  try {
+    summary = await getCommitSubjectContext(source, files, token);
+  } catch {
+    // Keep the file-preview summary when GitHub context is unavailable.
+  }
 
   const models = [COMMIT_SUBJECT_MODEL, COMMIT_SUBJECT_FALLBACK_MODEL].filter((model, index, list) => list.indexOf(model) === index);
 
@@ -129,7 +135,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
 
   const commitMessage = (isString(body.message) && body.message.trim())
     ? body.message.trim()
-    : await generateCommitSubject(files);
+    : await generateCommitSubject(source, files, accessToken);
 
   try {
     const result = await createCommitAndPush(source, accessToken, files, commitMessage);

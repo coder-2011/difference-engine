@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
+import { createTwoFilesPatch } from "diff";
 import { CALL_DIFF_ANONYMOUS_FILE_LIMIT, CALL_DIFF_FILE_LIMIT, CALL_DIFF_FILE_SIZE_LIMIT, isCallDiffSourcePath } from "@/lib/call-diff-files";
 import { isRecord, isString, type JsonRecord, type JsonValue } from "@/lib/json";
 import { extract } from "tar-stream";
@@ -341,6 +342,13 @@ const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
+const COMMIT_CONTEXT_TREE_LIMIT = 20_000;
+const COMMIT_CONTEXT_README_LIMIT = 8_000;
+const COMMIT_CONTEXT_DESCRIPTION_LIMIT = 8_000;
+const COMMIT_CONTEXT_DIFF_LIMIT = 32_000;
+const COMMIT_CONTEXT_DIFF_FILE_LIMIT = 8_000;
+const README_CANDIDATES = ["README.md", "README", "readme.md", "Readme.md"];
+const PR_STATES_BLOCK = /<!-- pr-states:start -->[\s\S]*?<!-- pr-states:end -->/;
 const REPOSITORY_DATA_EXTENSIONS = new Set(["csv", "done", "jsonl", "log", "sha256"]);
 
 export class GitHubError extends Error {
@@ -1406,6 +1414,66 @@ export async function readRepositoryFiles(source: string[], paths: string[], tok
   }
 
   return { files, revision };
+}
+
+/** Reads one tree blob as text, treating missing or binary files as empty. */
+async function readTreeBlobText(snapshot: RepositorySnapshot, path: string, token: string, sizeLimit: number): Promise<string> {
+  const entry = snapshot.tree.tree.find((candidate) => candidate.type === "blob" && candidate.path === path);
+  if (!entry || (entry.size ?? 0) > sizeLimit) return "";
+
+  try {
+    const blob = await githubRequest<GitBlob>(`/repos/${snapshot.encodedRepository}/git/blobs/${entry.sha}`, token);
+    return decodeGitBlob(blob);
+  } catch (error) {
+    if (error instanceof GitHubError && [404, 409, 422].includes(error.status)) return "";
+    throw error;
+  }
+}
+
+/** Builds the repository tree, README, PR description, and unified edit diffs for a commit-subject request. */
+export async function getCommitSubjectContext(source: string[], files: CommitFileChange[], token: string): Promise<string> {
+  const parsed = parseSource(source);
+  const [snapshot, pullRequest] = await Promise.all([
+    getRepositorySnapshot(parsed, token),
+    parsed.kind === "pull" ? githubRequest<PullRequest>(parsed.apiPath, token) : undefined,
+  ]);
+
+  let treeText = "";
+  for (const entry of snapshot.tree.tree) {
+    if (entry.type !== "blob") continue;
+    if (treeText.length >= COMMIT_CONTEXT_TREE_LIMIT) break;
+    treeText += `${treeText ? "\n" : ""}${entry.path}`;
+  }
+
+  const readmePath = README_CANDIDATES.find((name) => snapshot.tree.tree.some((entry) => entry.type === "blob" && entry.path === name));
+  const readmePromise = readmePath ? readTreeBlobText(snapshot, readmePath, token, COMMIT_CONTEXT_README_LIMIT) : Promise.resolve("");
+  const diffPromises = files.map(async (file) => {
+    const previous = await readTreeBlobText(snapshot, file.path, token, CONTEXT_FILES_LIMIT);
+    return createTwoFilesPatch(file.path, file.path, previous, file.contents);
+  });
+
+  const [readme, patches] = await Promise.all([readmePromise, Promise.all(diffPromises)]);
+  let diffs = "";
+  for (const patch of patches) {
+    const remaining = COMMIT_CONTEXT_DIFF_LIMIT - diffs.length;
+    if (remaining <= 0) break;
+    diffs += `${diffs ? "\n" : ""}${patch.slice(0, Math.min(COMMIT_CONTEXT_DIFF_FILE_LIMIT, remaining))}`;
+  }
+
+  const description = pullRequest
+    ? [`Title: ${pullRequest.title}`, (pullRequest.body ?? "").replace(PR_STATES_BLOCK, "").trim()].filter(Boolean).join("\n").slice(0, COMMIT_CONTEXT_DESCRIPTION_LIMIT)
+    : "";
+
+  return [
+    `Repository: ${parsed.repository}`,
+    `Revision: ${snapshot.revision}`,
+    parsed.kind === "pull" ? `Pull request: ${parsed.repository}#${parsed.value}` : "",
+    description ? `Pull request description:\n${description}` : "",
+    `Files in this commit:\n${files.map((file) => file.path).join("\n")}`,
+    `Repository tree:\n${treeText}${snapshot.tree.truncated ? "\n(GitHub truncated this unusually large tree.)" : ""}`,
+    readmePath && readme ? `README (${readmePath}):\n${readme.slice(0, COMMIT_CONTEXT_README_LIMIT)}` : "",
+    `Edits being committed:\n${diffs || "No textual diffs were available."}`,
+  ].filter(Boolean).join("\n\n");
 }
 
 /** Loads the title, description, author, change totals, and optionally the interactive PR workspace. */
