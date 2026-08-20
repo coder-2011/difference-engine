@@ -407,6 +407,7 @@ export function DiffViewer({
 
       if (isCommandCommit || isCSequenceD) {
         if (reviewViewRef.current === "call-flow" || isReadOnly) return;
+        if (isInput && !isCodeEditor) return;
         event.preventDefault();
         event.stopPropagation();
         if (document.activeElement instanceof HTMLElement) {

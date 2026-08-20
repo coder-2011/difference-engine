@@ -2099,7 +2099,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             aria-label="Annotation"
             onChange={(event) => setAnnotationDraft((current) => current ? { ...current, text: event.target.value } : current)}
             onKeyDown={(event) => {
-              if (event.key !== "Enter" || !event.metaKey || !annotationDraft.text.trim()) return;
+              if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !annotationDraft.text.trim()) return;
               event.preventDefault();
               event.currentTarget.form?.requestSubmit();
             }}
