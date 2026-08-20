@@ -30,6 +30,9 @@ type ActionMessage = {
   text: string;
 };
 
+const CONVERSATION_POLL_MS = 30_000;
+const COMMIT_CONVERSATION_RETRY_MS = 2_500;
+export const PR_WORKSPACE_REFRESH_EVENT = "pr-workspace-refresh";
 const ACTION_MESSAGES = {
   close: "Pull request closed on GitHub.",
   comment: "Comment posted to GitHub.",
@@ -136,6 +139,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [celebrating, setCelebrating] = useState(false);
   const mergeMenuRef = useRef<HTMLDivElement>(null);
   const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
+  const pendingActionRef = useRef<PullRequestAction["action"]>();
+  const refreshGenerationRef = useRef(0);
+  pendingActionRef.current = pendingAction;
   // Keep a preserved client workspace renderable while a deployment adds new conversation fields.
   const reviewThreads = workspace.reviewThreads ?? [];
   const timelineEvents = workspace.timelineEvents ?? [];
@@ -247,6 +253,66 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     mergeMethodTriggerRef.current?.focus();
   }
 
+  /** Replaces the conversation with GitHub's latest workspace without touching in-progress drafts. */
+  function applyWorkspace(nextWorkspace: PullRequestWorkspace): void {
+    const refreshedMergeMethods = nextWorkspace.mergeMethods;
+    setWorkspace(nextWorkspace);
+    setMergeMethod((currentMethod) => refreshedMergeMethods.includes(currentMethod)
+      ? currentMethod
+      : initialMergeMethod(refreshedMergeMethods));
+  }
+
+  /** Reloads the PR conversation from GitHub, ignoring overlapping stale responses. */
+  async function refreshWorkspace(): Promise<void> {
+    if (pendingActionRef.current) return;
+
+    const generation = refreshGenerationRef.current + 1;
+    refreshGenerationRef.current = generation;
+    const path = source.map(encodeURIComponent).join("/");
+
+    try {
+      const response = await fetch(`/api/pull-request/${path}`);
+      // SAFETY: The same-origin pull-request GET route returns this workspace envelope.
+      const result = await response.json() as { error?: string; workspace?: PullRequestWorkspace };
+      if (!response.ok || !result.workspace || generation !== refreshGenerationRef.current || pendingActionRef.current) return;
+      applyWorkspace(result.workspace);
+    } catch {
+      return;
+    }
+  }
+
+  useEffect(() => {
+    let retry = 0;
+
+    /** Reloads the conversation after a local commit lands, then once more after GitHub indexes it. */
+    function handleRefreshEvent(): void {
+      void refreshWorkspace();
+      window.clearTimeout(retry);
+      retry = window.setTimeout(() => void refreshWorkspace(), COMMIT_CONVERSATION_RETRY_MS);
+    }
+
+    window.addEventListener(PR_WORKSPACE_REFRESH_EVENT, handleRefreshEvent);
+    return () => {
+      window.clearTimeout(retry);
+      window.removeEventListener(PR_WORKSPACE_REFRESH_EVENT, handleRefreshEvent);
+    };
+  }, [source]);
+
+  useEffect(() => {
+    /** Keeps the conversation current while this tab is visible. */
+    function poll(): void {
+      if (document.visibilityState !== "visible") return;
+      void refreshWorkspace();
+    }
+
+    const timer = window.setInterval(poll, CONVERSATION_POLL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [source]);
+
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
     setPendingAction(action.action);
@@ -264,11 +330,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
       if (!response.ok || !result.workspace) throw new Error(result.error ?? "GitHub could not complete this action");
 
-      const refreshedMergeMethods = result.workspace.mergeMethods;
-      setWorkspace(result.workspace);
-      setMergeMethod((currentMethod) => refreshedMergeMethods.includes(currentMethod)
-        ? currentMethod
-        : initialMergeMethod(refreshedMergeMethods));
+      applyWorkspace(result.workspace);
       if (result.celebrate) setCelebrating(true);
       // SAFETY: The in-check above verifies that `action.action` is a valid key of `ACTION_MESSAGES`.
       const actionMessage = action.action in ACTION_MESSAGES

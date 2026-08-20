@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
+import { PR_WORKSPACE_REFRESH_EVENT } from "./pull-request-workspace";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
 import type { PullRequestReviewThread, RepositoryFile } from "@/types/github";
@@ -340,6 +341,7 @@ export function DiffViewer({
       editedFilesRef.current.clear();
       setEditedFileCount(0);
       setCommitStatus("committed");
+      if (source[2] === "pull") window.dispatchEvent(new Event(PR_WORKSPACE_REFRESH_EVENT));
       commitStatusTimerRef.current = window.setTimeout(() => setCommitStatus(""), 2000);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Commit failed";

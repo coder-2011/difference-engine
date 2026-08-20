@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { GitHubError, performPullRequestAction } from "@/lib/github";
+import { GitHubError, getPullRequestWorkspace, performPullRequestAction } from "@/lib/github";
 import { isNumber, isRecord, isString, type JsonValue } from "@/lib/json";
 import { isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
@@ -58,6 +58,19 @@ function parsePullRequestAction(value: JsonValue): PullRequestAction | null {
   }
 
   return null;
+}
+
+/** Returns the current GitHub-backed PR conversation without mutating it. */
+export async function GET(request: Request, context: RouteContext): Promise<Response> {
+  const [{ source }, accessToken] = await Promise.all([context.params, getGitHubAccessToken(request)]);
+
+  try {
+    return NextResponse.json({ workspace: await getPullRequestWorkspace(source, accessToken) });
+  } catch (error) {
+    const status = error instanceof GitHubError ? error.status : 500;
+    const message = error instanceof Error ? error.message : "The pull request could not be loaded";
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 /** Proxies one validated PR mutation to GitHub and returns the refreshed canonical workspace. */

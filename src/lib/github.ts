@@ -978,7 +978,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 }
 
 /** Loads the current PR workspace after a client mutation refreshes its canonical GitHub state. */
-export async function getPullRequestWorkspace(source: string[], token: string): Promise<PullRequestWorkspace> {
+export async function getPullRequestWorkspace(source: string[], token?: string): Promise<PullRequestWorkspace> {
   const parsed = pullRequestSource(source);
   const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
   return buildPullRequestWorkspace(parsed, pullRequest, token);
