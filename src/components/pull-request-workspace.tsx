@@ -139,7 +139,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const [celebrating, setCelebrating] = useState(false);
   const mergeMenuRef = useRef<HTMLDivElement>(null);
   const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
-  const pendingActionRef = useRef<PullRequestAction["action"]>();
+  const pendingActionRef = useRef<PullRequestAction["action"] | undefined>(undefined);
   const refreshGenerationRef = useRef(0);
   pendingActionRef.current = pendingAction;
   // Keep a preserved client workspace renderable while a deployment adds new conversation fields.
