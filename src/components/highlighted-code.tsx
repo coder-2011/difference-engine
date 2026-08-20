@@ -3,6 +3,9 @@
 import { getFiletypeFromFileName } from "@pierre/diffs";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { Children, cloneElement, isValidElement, useDeferredValue, useEffect, useState } from "react";
+import { configureDiffHighlighting, highlighterLanguage } from "@/lib/diff-highlighting";
+
+configureDiffHighlighting();
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   bash: "bash",
@@ -16,6 +19,8 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   cu: "cpp",
   cuh: "cpp",
   cuda: "cpp",
+  "cuda-c++": "cpp",
+  "cuda-cpp": "cpp",
   diff: "diff",
   go: "go",
   html: "html",
@@ -71,12 +76,13 @@ async function highlightCode(source: string, language: string): Promise<string> 
   if (cached) return cached;
 
   const { getSharedHighlighter } = await import("@pierre/diffs");
+  const lang = highlighterLanguage(language);
   const highlighter = await getSharedHighlighter({
-    langs: [language],
+    langs: [lang],
     preferredHighlighter: "shiki-js",
     themes: ["pierre-dark"],
   });
-  const html = highlighter.codeToHtml(source, { lang: language, theme: "pierre-dark" });
+  const html = highlighter.codeToHtml(source, { lang, theme: "pierre-dark" });
   if (HIGHLIGHT_CACHE.size >= MAX_CACHE_ENTRIES) {
     const firstKey = HIGHLIGHT_CACHE.keys().next().value;
     if (firstKey) HIGHLIGHT_CACHE.delete(firstKey);
@@ -100,18 +106,18 @@ function supportedLanguage(className: unknown): string | null {
 
   const name = token.toLowerCase();
   const aliased = LANGUAGE_ALIASES[name];
-  if (aliased && aliased !== "text") return aliased;
+  if (aliased && aliased !== "text") return highlighterLanguage(aliased);
 
-  const fromPath = getFiletypeFromFileName(token);
+  const fromPath = highlighterLanguage(getFiletypeFromFileName(token));
   if (fromPath !== "text") return fromPath;
-  const fromExtension = getFiletypeFromFileName(`file.${name}`);
+  const fromExtension = highlighterLanguage(getFiletypeFromFileName(`file.${name}`));
   return fromExtension === "text" ? null : fromExtension;
 }
 
 /** Picks a grammar for unlabeled review fences from distinctive source tokens. */
 function inferredLanguage(source: string): string | null {
   if (/^diff --git |\n@@ [+-]\d/m.test(source) || /^\s*[+-]{3} [ab]\//m.test(source)) return "diff";
-  if (/\bstd::|\bnamespace\s+\w+|^\s*#\s*include\b|\bcuda[A-Z_]\w*|\btemplate\s*</m.test(source)) return "cpp";
+  if (/\bstd::|\bnamespace\s+\w+|^\s*#\s*include\b|\bcuda[A-Z_]\w*|__global__|__device__|__host__|<<<|\btemplate\s*</m.test(source)) return "cpp";
   if (/\bfn\s+\w+|\blet\s+mut\b|\bimpl\s+\w+|\bpub(?:lic)?\s+(?:struct|enum|fn)\b/.test(source)) return "rust";
   if (/\bdef\s+\w+|^\s*from\s+\w+\s+import\b/m.test(source)) return "python";
   if (/\bexport\s+|:\s*(?:string|number|boolean)\b|\binterface\s+\w+/.test(source)) return /<\/|\/>/.test(source) ? "tsx" : "typescript";
