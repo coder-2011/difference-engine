@@ -4280,17 +4280,24 @@ button {
 }
 
 .chat-zoom-value {
-  width: 4ch;
-  min-width: 0;
+  width: 2.75em;
+  min-width: 2.75em;
   padding: 1px 2px;
   border: 1px solid transparent;
   border-radius: 4px;
   outline: 0;
+  appearance: textfield;
   background: transparent;
   color: #958e9d;
   font-family: var(--font-mono);
   font-size: 9px;
   text-align: center;
+}
+
+.chat-zoom-value::-webkit-inner-spin-button,
+.chat-zoom-value::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
 }
 
 .chat-zoom-value:focus {
