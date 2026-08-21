@@ -371,6 +371,13 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     setBodyDraft(undefined);
   }
 
+  /** Submits the existing PR body form when Command-Enter is pressed in its editor. */
+  function submitBodyOnMetaEnter(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key !== "Enter" || !event.metaKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
   return (
     <section className={`pr-workspace ${visibleBody || workspace.canEditBody || workspace.hasMergeConflicts ? "has-description" : ""}`}>
       {celebrating && (
@@ -416,6 +423,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                   autoFocus
                   disabled={Boolean(pendingAction)}
                   onChange={(event) => setBodyDraft(event.target.value)}
+                  onKeyDown={submitBodyOnMetaEnter}
                   spellCheck
                   value={bodyDraft}
                 />
