@@ -1233,6 +1233,21 @@ button {
   border-bottom: 1px solid var(--line-soft);
 }
 
+.pr-merge-conflict {
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid #4a2a32;
+  background: #1a1013;
+  color: #f0b4bd;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.pr-merge-conflict + .markdown-body {
+  padding-top: 10px;
+}
+
 .markdown-body {
   max-height: 280px;
   padding: 5px 16px 12px;

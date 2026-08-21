@@ -971,6 +971,12 @@ function canMergePullRequest(pullRequest: PullRequest, capabilities: PullRequest
   return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft && pullRequest.mergeable === true && ["BEHIND", "CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(capabilities.mergeStateStatus) && capabilities.viewerCanWrite && Boolean(capabilities.mergeMethods.length);
 }
 
+/** True when GitHub has already determined that merge conflicts block this pull request. */
+function hasMergeConflicts(pullRequest: PullRequest, capabilities: PullRequestCapabilities | undefined): boolean {
+  if (pullRequest.merged || pullRequest.state !== "open") return false;
+  return pullRequest.mergeable === false || capabilities?.mergeStateStatus === "DIRTY";
+}
+
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
   const [conversation, commits, timeline, { capabilities, workflowRuns }] = await Promise.all([
@@ -990,6 +996,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     canMarkReady: state === "open" && pullRequest.draft && Boolean(capabilities?.viewerCanUpdate),
     canMerge: canMergePullRequest(pullRequest, capabilities),
     canReview: state === "open" && !pullRequest.locked && Boolean(token),
+    hasMergeConflicts: hasMergeConflicts(pullRequest, capabilities),
     comments: conversation.comments,
     commits: commits.commits,
     commitsUnavailable: commits.unavailable,

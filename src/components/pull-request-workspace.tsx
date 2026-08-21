@@ -122,6 +122,7 @@ function workflowRunTone(status: string, conclusion: string | null): "failed" | 
 /** Explains an open pull request's GitHub state without repeating an available merge action. */
 function openPullRequestState(workspace: PullRequestWorkspace): string | undefined {
   if (workspace.draft) return "Not yet ready for review.";
+  if (workspace.hasMergeConflicts) return "Merge conflicts prevent merging.";
   if (workspace.canMerge) return undefined;
   if (workspace.canManageMerge) return "GitHub is checking merge requirements.";
   if (workspace.hasGitHubAccess) return "You cannot merge this pull request.";
@@ -371,7 +372,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   }
 
   return (
-    <section className={`pr-workspace ${visibleBody || workspace.canEditBody ? "has-description" : ""}`}>
+    <section className={`pr-workspace ${visibleBody || workspace.canEditBody || workspace.hasMergeConflicts ? "has-description" : ""}`}>
       {celebrating && (
         <div className="merge-celebration" aria-hidden="true">
           {CELEBRATION_PARTICLES.map((particle, index) => (
@@ -383,12 +384,13 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         </div>
       )}
 
-      {(visibleBody || workspace.canEditBody) && (
+      {(visibleBody || workspace.canEditBody || workspace.hasMergeConflicts) && (
         <section className="pr-description">
           <div className="pr-description-heading">
             <span>Pull request description</span>
             {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
           </div>
+          {workspace.hasMergeConflicts && <p className="pr-merge-conflict" role="status">Merge conflicts prevent merging.</p>}
           {visibleBody && <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>}
         </section>
       )}
@@ -518,7 +520,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               {workspace.canMarkReady && <button className="ready-review-button" disabled={Boolean(pendingAction)} onClick={() => void runAction({ action: "ready" })} type="button"><GitPullRequest size={13} /> Mark ready for review</button>}
               {workspace.canManageMerge && (
                 <div className="merge-control">
-                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : "GitHub has not made this pull request mergeable yet"} type="button">{MERGE_METHOD_LABELS[mergeMethod]}</button>
+                  <button className="merge-button" disabled={Boolean(pendingAction) || !workspace.canMerge} onClick={() => void runAction({ action: "merge", method: mergeMethod })} title={workspace.canMerge ? undefined : workspace.hasMergeConflicts ? "Merge conflicts prevent merging" : "GitHub has not made this pull request mergeable yet"} type="button">{MERGE_METHOD_LABELS[mergeMethod]}</button>
                   {workspace.mergeMethods.length > 1 && (
                     <div className="merge-method-dropdown" ref={mergeMenuRef}>
                       <button

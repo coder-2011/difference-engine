@@ -111,6 +111,7 @@ export type PullRequestWorkspace = {
   canMarkReady: boolean;
   canMerge: boolean;
   canReview: boolean;
+  hasMergeConflicts: boolean;
   comments: PullRequestComment[];
   commits: PullRequestCommit[];
   commitsUnavailable: boolean;
