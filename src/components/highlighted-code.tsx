@@ -246,7 +246,9 @@ export function HighlightedCode({ block = false, children, className, node, rawP
   const fenceClass = className ?? node?.properties?.className;
   const taggedLanguage = supportedLanguage(fenceClass);
   const isFence = block || Boolean(taggedLanguage);
-  const language = taggedLanguage ?? (isFence && !looksLikeMarkdown(source) ? inferredLanguage(source) : null);
+  // Only raw HTML can be review prose; Markdown fences should always attempt source inference.
+  const rawMarkdownProse = rawPreformattedMarkup && !taggedLanguage && looksLikeMarkdown(source);
+  const language = taggedLanguage ?? (isFence && !rawMarkdownProse ? inferredLanguage(source) : null);
   const cachedTokens = language && source.length <= MAX_HIGHLIGHT_LENGTH
     ? HIGHLIGHT_CACHE.get(`${language}\0${source}`)
     : undefined;
@@ -281,7 +283,7 @@ export function HighlightedCode({ block = false, children, className, node, rawP
     ?? (highlighted && highlighted.source === source && (highlighted.language === language || highlighted.language === "cpp") ? highlighted.tokens : undefined);
 
   if (!isFence) return <code className={className} {...props}>{children}</code>;
-  if (rawPreformattedMarkup && !taggedLanguage && looksLikeMarkdown(source)) return <NestedMarkdown source={source} />;
+  if (rawMarkdownProse) return <NestedMarkdown source={source} />;
 
   return (
     <MarkdownCodeBlock className={classNameText(fenceClass)} source={source}>
