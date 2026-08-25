@@ -3,14 +3,16 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ChevronDown, ChevronUp, Search } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { PullRequestSummary } from "@/types/github";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { cancelPullRequestDiffPreload, preloadPullRequestDiff } from "@/lib/diff-preload";
+import type { PullRequestPage, PullRequestSummary } from "@/types/github";
 
 const INITIAL_COUNT = 6;
 const DATE_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
 
 type PullRequestListProps = {
-  pullRequests: PullRequestSummary[];
+  initialPage?: PullRequestPage;
+  pullRequests?: PullRequestSummary[];
   variant?: "open" | "resolved";
 };
 
@@ -34,10 +36,14 @@ function relativeDate(value: string): string {
   return DATE_FORMAT.format(date);
 }
 
-/** Filters the signed-in user's pull requests, focuses the open filter with G then F, and reveals more than the initial six on demand. */
-export function PullRequestList({ pullRequests, variant = "open" }: PullRequestListProps) {
+/** Filters the signed-in user's pull requests, focuses the open filter with G then F, and loads dashboard pages only on demand. */
+export function PullRequestList({ initialPage, pullRequests: staticPullRequests = [], variant = "open" }: PullRequestListProps) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [loadedPullRequests, setLoadedPullRequests] = useState(initialPage?.pullRequests ?? staticPullRequests);
+  const [nextCursor, setNextCursor] = useState(initialPage?.nextCursor ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastKeyRef = useRef<{ key: string; time: number } | null>(null);
 
@@ -66,6 +72,7 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
     return () => window.removeEventListener("keydown", focusFilter);
   }, [variant]);
 
+  const pullRequests = initialPage ? loadedPullRequests : staticPullRequests;
   const normalizedQuery = query.trim().toLowerCase();
   // Match the fields visible on each card so filtering stays predictable.
   const filteredPullRequests = normalizedQuery
@@ -78,7 +85,9 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
   const visiblePullRequests = expanded
     ? filteredPullRequests
     : filteredPullRequests.slice(0, INITIAL_COUNT);
-  const hiddenCount = filteredPullRequests.length - INITIAL_COUNT;
+  const hiddenCount = Math.max(0, filteredPullRequests.length - INITIAL_COUNT);
+  const canLoadMore = variant === "open" && nextCursor !== null;
+  const canShowMore = hiddenCount > 0 || canLoadMore;
 
   /** Updates the filter and returns the list to its compact state. */
   function handleQueryChange(value: string): void {
@@ -86,9 +95,56 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
     setExpanded(false);
   }
 
-  /** Toggles between the initial six results and the complete filtered list. */
-  function toggleExpanded(): void {
-    setExpanded((value) => !value);
+  /** Fetches the next cursor page only after the user has reached the loaded dashboard results. */
+  async function loadMore(): Promise<void> {
+    if (!nextCursor || loadingMore) return;
+
+    setLoadingMore(true);
+    setLoadMoreError(false);
+
+    try {
+      const response = await fetch(`/api/pull-requests?after=${encodeURIComponent(nextCursor)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Pull requests could not be loaded");
+
+      const page = await response.json() as PullRequestPage;
+      setLoadedPullRequests((previous) => {
+        const viewerPaths = new Set(previous.map((pullRequest) => pullRequest.viewerPath));
+        return [...previous, ...page.pullRequests.filter((pullRequest) => !viewerPaths.has(pullRequest.viewerPath))];
+      });
+      setNextCursor(page.nextCursor);
+    } catch {
+      setLoadMoreError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  /** Expands locally available cards first, then retrieves another page when needed. */
+  function showMore(): void {
+    if (!expanded && hiddenCount > 0) {
+      setExpanded(true);
+      return;
+    }
+
+    if (canLoadMore) {
+      setExpanded(true);
+      void loadMore();
+      return;
+    }
+
+    setExpanded(false);
+  }
+
+  /** Begins loading the hovered pull request's raw diff before navigation. */
+  function preloadDiff(event: SyntheticEvent<HTMLAnchorElement>): void {
+    const viewerPath = event.currentTarget.dataset.viewerPath;
+    if (viewerPath) preloadPullRequestDiff(viewerPath);
+  }
+
+  /** Stops a speculative diff request once the pointer leaves its pull request card. */
+  function cancelPreloadedDiff(event: SyntheticEvent<HTMLAnchorElement>): void {
+    const viewerPath = event.currentTarget.dataset.viewerPath;
+    if (viewerPath) cancelPullRequestDiffPreload(viewerPath);
   }
 
   return (
@@ -112,7 +168,16 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
       {visiblePullRequests.length ? (
         <div className="pull-grid">
           {visiblePullRequests.map((pullRequest) => (
-            <Link className={`pull-card ${pullRequest.status}`} href={pullRequest.viewerPath} key={`${pullRequest.repository}#${pullRequest.number}`}>
+            <Link
+              className={`pull-card ${pullRequest.status}`}
+              data-viewer-path={pullRequest.viewerPath}
+              href={pullRequest.viewerPath}
+              key={`${pullRequest.repository}#${pullRequest.number}`}
+              onFocus={preloadDiff}
+              onMouseEnter={preloadDiff}
+              onMouseLeave={cancelPreloadedDiff}
+              prefetch={false}
+            >
               <div className="pull-card-top">
                 <span className="repo-name">{pullRequest.repository}</span>
                 <span className="pull-number">#{pullRequest.number}</span>
@@ -140,10 +205,10 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
         <div className="pull-filter-empty">No pull requests match “{query}”.</div>
       )}
 
-      {filteredPullRequests.length > INITIAL_COUNT && (
-        <button className="pull-more" type="button" onClick={toggleExpanded}>
-          {expanded ? "show less" : `load next ${hiddenCount}`}
-          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      {canShowMore && (
+        <button aria-busy={loadingMore} className="pull-more" disabled={loadingMore} type="button" onClick={showMore}>
+          {loadingMore ? "loading more" : loadMoreError ? "retry loading" : !expanded && hiddenCount > 0 ? `load next ${hiddenCount}` : canLoadMore ? "load more" : "show less"}
+          {expanded && !canLoadMore ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       )}
     </div>

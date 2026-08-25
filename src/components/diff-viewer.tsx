@@ -12,6 +12,7 @@ import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { configureDiffHighlighting } from "@/lib/diff-highlighting";
+import { takePreloadedDiff } from "@/lib/diff-preload";
 import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { PR_WORKSPACE_REFRESH_EVENT } from "./pull-request-workspace";
@@ -65,7 +66,6 @@ type DiffViewerStyle = CSSProperties & { "--diffs-font-size": string };
 const EMPTY_FILES: FileDiffMetadata[] = [];
 const EMPTY_REPOSITORY_FILES: RepositoryFile[] = [];
 const EMPTY_REVIEW_THREADS: PullRequestReviewThread[] = [];
-const CALL_FLOW_EAGER_LOAD_LIMIT = 100_000;
 // Keep the selected client-side review surface shareable without changing the server route.
 const REVIEW_TAB_HASH = { "call-flow": "#call-flow", files: "#files-changed" } as const;
 const DEFAULT_CODE_FONT_SIZE = 13;
@@ -215,9 +215,6 @@ export function DiffViewer({
   const isReadOnly = isMerged || isClosed || isCommit || isCompare;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
   const sourceKey = source.join("\0");
-  const changedLineCount = additions !== undefined && deletions !== undefined ? additions + deletions : undefined;
-  // Background analysis stays bounded by the PR's known changed-line total.
-  const eagerCallFlow = callDiffAvailable && changedLineCount !== undefined && changedLineCount <= CALL_FLOW_EAGER_LOAD_LIMIT;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -247,7 +244,7 @@ export function DiffViewer({
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
-  const callFlowLoaded = eagerCallFlow || loadedCallFlowSource === sourceKey;
+  const callFlowLoaded = loadedCallFlowSource === sourceKey;
 
   useEffect(() => {
     editedFilesRef.current.clear();
@@ -513,6 +510,7 @@ export function DiffViewer({
     const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
     const path = source.map(encodeURIComponent).join("/");
     const preloadedLanguages = new Set<string>();
+    let disposed = false;
 
     /** Starts grammar preloads across all unique languages present in parsed files. */
     function preloadInitialGrammar<T extends { lang?: FileDiffMetadata["lang"]; name: string }>(files: T[]): void {
@@ -561,11 +559,39 @@ export function DiffViewer({
       setError("The diff could not be parsed");
     }
 
+    /** Transfers a hovered response stream when possible, then falls back to the worker's normal fetch. */
+    function startParser(stream?: ReadableStream<Uint8Array>): void {
+      const request = { cacheKey: source.join("/"), repository, url: `/api/diff/${path}` };
+      if (!stream) {
+        worker.postMessage(request);
+        return;
+      }
+
+      try {
+        worker.postMessage({ ...request, stream }, [stream]);
+      } catch {
+        void stream.cancel().catch(() => {});
+        worker.postMessage(request);
+      }
+    }
+
     worker.addEventListener("message", handleMessage);
     worker.addEventListener("error", handleError);
-    worker.postMessage({ cacheKey: source.join("/"), repository, url: `/api/diff/${path}` });
+    const preloadedDiff = repository ? null : takePreloadedDiff(source);
+    if (preloadedDiff) {
+      void preloadedDiff.then((stream) => {
+        if (disposed) {
+          void stream?.cancel().catch(() => {});
+          return;
+        }
+        startParser(stream ?? undefined);
+      });
+    } else {
+      startParser();
+    }
 
     return () => {
+      disposed = true;
       worker.terminate();
     };
   }, [filePath, repository, source]);

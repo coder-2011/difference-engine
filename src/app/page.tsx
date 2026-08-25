@@ -5,13 +5,20 @@ import { Brand } from "@/components/brand";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestList } from "@/components/pull-request-list";
 import { UrlForm } from "@/components/url-form";
-import { isGitHubConnected, listOpenPullRequests, listRecentPullRequests } from "@/lib/github";
+import { isGitHubConnected, listOpenPullRequestPage, listRecentPullRequests } from "@/lib/github";
 import { isOpenAIConnected } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
+import type { PullRequestPage } from "@/types/github";
 import { login, logout, openSource } from "./actions";
 
 type HomeProps = {
   searchParams: Promise<{ error?: string }>;
+};
+
+const EMPTY_PULL_REQUEST_PAGE: PullRequestPage = {
+  nextCursor: null,
+  pullRequests: [],
+  totalCount: 0,
 };
 
 /** Renders the URL launcher and, when authenticated, the user's active and recent PR inbox. */
@@ -24,12 +31,14 @@ export default async function Home({ searchParams }: HomeProps) {
   ]);
   const githubConnected = await isGitHubConnected(accessToken);
   const githubToken = githubConnected ? accessToken : undefined;
-  const [pullRequests, recentPullRequests] = githubToken
+  const [pullRequestPage, recentPullRequests] = githubToken
     ? await Promise.all([
-        listOpenPullRequests(githubToken).catch(() => []),
+        listOpenPullRequestPage(githubToken).catch(() => EMPTY_PULL_REQUEST_PAGE),
         listRecentPullRequests(githubToken).catch(() => []),
       ])
-    : [[], []];
+    : [EMPTY_PULL_REQUEST_PAGE, []];
+  // Remount the client inbox when a refresh changes the first dashboard page.
+  const pullRequestListKey = pullRequestPage.pullRequests.map((pullRequest) => `${pullRequest.viewerPath}:${pullRequest.updatedAt}`).join("|");
 
   return (
     <main className="home-shell">
@@ -66,11 +75,11 @@ export default async function Home({ searchParams }: HomeProps) {
           <section className="pull-section">
             <div className="section-heading">
               <h2>Open pull requests</h2>
-              <span className="count-pill">{pullRequests.length}</span>
+              <span className="count-pill">{pullRequestPage.totalCount}</span>
             </div>
 
-            {pullRequests.length ? (
-              <PullRequestList pullRequests={pullRequests} />
+            {pullRequestPage.pullRequests.length ? (
+              <PullRequestList initialPage={pullRequestPage} key={pullRequestListKey} />
             ) : (
               <div className="empty-state">
                 <GitPullRequest size={22} />

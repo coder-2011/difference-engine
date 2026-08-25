@@ -11,6 +11,7 @@ import type {
   PullRequestComment,
   PullRequestCommit,
   PullRequestMergeMethod,
+  PullRequestPage,
   PullRequestReviewThread,
   PullRequestSummary,
   PullRequestTimelineEvent,
@@ -24,6 +25,8 @@ const RAW_GITHUB = "https://raw.githubusercontent.com";
 const COMMIT_STATS_REQUEST_CONCURRENCY = 8;
 const ANONYMOUS_CACHE_TTL = 60_000;
 const ANONYMOUS_CACHE_LIMIT = 300;
+const DASHBOARD_PULL_REQUEST_PAGE_SIZE = 24;
+const OPEN_PULL_REQUESTS_QUERY = "is:pr is:open involves:@me sort:updated-desc";
 const anonymousRequestCache = new Map<string, { body: unknown; expires: number }>();
 
 type GitHubUser = {
@@ -45,6 +48,7 @@ type SearchPullRequest = {
 
 type PullRequestSearch = {
   search: {
+    issueCount: number;
     nodes: SearchPullRequest[];
     pageInfo: { endCursor: string | null; hasNextPage: boolean };
   };
@@ -479,50 +483,56 @@ async function githubGraphql<T>(token: string, query: string, variables: JsonRec
   return result.data;
 }
 
-/** Searches pull requests with the card-level change totals unavailable from GitHub's REST search. */
+/** Reads one cursor page of PR cards, keeping the dashboard's first render bounded. */
+async function searchPullRequestPage(token: string, query: string, first: number, after: string | null): Promise<PullRequestSearch["search"]> {
+  const headers = githubHeaders("application/vnd.github+json", token);
+  headers.set("Content-Type", "application/json");
+  const response = await fetch(`${GITHUB_API}/graphql`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      query: `query PullRequests($query: String!, $first: Int!, $after: String) {
+        search(query: $query, type: ISSUE, first: $first, after: $after) {
+          issueCount
+          pageInfo { endCursor hasNextPage }
+          nodes {
+            ... on PullRequest {
+              additions
+              author { avatarUrl login }
+              closedAt
+              deletions
+              isDraft
+              number
+              repository { nameWithOwner }
+              title
+              updatedAt
+            }
+          }
+        }
+      }`,
+      variables: { after, first, query },
+    }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) throw new GitHubError("GitHub request failed", response.status);
+  // SAFETY: The static search query requests exactly the PullRequestSearch fields consumed below.
+  const result = await response.json() as GraphqlResponse<PullRequestSearch>;
+  if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
+  return result.data.search;
+}
+
+/** Searches every requested PR page for callers such as AI selection that need a larger candidate set. */
 async function searchPullRequests(token: string, query: string, limit = 1_000): Promise<SearchPullRequest[]> {
   const pullRequests: SearchPullRequest[] = [];
   let cursor: string | null = null;
 
   while (pullRequests.length < limit) {
     const first = Math.min(100, limit - pullRequests.length);
-    const headers = githubHeaders("application/vnd.github+json", token);
-    headers.set("Content-Type", "application/json");
-    const response = await fetch(`${GITHUB_API}/graphql`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        query: `query PullRequests($query: String!, $first: Int!, $after: String) {
-          search(query: $query, type: ISSUE, first: $first, after: $after) {
-            pageInfo { endCursor hasNextPage }
-            nodes {
-              ... on PullRequest {
-                additions
-                author { avatarUrl login }
-                closedAt
-                deletions
-                isDraft
-                number
-                repository { nameWithOwner }
-                title
-                updatedAt
-              }
-            }
-          }
-        }`,
-        variables: { after: cursor, first, query },
-      }),
-      cache: "no-store",
-    });
-
-    if (!response.ok) throw new GitHubError("GitHub request failed", response.status);
-    // SAFETY: The static search query requests exactly the PullRequestSearch fields consumed below.
-    const result = await response.json() as GraphqlResponse<PullRequestSearch>;
-    if (!result.data || result.errors?.length) throw new GitHubError("GitHub request failed", 502);
-
-    pullRequests.push(...result.data.search.nodes);
-    cursor = result.data.search.pageInfo.endCursor;
-    if (!result.data.search.pageInfo.hasNextPage || !cursor) break;
+    const page = await searchPullRequestPage(token, query, first, cursor);
+    pullRequests.push(...page.nodes);
+    cursor = page.pageInfo.endCursor;
+    if (!page.pageInfo.hasNextPage || !cursor) break;
   }
 
   return pullRequests;
@@ -530,8 +540,19 @@ async function searchPullRequests(token: string, query: string, limit = 1_000): 
 
 /** Returns the most recently updated open pull requests involving the signed-in user. */
 export async function listOpenPullRequests(token: string): Promise<PullRequestSummary[]> {
-  const pullRequests = await searchPullRequests(token, "is:pr is:open involves:@me sort:updated-desc");
+  const pullRequests = await searchPullRequests(token, OPEN_PULL_REQUESTS_QUERY);
   return pullRequests.map((pullRequest) => summarizePullRequest(pullRequest, "open"));
+}
+
+/** Returns one small PR inbox page so the dashboard does not wait for every open result. */
+export async function listOpenPullRequestPage(token: string, after: string | null = null): Promise<PullRequestPage> {
+  const page = await searchPullRequestPage(token, OPEN_PULL_REQUESTS_QUERY, DASHBOARD_PULL_REQUEST_PAGE_SIZE, after);
+
+  return {
+    nextCursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null,
+    pullRequests: page.nodes.map((pullRequest) => summarizePullRequest(pullRequest, "open")),
+    totalCount: page.issueCount,
+  };
 }
 
 /** Returns a small, newest-first history of merged and unmerged closed pull requests involving the user. */

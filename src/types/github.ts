@@ -12,6 +12,12 @@ export type PullRequestSummary = {
   viewerPath: string;
 };
 
+export type PullRequestPage = {
+  nextCursor: string | null;
+  pullRequests: PullRequestSummary[];
+  totalCount: number;
+};
+
 export type DiffDocument = {
   additions?: number;
   author: string;
