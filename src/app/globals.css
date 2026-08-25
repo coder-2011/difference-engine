@@ -527,7 +527,8 @@ button {
   font-size: 12px;
 }
 
-.url-key-hint {
+.url-key-hint,
+.pull-filter-shortcut kbd {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -545,7 +546,8 @@ button {
   line-height: 1;
 }
 
-.url-field:focus-within .url-key-hint {
+.url-field:focus-within .url-key-hint,
+.pull-filter:focus-within .pull-filter-shortcut {
   visibility: hidden;
 }
 
@@ -667,6 +669,12 @@ button {
 
 .pull-filter input::placeholder {
   color: #66636c;
+}
+
+.pull-filter-shortcut {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
 }
 
 .pull-filter span {

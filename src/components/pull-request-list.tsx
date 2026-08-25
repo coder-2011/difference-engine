@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ChevronDown, ChevronUp, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PullRequestSummary } from "@/types/github";
 
 const INITIAL_COUNT = 6;
@@ -13,6 +13,15 @@ type PullRequestListProps = {
   pullRequests: PullRequestSummary[];
   variant?: "open" | "resolved";
 };
+
+/** True when the key event originated in a field that should keep the typed character. */
+function isEditingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.isContentEditable
+      || target instanceof HTMLInputElement
+      || target instanceof HTMLTextAreaElement
+      || target instanceof HTMLSelectElement);
+}
 
 /** Formats a GitHub timestamp into the compact date used on pull request cards. */
 function relativeDate(value: string): string {
@@ -25,10 +34,37 @@ function relativeDate(value: string): string {
   return DATE_FORMAT.format(date);
 }
 
-/** Filters the signed-in user's pull requests and reveals more than the initial six on demand. */
+/** Filters the signed-in user's pull requests, focuses the open filter with G then F, and reveals more than the initial six on demand. */
 export function PullRequestList({ pullRequests, variant = "open" }: PullRequestListProps) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lastKeyRef = useRef<{ key: string; time: number } | null>(null);
+
+  useEffect(() => {
+    if (variant !== "open") return;
+
+    /** Focuses the open-PR filter when F follows G outside an editor. */
+    function focusFilter(event: KeyboardEvent): void {
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditingTarget(event.target)) {
+        lastKeyRef.current = null;
+        return;
+      }
+
+      const now = Date.now();
+      const lastKey = lastKeyRef.current;
+      lastKeyRef.current = { key: event.key.toLowerCase(), time: now };
+      const isF = event.key === "f" || event.key === "F" || event.code === "KeyF";
+      if (!isF || lastKey?.key !== "g" || now - lastKey.time >= 1_000) return;
+
+      event.preventDefault();
+      inputRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", focusFilter);
+    return () => window.removeEventListener("keydown", focusFilter);
+  }, [variant]);
 
   const normalizedQuery = query.trim().toLowerCase();
   // Match the fields visible on each card so filtering stays predictable.
@@ -61,12 +97,14 @@ export function PullRequestList({ pullRequests, variant = "open" }: PullRequestL
         <label className="pull-filter">
           <Search size={13} aria-hidden="true" />
           <input
+            ref={inputRef}
             type="search"
             value={query}
             onChange={(event) => handleQueryChange(event.target.value)}
             placeholder="filter repos + titles..."
             aria-label="Filter open pull requests"
           />
+          <span className="pull-filter-shortcut" aria-hidden="true"><kbd>G</kbd><kbd>F</kbd></span>
           {query && <span>{filteredPullRequests.length}</span>}
         </label>
       )}
