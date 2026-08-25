@@ -59,11 +59,6 @@ export default async function Home({ searchParams }: HomeProps) {
       <section className="hero">
         <UrlForm action={openSource} />
         {params.error && <p className="form-error">{params.error}</p>}
-
-        <div className="replace-hint" aria-label="Replace github.com with diffs.naman.world">
-          <code className="removed"><b>−</b><span className="path">github.com/<strong>org/repo/pull/123</strong></span></code>
-          <code className="added"><b>+</b><span className="path">diffs.naman.world/<strong>org/repo/pull/123</strong></span></code>
-        </div>
       </section>
 
       {session?.user && githubConnected ? (

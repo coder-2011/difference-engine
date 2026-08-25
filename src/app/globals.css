@@ -580,66 +580,6 @@ button {
   font-size: 12px;
 }
 
-.replace-hint {
-  margin-top: 11px;
-  overflow: hidden;
-  border: 1px solid #29292d;
-  border-radius: 4px;
-  background: #0e0e10;
-}
-
-.replace-hint code {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  min-height: 31px;
-  align-items: center;
-  padding: 0 12px;
-  color: #75727b;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.replace-hint code + code {
-  border-top: 1px solid #1e1e21;
-}
-
-.replace-hint .path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.replace-hint code b {
-  font-weight: 550;
-}
-
-.replace-hint code strong {
-  color: inherit;
-  font-weight: 500;
-}
-
-.replace-hint .removed {
-  background: rgb(105 34 29 / 0.035);
-}
-
-.replace-hint .removed b {
-  color: #c76d61;
-}
-
-.replace-hint .removed strong {
-  color: #c88c7e;
-}
-
-.replace-hint .added {
-  background: rgb(88 115 39 / 0.035);
-}
-
-.replace-hint .added b,
-.replace-hint .added strong {
-  color: #9bbd5a;
-}
-
 .pull-section {
   padding: 0 24px 36px;
 }
@@ -4685,8 +4625,7 @@ button {
     padding: 0 12px;
   }
 
-  .account-name,
-  .replace-hint {
+  .account-name {
     display: none;
   }
 
