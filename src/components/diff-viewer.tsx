@@ -221,7 +221,7 @@ export function DiffViewer({
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
-  const [split, setSplit] = useState(true);
+  const [split, setSplit] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
@@ -825,10 +825,6 @@ export function DiffViewer({
     diffIndicators: "bars",
     enableLineSelection: repository && (!editMode || isReadOnly),
     loadDiffFiles: repository ? undefined : loadDiffFiles,
-    // Keep even one unchanged line behind the same user-controlled expander.
-    collapsedContextThreshold: 0,
-    // A clicked unchanged-lines separator should reveal its entire collapsed range.
-    expansionLineCount: Number.POSITIVE_INFINITY,
     hunkSeparators: "line-info",
     lineDiffType: "word-alt",
     overflow: "scroll",
@@ -878,17 +874,7 @@ export function DiffViewer({
       }
     },
     useTokenTransformer: true,
-    unsafeCSS: `
-      [data-expand-index] [data-expand-button] [data-icon] { display: none; }
-      [data-expand-index] [data-expand-button]::before {
-        content: "▸";
-        font-size: 20px;
-        line-height: 1;
-        transition: transform 100ms ease-out;
-      }
-      [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
-      ${INLINE_COMMENT_MARKER_CSS}
-    `,
+    unsafeCSS: INLINE_COMMENT_MARKER_CSS,
   }), [editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
