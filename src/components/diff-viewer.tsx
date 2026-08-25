@@ -882,6 +882,8 @@ export function DiffViewer({
       [data-expand-index] [data-expand-button] [data-icon] { display: none; }
       [data-expand-index] [data-expand-button]::before {
         content: "▸";
+        font-size: 20px;
+        line-height: 1;
         transition: transform 100ms ease-out;
       }
       [data-expand-index] [data-expand-button]:active::before { transform: rotate(90deg); }
