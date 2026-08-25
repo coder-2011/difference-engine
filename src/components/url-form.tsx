@@ -1,6 +1,7 @@
 "use client";
 
 import { CornerDownLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 type UrlFormProps = {
@@ -18,7 +19,9 @@ function isEditingTarget(target: EventTarget | null): boolean {
 
 /** Launches a GitHub URL or pull request request, with T focusing the field immediately. */
 export function UrlForm({ action }: UrlFormProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastRefreshRef = useRef(0);
 
   useEffect(() => {
     /** Focuses the launcher as soon as T is pressed outside another editor. */
@@ -34,6 +37,28 @@ export function UrlForm({ action }: UrlFormProps) {
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
+
+  useEffect(() => {
+    /** Refreshes the server-rendered PR inbox after the user returns to the dashboard. */
+    function refreshPullRequests(): void {
+      if (document.visibilityState !== "visible") return;
+
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 1_000) return;
+
+      lastRefreshRef.current = now;
+      router.refresh();
+    }
+
+    window.addEventListener("focus", refreshPullRequests);
+    window.addEventListener("pageshow", refreshPullRequests);
+    document.addEventListener("visibilitychange", refreshPullRequests);
+    return () => {
+      window.removeEventListener("focus", refreshPullRequests);
+      window.removeEventListener("pageshow", refreshPullRequests);
+      document.removeEventListener("visibilitychange", refreshPullRequests);
+    };
+  }, [router]);
 
   return (
     <form className="url-form" action={action}>
