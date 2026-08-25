@@ -16,10 +16,19 @@ function modelOutputText(value: JsonValue): string {
   return value.output.flatMap((item: JsonValue) => {
     if (!isRecord(item) || !Array.isArray(item.content)) return [];
     return item.content.flatMap((content: JsonValue) => {
-      if (!isRecord(content)) return [];
+      if (!isRecord(content) || content.type !== "output_text") return [];
       return isString(content.text) ? [content.text] : [];
     });
   }).join("").trim();
+}
+
+/** Accepts the one returned dashboard path while tolerating harmless Markdown wrappers. */
+function selectedViewerPath(value: JsonValue, paths: ReadonlySet<string>): string | null {
+  const output = modelOutputText(value)
+    .replace(/^```(?:text)?\s*|\s*```$/g, "")
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "");
+  return paths.has(output) ? output : null;
 }
 
 /** Uses the lightweight ChatGPT model to select one exact pull request from the signed-in user's dashboard. */
@@ -33,6 +42,8 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
     listRecentPullRequests(githubToken),
   ]).then((groups) => groups.flat().slice(0, 200));
   const paths = new Set(candidates.map((pullRequest) => pullRequest.viewerPath));
+  if (paths.size === 0) return null;
+
   const response = await fetch(CODEX_RESPONSES_URL, {
     method: "POST",
     headers: {
@@ -51,6 +62,9 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
           text: `Request: ${value}\n\nCandidates:\n${candidates.map(({ repository, number, status, title, updatedAt, viewerPath }) => JSON.stringify({ repository, number, status, title, updatedAt, viewerPath })).join("\n")}`,
         }],
       }],
+      parallel_tool_calls: false,
+      reasoning: { effort: "low" },
+      service_tier: "priority",
       store: false,
       stream: false,
       tools: [],
@@ -59,8 +73,7 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
   });
 
   if (!response.ok) return null;
-  const viewerPath = modelOutputText(await response.json());
-  return paths.has(viewerPath) ? viewerPath : null;
+  return selectedViewerPath(await response.json(), paths);
 }
 
 /** Restricts the post-login destination to an internal application path. */
