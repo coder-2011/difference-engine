@@ -20,7 +20,11 @@ import type {
 } from "@/types/github";
 
 const GITHUB_API = "https://api.github.com";
+const RAW_GITHUB = "https://raw.githubusercontent.com";
 const COMMIT_STATS_REQUEST_CONCURRENCY = 8;
+const ANONYMOUS_CACHE_TTL = 60_000;
+const ANONYMOUS_CACHE_LIMIT = 300;
+const anonymousRequestCache = new Map<string, { body: unknown; expires: number }>();
 
 type GitHubUser = {
   avatar_url: string;
@@ -398,10 +402,25 @@ async function githubResponse(path: string, token?: string, method = "GET", body
 
 /** Performs a typed GitHub API request with optional private-repository access. */
 async function githubRequest<T>(path: string, token?: string): Promise<T> {
-  const response = await githubResponse(path, token);
+  if (token) return githubResponse(path, token).then((response) => response.json() as Promise<T>);
 
-  // SAFETY: Each caller supplies the response type for its fixed GitHub endpoint.
-  return response.json() as Promise<T>;
+  // Anonymous quota is shared and tiny, so public responses are reused briefly and served
+  // stale when GitHub starts rejecting requests.
+  const cached = anonymousRequestCache.get(path);
+  if (cached && cached.expires > Date.now()) return cached.body as T;
+
+  try {
+    const body = (await githubResponse(path).then((response) => response.json())) as T;
+    anonymousRequestCache.set(path, { body, expires: Date.now() + ANONYMOUS_CACHE_TTL });
+    if (anonymousRequestCache.size > ANONYMOUS_CACHE_LIMIT) {
+      const oldest = anonymousRequestCache.keys().next().value;
+      if (oldest !== undefined) anonymousRequestCache.delete(oldest);
+    }
+    return body;
+  } catch (error) {
+    if (isRateLimitError(error) && cached) return cached.body as T;
+    throw error;
+  }
 }
 
 /** Confirms GitHub authentication while treating temporary API failures as an unknown, not a logout. */
@@ -603,6 +622,10 @@ function parseSource(source: string[]): ParsedSource {
       repository,
       value: "",
     };
+  }
+  // GitHub PR, commit, and compare URLs often keep extra tabs after the identifier.
+  if (parsedKind && value && source.length > 4) {
+    return parseSource(source.slice(0, 4));
   }
   if (source.length !== 4 || !value || !parsedKind) {
     throw new GitHubError("This GitHub URL is not supported", 400);
@@ -1662,8 +1685,9 @@ export async function getDiffResponse(source: string[], token?: string): Promise
   if (response.ok && response.body) return diffResponse(response.body);
 
   // GitHub's REST media type rejects public diffs above 300 files, while its
-  // streaming web endpoint still serves them in full.
-  if (response.status === 406) {
+  // streaming web endpoint still serves them in full. The same endpoint keeps
+  // public reviews loadable when the anonymous API quota is spent.
+  if (response.status === 406 || (!token && (response.status === 403 || response.status === 429))) {
     const publicDiffUrl = `https://github.com/${parsed.repository}/${parsed.kind}/${encodeURIComponent(parsed.value)}.diff`;
     const publicResponse = await fetch(publicDiffUrl, {
       cache: "no-store",
@@ -1716,16 +1740,67 @@ function requireRepositoryFilePath(path: string, label: string): string {
   return normalized;
 }
 
+type DiffRevisionPair = { encodedHeadRepository: string; fromRef: string; toRef: string };
+
+/** Keeps anonymous pull-request lookups so expanding hunks never burns fresh quota per click. */
+const REVISION_PAIR_CACHE_TTL = 10 * 60 * 1000;
+const revisionPairCache = new Map<string, { expires: number; pair: DiffRevisionPair }>();
+
+/** Reads the public PR comparison page when the unauthenticated REST API is rate-limited. */
+async function getPublicPullRequestRevisionPair(parsed: ReturnType<typeof parseSource>): Promise<DiffRevisionPair> {
+  const response = await fetch(`https://github.com/${parsed.encodedRepository}/pull/${encodeURIComponent(parsed.value)}/files`, {
+    cache: "no-store",
+  });
+  if (!response.ok) throw new GitHubError("The pull request revisions could not be loaded", response.status);
+
+  const html = await response.text();
+  // The comparison page includes the exact base/head SHAs used to render its diff, including fork heads.
+  const fromRef = html.match(/[?&]base_sha=([0-9a-f]{40})/)?.[1];
+  const toRef = html.match(/"headSha":"([0-9a-f]{40})"/)?.[1] ?? html.match(/[?&]sha2=([0-9a-f]{40})/)?.[1];
+  const headOwner = html.match(/"headRepositoryOwnerLogin":"([^"]+)"/)?.[1];
+  const headName = html.match(/"headRepositoryName":"([^"]+)"/)?.[1];
+  if (!fromRef || !toRef) throw new GitHubError("The pull request revisions could not be loaded", 502);
+
+  return {
+    encodedHeadRepository: headOwner && headName ? `${encodeURIComponent(headOwner)}/${encodeURIComponent(headName)}` : parsed.encodedRepository,
+    fromRef,
+    toRef,
+  };
+}
+
 /** Resolves the before/after revisions Pierre needs to hydrate a patch-parsed diff. */
-async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token?: string): Promise<{ encodedHeadRepository: string; fromRef: string; toRef: string }> {
+async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token?: string): Promise<DiffRevisionPair> {
   if (parsed.kind === "pull") {
-    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const headRepository = pullRequest.head.repo?.full_name ?? parsed.repository;
-    return {
-      encodedHeadRepository: headRepository.split("/").map(encodeURIComponent).join("/"),
-      fromRef: pullRequest.base.sha,
-      toRef: pullRequest.head.sha,
-    };
+    const cacheKey = `pull:${parsed.apiPath}`;
+    const cached = token ? undefined : revisionPairCache.get(cacheKey);
+    if (cached && cached.expires > Date.now()) return cached.pair;
+
+    try {
+      const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+      const headRepository = pullRequest.head.repo?.full_name ?? parsed.repository;
+      const pair = {
+        encodedHeadRepository: headRepository.split("/").map(encodeURIComponent).join("/"),
+        fromRef: pullRequest.base.sha,
+        toRef: pullRequest.head.sha,
+      };
+      if (!token) {
+        revisionPairCache.set(cacheKey, { expires: Date.now() + REVISION_PAIR_CACHE_TTL, pair });
+        if (revisionPairCache.size > 200) {
+          const oldest = revisionPairCache.keys().next().value;
+          if (oldest !== undefined) revisionPairCache.delete(oldest);
+        }
+      }
+      return pair;
+    } catch (error) {
+      // A spent anonymous quota should not dead-end expansion while a recent lookup exists.
+      if (!token && isRateLimitError(error) && cached) return cached.pair;
+      if (!token && isRateLimitError(error)) {
+        const pair = await getPublicPullRequestRevisionPair(parsed);
+        revisionPairCache.set(cacheKey, { expires: Date.now() + REVISION_PAIR_CACHE_TTL, pair });
+        return pair;
+      }
+      throw error;
+    }
   }
 
   if (parsed.kind === "compare") {
@@ -1744,20 +1819,62 @@ async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token
   throw new GitHubError("Full file contents are only loaded for pull requests, comparisons, and commits", 400);
 }
 
-/** Reads one textual GitHub file at a revision, failing closed for binaries and oversized blobs. */
-async function getTextFileAtRevision(encodedRepository: string, path: string, ref: string, token?: string): Promise<string> {
-  const file = await githubRequest<{ content?: string; encoding?: string; size?: number; type?: string }>(
-    `/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`,
-    token,
-  );
-  if (file.type === "dir") throw new GitHubError("That path is a directory", 400);
-  if ((file.size ?? 0) > EDITABLE_FILE_SIZE_LIMIT || file.encoding !== "base64" || !isString(file.content)) {
-    throw new GitHubError("This file is too large to load for editing", 413);
-  }
-
-  const text = Buffer.from(file.content.replaceAll("\n", ""), "base64").toString("utf8");
+/** Decodes one raw file payload, failing closed for binary content. */
+function decodeTextPayload(payload: Buffer): string {
+  const text = payload.toString("utf8");
   if (text.includes("\0")) throw new GitHubError("Binary files cannot be edited", 415);
   return text;
+}
+
+function isRateLimitError(error: unknown): error is GitHubError {
+  return error instanceof GitHubError && (error.status === 403 || error.status === 429);
+}
+
+/** Fetches full file text through GitHub's raw media type, which serves blobs above the JSON payload limit. */
+async function fetchRawTextFile(encodedRepository: string, path: string, ref: string, token?: string): Promise<string> {
+  try {
+    const response = await fetch(`${GITHUB_API}/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`, {
+      cache: "no-store",
+      headers: githubHeaders("application/vnd.github.raw", token),
+    });
+    if (!response.ok) throw await githubError(response);
+    return decodeTextPayload(Buffer.from(await response.arrayBuffer()));
+  } catch (error) {
+    // Large public files use this route after the JSON API omits their contents.
+    if (!token && isRateLimitError(error)) return fetchPublicTextFile(encodedRepository, path, ref);
+    throw error;
+  }
+}
+
+/** Falls back to GitHub's CDN for public files when the API cannot serve them. */
+async function fetchPublicTextFile(encodedRepository: string, path: string, ref: string): Promise<string> {
+  const response = await fetch(`${RAW_GITHUB}/${encodedRepository}/${encodeURIComponent(ref)}/${encodeRepositoryPath(path)}`, { cache: "no-store" });
+  if (!response.ok) throw new GitHubError("The file could not be loaded", response.status);
+  return decodeTextPayload(Buffer.from(await response.arrayBuffer()));
+}
+
+/** Reads one textual GitHub file at a revision, failing closed for binaries and oversized blobs. */
+async function getTextFileAtRevision(encodedRepository: string, path: string, ref: string, token?: string): Promise<string> {
+  let file: { content?: string; encoding?: string; size?: number; type?: string };
+
+  try {
+    file = await githubRequest<{ content?: string; encoding?: string; size?: number; type?: string }>(
+      `/repos/${encodedRepository}/contents/${encodeRepositoryPath(path)}?ref=${encodeURIComponent(ref)}`,
+      token,
+    );
+  } catch (error) {
+    // Anonymous API quota must not dead-end the diff expander when the CDN still serves public files.
+    if (!token && isRateLimitError(error)) return fetchPublicTextFile(encodedRepository, path, ref);
+    throw error;
+  }
+
+  if (file.type === "dir") throw new GitHubError("That path is a directory", 400);
+  if ((file.size ?? 0) > EDITABLE_FILE_SIZE_LIMIT || file.encoding !== "base64" || !isString(file.content)) {
+    // Files between 1MB and 100MB only expose their text through the raw media type.
+    return fetchRawTextFile(encodedRepository, path, ref, token);
+  }
+
+  return decodeTextPayload(Buffer.from(file.content.replaceAll("\n", ""), "base64"));
 }
 
 /** Builds one Pierre FileContents payload from a GitHub path and revision. */
