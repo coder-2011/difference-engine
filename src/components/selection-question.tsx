@@ -708,7 +708,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     selectionRef.current = nextSelection;
     refreshSuggestion(nextSelection);
     followsConversationRef.current = true;
-    window.setTimeout(() => inputRef.current?.focus(), 0);
+    inputRef.current?.focus();
   }, [chat.id, refreshSuggestion, selectionRequest]);
 
   useEffect(() => {
@@ -1389,6 +1389,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
             </span>
           )}
           <textarea
+            autoFocus
             onChange={(event) => setQuestion(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Tab" && !question && !isGeneratingSuggestion && suggestedQuestion) {
