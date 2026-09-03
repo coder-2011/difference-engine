@@ -629,6 +629,8 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const inputResizeRef = useRef<InputResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
+  // Attachment encoding starts a request before a chat turn exists, so loading alone cannot identify a streamed turn.
+  const runningTurnRef = useRef(false);
   const followsConversationRef = useRef(true);
   const dragDepthRef = useRef(0);
   const queuedQuestionsRef = useRef<QueuedQuestion[]>([]);
@@ -640,15 +642,15 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const conversationActive = Boolean(turns.length || loading);
   const chatFontSize = (DEFAULT_CHAT_FONT_SIZE * chatZoom) / DEFAULT_CHAT_ZOOM;
 
-  /** Captures the durable pieces of this panel for forks and purple-marker resumes. */
-  const snapshot = useCallback((): ChatSession => ({
+  /** Captures this panel for persistence, optionally excluding its unfinished streamed turn from a fork. */
+  const snapshot = useCallback((omitRunningTurn = false): ChatSession => ({
     draft: question,
     id: chat.id,
     markers,
     priorHighlights,
     selection,
     suggestion,
-    turns,
+    turns: omitRunningTurn && runningTurnRef.current ? turns.slice(0, -1) : turns,
   }), [chat.id, markers, priorHighlights, question, selection, suggestion, turns]);
 
   useEffect(() => {
@@ -1110,6 +1112,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
       const uploadedAttachments = await Promise.all(questionAttachments.map(encodeAttachment));
       if (controller.signal.aborted) return;
       const attachmentNames = uploadedAttachments.map((attachment) => attachment.name);
+      runningTurnRef.current = true;
       setTurns((current) => [...current, { answer: "", attachments: attachmentNames, question: submittedQuestion }]);
       startedTurn = true;
       const response = await fetch("/api/ask", {
@@ -1179,6 +1182,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     } finally {
       if (requestRef.current === controller) {
         requestRef.current = null;
+        runningTurnRef.current = false;
         setLoading(false);
       }
     }
@@ -1281,7 +1285,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
 
   /** Forks the visible conversation into a new independently streamed panel. */
   function forkPanel(): void {
-    onFork(snapshot());
+    onFork(snapshot(true));
   }
 
   const suggestedQuestion = turns.length ? suggestion : DEFAULT_QUESTION;
