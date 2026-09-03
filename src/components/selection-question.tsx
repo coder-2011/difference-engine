@@ -1488,6 +1488,8 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const chatSessionsRef = useRef(new Map<string, ChatSession>());
   const lastResumedChatSequenceRef = useRef<number | undefined>(undefined);
   const selectionRequestCounterRef = useRef(0);
+  // Coalesce quick highlights so a stale frame cannot clear the latest valid selection.
+  const selectionCaptureFrameRef = useRef(0);
 
   /** Updates the active review's notes without letting a source transition persist an empty list. */
   function updateAnnotations(update: (current: Annotation[]) => Annotation[]): void {
@@ -1718,7 +1720,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
   useEffect(() => {
     /** Captures a non-empty diff selection while retaining the current chat's open state. */
-    function captureSelection(pointer?: Point, origin?: EventTarget): void {
+    function captureSelection(pointer?: Point, origin?: EventTarget, originatedInDiff = false): void {
       const browserSelection = window.getSelection();
       const range = browserSelection ? selectedRange(browserSelection, origin) : undefined;
       const text = range?.toString().trim() ?? "";
@@ -1727,7 +1729,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       const root = node?.getRootNode();
       // Diffs can render code in either ordinary DOM or an open shadow tree.
       const selectionElement = root instanceof ShadowRoot ? root.host : element;
-      const insideDiff = selectionElement?.closest("[data-diff-selection-root]");
+      const insideDiff = originatedInDiff || selectionElement?.closest("[data-diff-selection-root]");
 
       if (!text || !insideDiff || !range) {
         setPendingSelection(null);
@@ -1761,12 +1763,20 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
     /** Uses the pointer release point after the browser finalizes its selection range. */
     function captureAfterMouseUp(event: MouseEvent): void {
+      window.cancelAnimationFrame(selectionCaptureFrameRef.current);
+      selectionCaptureFrameRef.current = 0;
+
       // A purple gutter marker resumes its existing chat instead of becoming a fresh code selection.
-      if (event.composedPath().some((target) => target instanceof Element && target.classList.contains("diffs-inline-chat-marker"))) return;
+      const path = event.composedPath();
+      if (path.some((target) => target instanceof Element && target.classList.contains("diffs-inline-chat-marker"))) return;
       if (event.target instanceof Element && event.target.closest(".ai-chat-actions, .annotation-list, .selection-actions, .annotation-composer, .question-panel, .call-diff-viewer")) return;
       const pointer = { x: event.clientX, y: event.clientY };
-      const origin = event.composedPath()[0];
-      window.requestAnimationFrame(() => captureSelection(pointer, origin));
+      const origin = path[0];
+      const originatedInDiff = path.some((target) => target instanceof Element && target.hasAttribute("data-diff-selection-root"));
+      selectionCaptureFrameRef.current = window.requestAnimationFrame(() => {
+        selectionCaptureFrameRef.current = 0;
+        captureSelection(pointer, origin, originatedInDiff);
+      });
     }
 
     /** Captures keyboard-created code selections while ignoring typing inside the chat or annotation composer. */
@@ -1778,6 +1788,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     document.addEventListener("keyup", captureAfterKeyUp, true);
     document.addEventListener("mouseup", captureAfterMouseUp, true);
     return () => {
+      window.cancelAnimationFrame(selectionCaptureFrameRef.current);
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
