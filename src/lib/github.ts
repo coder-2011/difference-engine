@@ -27,7 +27,15 @@ const ANONYMOUS_CACHE_TTL = 60_000;
 const ANONYMOUS_CACHE_LIMIT = 300;
 const DASHBOARD_PULL_REQUEST_PAGE_SIZE = 24;
 const OPEN_PULL_REQUESTS_QUERY = "is:pr is:open involves:@me sort:updated-desc";
-const anonymousRequestCache = new Map<string, { body: unknown; expires: number }>();
+
+type AnonymousRequestCacheEntry = {
+  body: unknown;
+  etag?: string;
+  expires: number;
+};
+
+const anonymousRequestCache = new Map<string, AnonymousRequestCacheEntry>();
+const anonymousRequestInFlight = new Map<string, Promise<unknown>>();
 
 type GitHubUser = {
   avatar_url: string;
@@ -385,10 +393,11 @@ async function githubError(response: Response): Promise<GitHubError> {
 }
 
 /** Performs one GitHub API request while keeping the authenticated token on the server. */
-async function githubResponse(path: string, token?: string, method = "GET", body?: GitHubRequestBody): Promise<Response> {
+async function githubResponse(path: string, token?: string, method = "GET", body?: GitHubRequestBody, etag?: string): Promise<Response> {
   const headers = githubHeaders("application/vnd.github+json", token);
   headers.set("X-GitHub-Api-Version", "2022-11-28");
   if (body !== undefined) headers.set("Content-Type", "application/json");
+  if (etag) headers.set("If-None-Match", etag);
 
   const init = {
     cache: "no-store" as const,
@@ -399,31 +408,90 @@ async function githubResponse(path: string, token?: string, method = "GET", body
     ? await fetch(`${GITHUB_API}${path}`, init)
     : await fetch(`${GITHUB_API}${path}`, { ...init, body: JSON.stringify(body) });
 
-  if (!response.ok) throw await githubError(response);
+  if (!response.ok && response.status !== 304) throw await githubError(response);
 
   return response;
 }
 
+/** Returns an anonymous entry and promotes it so frequently used paths stay within the fixed cache bound. */
+function getAnonymousRequestCacheEntry(path: string): AnonymousRequestCacheEntry | undefined {
+  const entry = anonymousRequestCache.get(path);
+  if (!entry) return undefined;
+
+  anonymousRequestCache.delete(path);
+  anonymousRequestCache.set(path, entry);
+  return entry;
+}
+
+/** Stores an anonymous entry with least-recently-used eviction to preserve the hottest public GitHub paths. */
+function setAnonymousRequestCacheEntry(path: string, entry: AnonymousRequestCacheEntry): void {
+  anonymousRequestCache.delete(path);
+  anonymousRequestCache.set(path, entry);
+
+  if (anonymousRequestCache.size <= ANONYMOUS_CACHE_LIMIT) return;
+  const oldest = anonymousRequestCache.keys().next().value;
+  if (oldest !== undefined) anonymousRequestCache.delete(oldest);
+}
+
+/** Revalidates an expired public response and reuses its body when GitHub reports that its ETag is unchanged. */
+async function refreshAnonymousRequest<T>(path: string, cached?: AnonymousRequestCacheEntry): Promise<T> {
+  try {
+    const response = await githubResponse(path, undefined, "GET", undefined, cached?.etag);
+    if (response.status === 304 && cached) {
+      setAnonymousRequestCacheEntry(path, { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL });
+      // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
+      return cached.body as T;
+    }
+    if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
+
+    // SAFETY: This helper is called only through githubRequest with the fixed endpoint response type.
+    const body = await response.json() as T;
+    setAnonymousRequestCacheEntry(path, {
+      body,
+      etag: response.headers.get("etag") ?? undefined,
+      expires: Date.now() + ANONYMOUS_CACHE_TTL,
+    });
+    return body;
+  } catch (error) {
+    if (isRateLimitError(error) && cached) {
+      // SAFETY: A rate-limit fallback returns the same path-specific body that was previously stored as T.
+      return cached.body as T;
+    }
+    throw error;
+  }
+}
+
 /** Performs a typed GitHub API request with optional private-repository access. */
 async function githubRequest<T>(path: string, token?: string): Promise<T> {
-  if (token) return githubResponse(path, token).then((response) => response.json() as Promise<T>);
+  if (token) {
+    const response = await githubResponse(path, token);
+    // SAFETY: Each caller supplies the documented response type for its fixed GitHub endpoint.
+    return response.json() as Promise<T>;
+  }
 
   // Anonymous quota is shared and tiny, so public responses are reused briefly and served
   // stale when GitHub starts rejecting requests.
-  const cached = anonymousRequestCache.get(path);
-  if (cached && cached.expires > Date.now()) return cached.body as T;
+  const cached = getAnonymousRequestCacheEntry(path);
+  if (cached && cached.expires > Date.now()) {
+    // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
+    return cached.body as T;
+  }
+
+  const inFlight = anonymousRequestInFlight.get(path);
+  if (inFlight) {
+    // SAFETY: In-flight requests are keyed to the same fixed GitHub path and resolve to its response type.
+    return inFlight as Promise<T>;
+  }
+
+  const request = refreshAnonymousRequest<T>(path, cached);
+  // Keep burst traffic from retaining an unbounded set of user-supplied public paths.
+  if (anonymousRequestInFlight.size >= ANONYMOUS_CACHE_LIMIT) return request;
+  anonymousRequestInFlight.set(path, request);
 
   try {
-    const body = (await githubResponse(path).then((response) => response.json())) as T;
-    anonymousRequestCache.set(path, { body, expires: Date.now() + ANONYMOUS_CACHE_TTL });
-    if (anonymousRequestCache.size > ANONYMOUS_CACHE_LIMIT) {
-      const oldest = anonymousRequestCache.keys().next().value;
-      if (oldest !== undefined) anonymousRequestCache.delete(oldest);
-    }
-    return body;
-  } catch (error) {
-    if (isRateLimitError(error) && cached) return cached.body as T;
-    throw error;
+    return await request;
+  } finally {
+    anonymousRequestInFlight.delete(path);
   }
 }
 
