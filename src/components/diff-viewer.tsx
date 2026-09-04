@@ -493,10 +493,12 @@ export function DiffViewer({
       );
     });
     const githubMarkers = reviewThreads.flatMap((thread, index) => {
-      const endLine = thread.line ?? thread.originalLine;
+      const usesOriginalLine = thread.line === undefined;
+      const endLine = usesOriginalLine ? thread.originalLine : thread.line;
       if (!endLine) return [];
-      const startLine = thread.startLine ?? thread.originalStartLine ?? endLine;
-      const side = thread.side === "LEFT" ? "deletions" : "additions";
+      // GitHub clears line for outdated threads, leaving their original location in the left diff column.
+      const startLine = usesOriginalLine ? thread.originalStartLine ?? endLine : thread.startLine ?? endLine;
+      const side = usesOriginalLine || thread.side === "LEFT" ? "deletions" : "additions";
       return commentRangeMarkers(`review-${thread.id ?? index}`, thread.path, startLine, endLine, side, side, "github");
     });
     const chatRangeMarkers = chatMarkers.flatMap((marker) => commentRangeMarkers(
