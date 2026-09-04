@@ -350,7 +350,7 @@ type RepositorySnapshot = {
 };
 
 export type RepositoryContext = {
-  snapshot: RepositorySnapshot;
+  snapshot?: RepositorySnapshot;
   text: string;
 };
 
@@ -358,6 +358,7 @@ const CONTEXT_TREE_LIMIT = 30_000;
 const CONTEXT_DIFF_LIMIT = 50_000;
 const CONTEXT_FILES_LIMIT = 70_000;
 const CONTEXT_FILE_COUNT = 24;
+const ANONYMOUS_CONTEXT_FILE_COUNT = 8;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
 const COMMIT_CONTEXT_TREE_LIMIT = 20_000;
@@ -1485,10 +1486,28 @@ function isRepositorySourceFile(path: string): boolean {
 /** Builds bounded repository-wide context and retains its exact revision for later file lookups. */
 export async function getRepositoryContext(source: string[], token?: string): Promise<RepositoryContext> {
   const parsed = parseSource(source);
-  const [snapshot, diff] = await Promise.all([
+  const [snapshotResult, diffResult] = await Promise.allSettled([
     getRepositorySnapshot(parsed, token),
     parsed.kind === "repository" ? "" : getDiffResponse(source, token).then((response) => response.text()),
   ]);
+  const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : undefined;
+  const diff = diffResult.status === "fulfilled" ? diffResult.value : "";
+
+  // A complete diff can answer a code question while GitHub transiently declines the repository tree.
+  if (!snapshot) {
+    if (!diff) {
+      if (snapshotResult.status === "rejected") throw snapshotResult.reason;
+      throw new GitHubError("Repository context could not be loaded", 502);
+    }
+    return {
+      text: [
+        `Repository: ${parsed.repository}`,
+        "Repository tree:\nUnavailable. Use the supplied diff and selected code.",
+        `Full change diff:\n${diff.slice(0, CONTEXT_DIFF_LIMIT)}`,
+      ].join("\n\n"),
+    };
+  }
+
   const { revision, tree } = snapshot;
   const rootFiles = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pyproject.toml"];
   const preferredPaths = [...new Set([...changedPathsFromDiff(diff), ...rootFiles])];
@@ -1504,23 +1523,29 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
   }
 
   const entries: GitTreeEntry[] = [];
+  const contextFileCount = token ? CONTEXT_FILE_COUNT : ANONYMOUS_CONTEXT_FILE_COUNT;
   for (const path of preferredPaths) {
     const entry = preferredBlobsByPath.get(path);
     if (!entry || (entry.size ?? 0) > CONTEXT_FILES_LIMIT) continue;
     entries.push(entry);
-    if (entries.length === CONTEXT_FILE_COUNT) break;
+    if (entries.length === contextFileCount) break;
   }
 
+  // File excerpts enrich the context but must not turn one unavailable blob into a failed chat.
   const contents = await Promise.all(entries.map(async (entry) => {
-    const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
-    return { path: entry.path, text: decodeGitBlob(blob) };
+    try {
+      const blob = await githubRequest<GitBlob>(`/repos/${parsed.encodedRepository}/git/blobs/${entry.sha}`, token);
+      return { path: entry.path, text: decodeGitBlob(blob) };
+    } catch {
+      return undefined;
+    }
   }));
   let fileContext = "";
 
   // Changed files come first, and the shared budget prevents oversized model requests.
   for (const file of contents) {
     const remaining = CONTEXT_FILES_LIMIT - fileContext.length;
-    if (!file.text || remaining <= 0) break;
+    if (!file?.text || remaining <= 0) continue;
     fileContext += `\n### ${file.path}\n${file.text.slice(0, remaining)}\n`;
   }
 
