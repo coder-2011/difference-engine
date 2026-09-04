@@ -82,7 +82,7 @@ const DIFF_VIEWER_CSS = `
   }
 
   [data-column-number] > .diffs-inline-comment-marker {
-    --diffs-inline-comment-color: #28506f;
+    --diffs-inline-comment-color: #3f7199;
     background: var(--diffs-inline-comment-color);
     /* Match Pierre's top: 0 and height: 100% change bar in this same gutter. */
     bottom: 0;
