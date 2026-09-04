@@ -75,7 +75,7 @@ type ReviewView = keyof typeof REVIEW_TAB_HASH;
 
 const INLINE_COMMENT_MARKER_CSS = `
   [data-column-number] > .diffs-inline-comment-marker {
-    --diffs-inline-comment-color: #3f7199;
+    --diffs-inline-comment-color: #28506f;
     background: var(--diffs-inline-comment-color);
     /* Match Pierre's top: 0 and height: 100% change bar in this same gutter. */
     bottom: 0;
