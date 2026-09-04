@@ -107,6 +107,37 @@ const DIFF_VIEWER_CSS = `
     pointer-events: auto;
   }
 
+  [data-column-number] > .diffs-inline-comment-marker.diffs-inline-chat-marker-cap {
+    overflow: visible;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker.diffs-inline-chat-marker-cap::before {
+    background: var(--diffs-inline-comment-color);
+    border: 1px solid #a895cc;
+    border-radius: 999px;
+    content: "";
+    height: 14px;
+    left: 50%;
+    position: absolute;
+    top: -6px;
+    transform: translateX(-50%);
+    width: 14px;
+    z-index: 1;
+  }
+
+  [data-column-number] > .diffs-inline-comment-marker.diffs-inline-chat-marker-cap::after {
+    background: #f2effb;
+    clip-path: polygon(0 0, 100% 0, 100% 75%, 58% 75%, 36% 100%, 42% 75%, 0 75%);
+    content: "";
+    height: 7px;
+    left: 50%;
+    position: absolute;
+    top: -2px;
+    transform: translateX(-50%);
+    width: 8px;
+    z-index: 2;
+  }
+
 `;
 
 configureDiffHighlighting();
@@ -897,6 +928,8 @@ export function DiffViewer({
             element.style.setProperty("--diffs-inline-comment-offset", `${offset}px`);
             if (marker.tone === "chat" && marker.chatId && marker.markerId) {
               element.classList.add("diffs-inline-chat-marker");
+              // Only the first segment gets a cap, so a multi-line marker remains one continuous track.
+              if (position === "single" || position === "start") element.classList.add("diffs-inline-chat-marker-cap");
               element.setAttribute("aria-label", "Resume Ask Diffs chat");
               if (element instanceof HTMLButtonElement) element.type = "button";
               element.addEventListener("click", (event) => {
