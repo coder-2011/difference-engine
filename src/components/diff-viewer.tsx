@@ -77,6 +77,7 @@ const INLINE_COMMENT_MARKER_CSS = `
   [data-column-number] > .diffs-inline-comment-marker {
     --diffs-inline-comment-color: #3f7199;
     background: var(--diffs-inline-comment-color);
+    /* Match Pierre's top: 0 and height: 100% change bar in this same gutter. */
     bottom: 0;
     left: var(--diffs-inline-comment-offset, 0px);
     pointer-events: none;
@@ -99,13 +100,6 @@ const INLINE_COMMENT_MARKER_CSS = `
     pointer-events: auto;
   }
 
-  [data-column-number] > .diffs-inline-comment-marker[data-position="start"] {
-    top: 50%;
-  }
-
-  [data-column-number] > .diffs-inline-comment-marker[data-position="end"] {
-    bottom: 50%;
-  }
 `;
 
 configureDiffHighlighting();
@@ -171,6 +165,16 @@ function markerPosition(marker: InlineCommentMarker, lineNumber: number): "end" 
   if (lineNumber === marker.startLine) return "start";
   if (lineNumber === marker.endLine) return "end";
   return "middle";
+}
+
+/** Measures the right edge of Pierre's native change bar so custom markers begin immediately beside it. */
+function nativeIndicatorRight(gutter: HTMLElement): number {
+  const indicator = window.getComputedStyle(gutter, "::before");
+  if (indicator.content === "none") return 0;
+
+  const left = Number.parseFloat(indicator.left);
+  const width = Number.parseFloat(indicator.width);
+  return Number.isFinite(left) && Number.isFinite(width) ? left + width : 0;
 }
 
 /** Packs only overlapping ranges into adjacent gutter lanes, keeping unrelated markers close to the code. */
@@ -881,9 +885,9 @@ export function DiffViewer({
 
             const element = document.createElement(marker.tone === "chat" ? "button" : "span");
             element.className = "diffs-inline-comment-marker";
-            element.dataset.position = position;
             element.dataset.tone = marker.tone;
-            element.style.setProperty("--diffs-inline-comment-offset", `${(marker.lane ?? 0) * 3}px`);
+            const offset = nativeIndicatorRight(gutter) + (marker.lane ?? 0) * 3;
+            element.style.setProperty("--diffs-inline-comment-offset", `${offset}px`);
             if (marker.tone === "chat" && marker.chatId && marker.markerId) {
               element.classList.add("diffs-inline-chat-marker");
               element.setAttribute("aria-label", "Resume Ask Diffs chat");
