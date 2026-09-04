@@ -449,6 +449,48 @@ function selectedRange(browserSelection: Selection, origin?: EventTarget): Range
   return range;
 }
 
+/** Extracts the selected text within one rendered Pierre code line. */
+function selectedLineText(range: Range, line: HTMLElement): string {
+  const lineRange = document.createRange();
+  lineRange.selectNodeContents(line);
+  const selectedLine = document.createRange();
+
+  if (range.compareBoundaryPoints(Range.START_TO_START, lineRange) <= 0) {
+    selectedLine.setStart(lineRange.startContainer, lineRange.startOffset);
+  } else {
+    selectedLine.setStart(range.startContainer, range.startOffset);
+  }
+
+  if (range.compareBoundaryPoints(Range.END_TO_END, lineRange) >= 0) {
+    selectedLine.setEnd(lineRange.endContainer, lineRange.endOffset);
+  } else {
+    selectedLine.setEnd(range.endContainer, range.endOffset);
+  }
+
+  return selectedLine.toString();
+}
+
+/** Formats selected Pierre code lines as a unified-diff snippet without changing ordinary copy behavior. */
+function copiedDiffText(range: Range): string | undefined {
+  const root = range.startContainer.getRootNode();
+  if (!(root instanceof Document || root instanceof ShadowRoot)) return undefined;
+
+  const copiedLines: string[] = [];
+  for (const line of root.querySelectorAll<HTMLElement>("[data-line]")) {
+    if (!range.intersectsNode(line)) continue;
+
+    const text = selectedLineText(range, line);
+    if (!text) continue;
+
+    let prefix = " ";
+    if (line.dataset.lineType === "change-addition") prefix = "+";
+    if (line.dataset.lineType === "change-deletion") prefix = "-";
+    copiedLines.push(`${prefix}${text}`);
+  }
+
+  return copiedLines.length ? copiedLines.join("\n") : undefined;
+}
+
 /** Extracts Pierre's stable file and line coordinates from a browser text range. */
 function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   const root = range.startContainer.getRootNode();
@@ -1719,6 +1761,17 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   }, [programmaticSelection]);
 
   useEffect(() => {
+    /** Replaces only diff-code clipboard text with line-type prefixes for paste-ready snippets. */
+    function copyDiffSelection(event: ClipboardEvent): void {
+      const browserSelection = window.getSelection();
+      const range = browserSelection ? selectedRange(browserSelection, event.composedPath()[0]) : undefined;
+      const text = range ? copiedDiffText(range) : undefined;
+      if (!text || !event.clipboardData) return;
+
+      event.clipboardData.setData("text/plain", text);
+      event.preventDefault();
+    }
+
     /** Captures a non-empty diff selection while retaining the current chat's open state. */
     function captureSelection(pointer?: Point, origin?: EventTarget, originatedInDiff = false): void {
       const browserSelection = window.getSelection();
@@ -1785,10 +1838,12 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       captureSelection(undefined, event.composedPath()[0]);
     }
 
+    document.addEventListener("copy", copyDiffSelection, true);
     document.addEventListener("keyup", captureAfterKeyUp, true);
     document.addEventListener("mouseup", captureAfterMouseUp, true);
     return () => {
       window.cancelAnimationFrame(selectionCaptureFrameRef.current);
+      document.removeEventListener("copy", copyDiffSelection, true);
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
