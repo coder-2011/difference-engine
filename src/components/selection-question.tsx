@@ -21,10 +21,6 @@ const DEFAULT_QUESTION = "What does this code do?";
 const DEFAULT_CHAT_FONT_SIZE = 12;
 const DEFAULT_CHAT_ZOOM = 100;
 const CHAT_ZOOM_PRESETS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500] as const;
-const CHAT_ZOOM_STORAGE_KEY = "diffs:chat-zoom";
-const LEGACY_CHAT_FONT_SIZE_STORAGE_KEY = "diffs:chat-font-size";
-const LEGACY_MAX_CHAT_FONT_SIZE = 22;
-const LEGACY_MIN_CHAT_FONT_SIZE = 10;
 const MAX_PRIOR_HIGHLIGHTS = 3;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
@@ -87,6 +83,7 @@ type AnnotationDraft = Point & {
 };
 
 type ChatSession = {
+  chatZoom: number;
   draft: string;
   id: string;
   markers: Array<{ id: string; selection: CodeSelection }>;
@@ -182,10 +179,8 @@ type SubmitQuestion = (
 type AskDiffsPanelProps = {
   annotationPaths: string[];
   chat: ChatSession;
-  chatZoom: number;
   isActive: boolean;
   onChatChange: (chat: ChatSession) => void;
-  onChatZoomChange: (zoom: number) => void;
   onClose: (chat: ChatSession) => void;
   onFocus: () => void;
   onFork: (chat: ChatSession) => void;
@@ -350,7 +345,7 @@ function storeAnnotations(sourceKey: string, annotations: Annotation[]): void {
   }
 }
 
-/** Recognizes a usable positive percentage from browser storage or the zoom editor. */
+/** Recognizes a usable positive percentage from the zoom editor. */
 function isChatZoom(value: number): boolean {
   return Number.isFinite(value) && value > 0;
 }
@@ -368,40 +363,6 @@ function adjacentChatZoom(zoom: number, direction: -1 | 1): number {
     if (CHAT_ZOOM_PRESETS[index] < zoom) return CHAT_ZOOM_PRESETS[index];
   }
   return zoom;
-}
-
-/** Converts a retired pixel preference to its closest supported percentage. */
-function nearestChatZoom(zoom: number): number {
-  let nearest: number = CHAT_ZOOM_PRESETS[0];
-  for (const preset of CHAT_ZOOM_PRESETS) {
-    if (Math.abs(preset - zoom) < Math.abs(nearest - zoom)) nearest = preset;
-  }
-  return nearest;
-}
-
-/** Restores a valid user-wide Ask Diffs zoom, converting the prior pixel preference once. */
-function storedChatZoom(): number {
-  try {
-    const stored = Number(window.localStorage.getItem(CHAT_ZOOM_STORAGE_KEY));
-    if (isChatZoom(stored)) return stored;
-
-    const legacySize = Number(window.localStorage.getItem(LEGACY_CHAT_FONT_SIZE_STORAGE_KEY));
-    if (Number.isInteger(legacySize) && legacySize >= LEGACY_MIN_CHAT_FONT_SIZE && legacySize <= LEGACY_MAX_CHAT_FONT_SIZE) {
-      return nearestChatZoom((legacySize / DEFAULT_CHAT_FONT_SIZE) * DEFAULT_CHAT_ZOOM);
-    }
-  } catch {
-    // The default remains available when browser storage is unavailable.
-  }
-  return DEFAULT_CHAT_ZOOM;
-}
-
-/** Saves the user-wide Ask Diffs zoom while allowing the panel to work without storage. */
-function storeChatZoom(zoom: number): void {
-  try {
-    window.localStorage.setItem(CHAT_ZOOM_STORAGE_KEY, String(zoom));
-  } catch {
-    // The current chat stays resized when browser storage is unavailable.
-  }
 }
 
 /** Renders a readable prompt preview that expands only when it exceeds two lines. */
@@ -643,7 +604,7 @@ function chatMarkerLocationKey(location: CodeSelectionLocation): string {
 }
 
 /** Renders one independent Ask Diffs conversation, including its own request and queue state. */
-function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange, onChatZoomChange, onClose, onFocus, onFork, onMarkersChange, onModelAnnotation, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
+function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose, onFocus, onFork, onMarkersChange, onModelAnnotation, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
   const [selection, setSelection] = useState<SelectionState>(chat.selection);
   const [question, setQuestion] = useState(chat.draft);
   const [turns, setTurns] = useState<ChatTurn[]>(chat.turns);
@@ -654,12 +615,8 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [openAIError, setOpenAIError] = useState("");
-  const [prevChatZoom, setPrevChatZoom] = useState(chatZoom);
-  const [chatZoomInput, setChatZoomInput] = useState(String(chatZoom));
-  if (prevChatZoom !== chatZoom) {
-    setPrevChatZoom(chatZoom);
-    setChatZoomInput(String(chatZoom));
-  }
+  const [chatZoom, setChatZoom] = useState(chat.chatZoom);
+  const [chatZoomInput, setChatZoomInput] = useState(String(chat.chatZoom));
   const [markers, setMarkers] = useState<ChatSession["markers"]>(chat.markers);
   const [priorHighlights, setPriorHighlights] = useState(chat.priorHighlights);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -686,6 +643,7 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
 
   /** Captures this panel for persistence, optionally excluding its unfinished streamed turn from a fork. */
   const snapshot = useCallback((omitRunningTurn = false): ChatSession => ({
+    chatZoom,
     draft: question,
     id: chat.id,
     markers,
@@ -693,11 +651,27 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     selection,
     suggestion,
     turns: omitRunningTurn && runningTurnRef.current ? turns.slice(0, -1) : turns,
-  }), [chat.id, markers, priorHighlights, question, selection, suggestion, turns]);
+  }), [chat.id, chatZoom, markers, priorHighlights, question, selection, suggestion, turns]);
 
   useEffect(() => {
     onChatChange(snapshot());
   }, [onChatChange, snapshot]);
+
+  useEffect(() => {
+    /** Enlarges this panel's chat text when Command-Plus originates inside it. */
+    function increaseChatFont(event: KeyboardEvent): void {
+      const target = event.target;
+      const isChatTarget = target instanceof Element && Boolean(panelRef.current?.contains(target));
+      const isCommandPlus = event.metaKey && !event.altKey && !event.ctrlKey && (event.key === "+" || event.key === "=");
+
+      if (!isCommandPlus || !isChatTarget) return;
+      event.preventDefault();
+      setChatZoom((zoom) => adjacentChatZoom(zoom, 1));
+    }
+
+    window.addEventListener("keydown", increaseChatFont);
+    return () => window.removeEventListener("keydown", increaseChatFont);
+  }, []);
 
   useEffect(() => {
     onMarkersChange(chat.id, markers);
@@ -1277,13 +1251,13 @@ function AskDiffsPanel({ annotationPaths, chat, chatZoom, isActive, onChatChange
     onRevealLocation({ endLineNumber: reference.endLineNumber, id: reference.path, lineNumber: reference.lineNumber });
   }
 
-  /** Updates the shared zoom setting and the local editable percentage together. */
+  /** Updates this panel's zoom and its local editable percentage together. */
   function setChatZoomValue(zoom: number): void {
-    onChatZoomChange(zoom);
+    setChatZoom(zoom);
     setChatZoomInput(String(zoom));
   }
 
-  /** Moves this panel's shared percentage to an adjacent explicit preset. */
+  /** Moves this panel's percentage to an adjacent explicit preset. */
   function adjustChatZoom(direction: -1 | 1): void {
     const typedZoom = Number(chatZoomInput);
     const currentZoom = isChatZoom(typedZoom) ? typedZoom : chatZoom;
@@ -1499,7 +1473,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
-  const [chatZoom, setChatZoom] = useState(storedChatZoom);
   const [annotationStore, setAnnotationStore] = useState<AnnotationStore>();
   const annotations = useMemo(
     () => (annotationStore?.source === sourceKey ? annotationStore.annotations : []),
@@ -1592,6 +1565,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     const chat: ChatSession = seed
       ? { ...seed, id, markers: [] }
       : {
+        chatZoom: DEFAULT_CHAT_ZOOM,
         draft: "",
         id,
         markers: [],
@@ -1623,6 +1597,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
   function openPanel(codeSelection: CodeSelection | null = selection): void {
     if (!codeSelection) return;
     openChat({
+      chatZoom: DEFAULT_CHAT_ZOOM,
       draft: "",
       id: "",
       markers: [],
@@ -1710,11 +1685,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     if (annotationStore?.source !== sourceKey) return;
     storeAnnotations(sourceKey, annotationStore.annotations);
   }, [annotationStore, sourceKey]);
-
-  useEffect(() => {
-    // Zoom is a user preference, unlike the PR-specific conversation and annotations above.
-    storeChatZoom(chatZoom);
-  }, [chatZoom]);
 
   useEffect(() => {
     onRegisterOpenChat?.(openChat);
@@ -1847,22 +1817,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
       document.removeEventListener("keyup", captureAfterKeyUp, true);
       document.removeEventListener("mouseup", captureAfterMouseUp, true);
     };
-  }, []);
-
-  useEffect(() => {
-    /** Enlarges only chat text when Command-Plus originates inside the Ask Diffs panel. */
-    function increaseChatFont(event: KeyboardEvent): void {
-      const target = event.target;
-      const isChatTarget = target instanceof Element && Boolean(target.closest(".question-panel"));
-      const isCommandPlus = event.metaKey && !event.altKey && !event.ctrlKey && (event.key === "+" || event.key === "=");
-
-      if (!isCommandPlus || !isChatTarget) return;
-      event.preventDefault();
-      setChatZoom((zoom) => adjacentChatZoom(zoom, 1));
-    }
-
-    window.addEventListener("keydown", increaseChatFont);
-    return () => window.removeEventListener("keydown", increaseChatFont);
   }, []);
 
   /** Opens a compact composer for a note attached to the current highlighted code. */
@@ -2194,11 +2148,9 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
           <AskDiffsPanel
             annotationPaths={annotationPaths}
             chat={chat}
-            chatZoom={chatZoom}
             isActive={chat.id === activeChatId}
             key={chat.id}
             onChatChange={updateChatSession}
-            onChatZoomChange={setChatZoom}
             onClose={closeChat}
             onFocus={() => focusChat(chat.id)}
             onFork={openChat}
