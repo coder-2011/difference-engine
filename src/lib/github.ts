@@ -607,9 +607,9 @@ async function searchPullRequests(token: string, query: string, limit = 1_000): 
   return pullRequests;
 }
 
-/** Returns the most recently updated open pull requests involving the signed-in user. */
-export async function listOpenPullRequests(token: string): Promise<PullRequestSummary[]> {
-  const pullRequests = await searchPullRequests(token, OPEN_PULL_REQUESTS_QUERY);
+/** Returns a bounded newest-first set of open pull requests involving the signed-in user. */
+export async function listOpenPullRequests(token: string, limit = 1_000): Promise<PullRequestSummary[]> {
+  const pullRequests = await searchPullRequests(token, OPEN_PULL_REQUESTS_QUERY, limit);
   return pullRequests.map((pullRequest) => summarizePullRequest(pullRequest, "open"));
 }
 

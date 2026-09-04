@@ -8,6 +8,7 @@ import { getOpenAIAccess } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const MAX_AI_LAUNCHER_CANDIDATES = 200;
 
 /** Extracts the text returned by one non-streaming ChatGPT response. */
 function modelOutputText(value: JsonValue): string {
@@ -37,10 +38,13 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
   const githubToken = await getGitHubAccessToken();
   if (!access || !githubToken) return null;
 
-  const candidates = await Promise.all([
-    listOpenPullRequests(githubToken),
+  // A failed closed-PR history must not prevent the launcher from selecting an available open PR.
+  const candidates = (await Promise.allSettled([
+    listOpenPullRequests(githubToken, MAX_AI_LAUNCHER_CANDIDATES),
     listRecentPullRequests(githubToken),
-  ]).then((groups) => groups.flat().slice(0, 200));
+  ]))
+    .flatMap((result) => result.status === "fulfilled" ? result.value : [])
+    .slice(0, MAX_AI_LAUNCHER_CANDIDATES);
   const paths = new Set(candidates.map((pullRequest) => pullRequest.viewerPath));
   if (paths.size === 0) return null;
 
