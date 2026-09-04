@@ -73,7 +73,14 @@ const MAX_CODE_FONT_SIZE = 24;
 
 type ReviewView = keyof typeof REVIEW_TAB_HASH;
 
-const INLINE_COMMENT_MARKER_CSS = `
+const DIFF_VIEWER_CSS = `
+  :host {
+    /* Keep changed-line fills, emphasis, gutters, and bars darker from one shared palette. */
+    --diffs-addition-color-override: #058f5c;
+    --diffs-deletion-color-override: #bd2838;
+    --diffs-modified-color-override: #0078bd;
+  }
+
   [data-column-number] > .diffs-inline-comment-marker {
     --diffs-inline-comment-color: #28506f;
     background: var(--diffs-inline-comment-color);
@@ -904,7 +911,7 @@ export function DiffViewer({
       }
     },
     useTokenTransformer: true,
-    unsafeCSS: INLINE_COMMENT_MARKER_CSS,
+    unsafeCSS: DIFF_VIEWER_CSS,
   }), [editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
