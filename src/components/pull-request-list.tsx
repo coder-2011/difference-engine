@@ -9,6 +9,7 @@ import type { PullRequestPage, PullRequestSummary } from "@/types/github";
 
 const INITIAL_COUNT = 6;
 const DATE_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
+const PULL_REQUEST_FILTER_STORAGE_KEY = "diffs:open-pull-request-filter";
 
 type PullRequestListProps = {
   initialPage?: PullRequestPage;
@@ -72,6 +73,17 @@ export function PullRequestList({ initialPage, pullRequests: staticPullRequests 
     return () => window.removeEventListener("keydown", focusFilter);
   }, [variant]);
 
+  useEffect(() => {
+    if (variant !== "open") return;
+
+    // Restore after hydration so browser storage never changes the server-rendered dashboard.
+    try {
+      setQuery(window.localStorage.getItem(PULL_REQUEST_FILTER_STORAGE_KEY) ?? "");
+    } catch {
+      // The filter remains usable when browser storage is unavailable.
+    }
+  }, [variant]);
+
   const pullRequests = initialPage ? loadedPullRequests : staticPullRequests;
   const normalizedQuery = query.trim().toLowerCase();
   // Match the fields visible on each card so filtering stays predictable.
@@ -93,6 +105,13 @@ export function PullRequestList({ initialPage, pullRequests: staticPullRequests 
   function handleQueryChange(value: string): void {
     setQuery(value);
     setExpanded(false);
+
+    try {
+      if (value) window.localStorage.setItem(PULL_REQUEST_FILTER_STORAGE_KEY, value);
+      else window.localStorage.removeItem(PULL_REQUEST_FILTER_STORAGE_KEY);
+    } catch {
+      // The in-memory filter still works when browser storage is unavailable.
+    }
   }
 
   /** Fetches the next cursor page only after the user has reached the loaded dashboard results. */
