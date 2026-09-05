@@ -70,6 +70,13 @@ const EMPTY_REVIEW_THREADS: PullRequestReviewThread[] = [];
 const REVIEW_TAB_HASH = { "call-flow": "#call-flow", files: "#files-changed" } as const;
 const DEFAULT_CODE_FONT_SIZE = 13;
 const MAX_CODE_FONT_SIZE = 24;
+const DIFF_THEMES = [
+  ["pierre-dark", "Pierre Dark"],
+  ["pierre-dark-soft", "Pierre Dark Soft"],
+  ["pierre-dark-vibrant", "Pierre Dark Vibrant"],
+  ["pierre-dark-protanopia-deuteranopia", "Pierre Dark Protanopia & Deuteranopia"],
+  ["pierre-dark-tritanopia", "Pierre Dark Tritanopia"],
+] as const;
 
 type ReviewView = keyof typeof REVIEW_TAB_HASH;
 
@@ -269,6 +276,7 @@ export function DiffViewer({
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
   const [reviewView, setReviewView] = useState<ReviewView>("files");
+  const [diffTheme, setDiffTheme] = useState<string>(DIFF_THEMES[0][0]);
   // Retain completed analysis for the current source without carrying it to the next review.
   const [loadedCallFlowSource, setLoadedCallFlowSource] = useState<string>();
   const [callFlowSelection, setCallFlowSelection] = useState<ProgrammaticSelection>();
@@ -835,6 +843,14 @@ export function DiffViewer({
   }, [editMode]);
 
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
+
+  useEffect(() => {
+    if (!workerPool) return;
+
+    // Pierre's worker cache owns rendered token colors, so this clears it and notifies subscribed CodeViews.
+    void workerPool.setRenderOptions({ theme: diffTheme }).catch(() => {});
+  }, [diffTheme, workerPool]);
+
   // CodeView already retains per-item editors. persistState would restore the shared list scrollTop per file.
   const editorOptions = useMemo<EditorOptions<EditorType, undefined, undefined>>(() => ({}), []);
   const canEdit = editMode && !isReadOnly;
@@ -929,7 +945,7 @@ export function DiffViewer({
     overflow: "scroll",
     preferredHighlighter: "shiki-js",
     stickyHeaders: true,
-    theme: "pierre-dark",
+    theme: diffTheme,
     themeType: "dark",
     onPostRender: (node, _instance, phase, context) => {
       if (phase === "unmount") return;
@@ -980,7 +996,7 @@ export function DiffViewer({
     },
     useTokenTransformer: true,
     unsafeCSS: DIFF_VIEWER_CSS,
-  }), [editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
+  }), [diffTheme, editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
@@ -1074,19 +1090,24 @@ export function DiffViewer({
             </div>
           )}
           {!isReadOnly && (
-            <button
-              aria-busy={committing}
-              aria-label="Commit and push changes to GitHub (⌘D / c+d)"
-              className={`commit-action${editedFileCount > 0 && !committing && commitStatus === "" ? " ready" : ""}${committing ? " committing" : ""}${commitStatus === "committed" ? " committed" : ""}${commitStatus === "error" ? " error" : ""}`}
-              disabled={committing || editedFileCount === 0}
-              onClick={() => void commitChanges()}
-              title={committing ? "Committing changes…" : editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : "Commit and push changes (⌘D)"}
-              type="button"
-            >
-              {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "committed" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
-              <span>{committing ? "Committing" : commitStatus === "committed" ? "Committed" : commitError || "Commit"}</span>
-              <kbd className="key-hint">⌘D</kbd>
-            </button>
+            <>
+              <select aria-label="Diff theme" className="diff-theme-select" onChange={(event) => setDiffTheme(event.target.value)} title="Diff theme" value={diffTheme}>
+                {DIFF_THEMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <button
+                aria-busy={committing}
+                aria-label="Commit and push changes to GitHub (⌘D / c+d)"
+                className={`commit-action${editedFileCount > 0 && !committing && commitStatus === "" ? " ready" : ""}${committing ? " committing" : ""}${commitStatus === "committed" ? " committed" : ""}${commitStatus === "error" ? " error" : ""}`}
+                disabled={committing || editedFileCount === 0}
+                onClick={() => void commitChanges()}
+                title={committing ? "Committing changes…" : editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : "Commit and push changes (⌘D)"}
+                type="button"
+              >
+                {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "committed" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
+                <span>{committing ? "Committing" : commitStatus === "committed" ? "Committed" : commitError || "Commit"}</span>
+                <kbd className="key-hint">⌘D</kbd>
+              </button>
+            </>
           )}
           {!repository && (
             <button aria-label="Copy raw diff as plain text" onClick={() => void copyRawDiff()} title="Copy raw diff">

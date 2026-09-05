@@ -2981,6 +2981,25 @@ button {
   font-size: 10px;
 }
 
+.diff-theme-select {
+  height: 27px;
+  max-width: 168px;
+  padding: 0 6px;
+  border: 1px solid #303034;
+  border-radius: 6px;
+  background: #151516;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
+
+.diff-theme-select:hover,
+.diff-theme-select:focus-visible {
+  border-color: #55515f;
+  color: #ededf0;
+}
+
 .viewer-actions > button:hover,
 .segmented-control button:hover,
 .segmented-control button.active,
