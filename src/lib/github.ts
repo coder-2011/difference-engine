@@ -201,7 +201,7 @@ type GitHubTimelineEvent = {
 type PullRequestCommitRecord = {
   author: GitHubUser | null;
   commit: {
-    author: { name: string } | null;
+    author: { date: string; name: string } | null;
     message: string;
   };
   sha: string;
@@ -864,6 +864,7 @@ function summarizePullRequestCommit(commit: PullRequestCommitRecord): PullReques
   return {
     additions: commit.stats?.additions,
     author: commit.author?.login ?? commit.commit.author?.name ?? "Unknown author",
+    date: commit.commit.author?.date,
     deletions: commit.stats?.deletions,
     message: commit.commit.message,
     sha: commit.sha,

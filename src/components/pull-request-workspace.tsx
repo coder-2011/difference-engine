@@ -95,6 +95,16 @@ function commitSummary(message: string): string {
   return message.split("\n", 1)[0] ?? "Untitled commit";
 }
 
+/** Formats a commit timestamp as today's local time or its full calendar date. */
+function commitDate(value: string): string {
+  const date = new Date(value);
+  const now = new Date();
+  const isToday = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  return isToday
+    ? date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+    : date.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+}
+
 /** Selects the first GitHub-enabled merge method, preferring the common squash flow. */
 function initialMergeMethod(methods: PullRequestMergeMethod[]): PullRequestMergeMethod {
   return methods.includes("squash") ? "squash" : methods[0] ?? "merge";
@@ -459,7 +469,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                   {commit.additions !== undefined && commit.deletions !== undefined && (
                     <span aria-label={`${commit.additions} additions and ${commit.deletions} deletions`} className="pr-commit-changes"><span className="additions">+{commit.additions.toLocaleString()}</span><span className="deletions">−{commit.deletions.toLocaleString()}</span></span>
                   )}
-                  <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}</span>
+                  <span className="pr-commit-meta">{commit.author} · {commit.sha.slice(0, 7)}{commit.date && <> · <time dateTime={commit.date}>{commitDate(commit.date)}</time></>}</span>
                 </article>
               ))}
             </details>
