@@ -20,7 +20,7 @@ export function getDiffWorkerPool(): WorkerPoolManager | undefined {
       {
         theme: "pierre-dark",
         preferredHighlighter: "shiki-js",
-        useTokenTransformer: true,
+        useTokenTransformer: false,
         tokenizeMaxLineLength: 5000,
         maxLineDiffLength: 1000,
       },

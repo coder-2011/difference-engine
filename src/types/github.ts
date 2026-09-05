@@ -32,6 +32,7 @@ export type DiffDocument = {
   headLabel?: string;
   repository: string;
   repositoryRef?: string;
+  revisionKey: string;
   pullRequest?: PullRequestWorkspace;
   sourceUrl: string;
   title: string;

@@ -285,9 +285,12 @@ type PullRequestFile = {
 
 type Compare = {
   ahead_by: number;
+  base_commit: { sha: string };
   behind_by: number;
+  commits: Array<{ sha: string }>;
   files?: PullRequestFile[];
   html_url: string;
+  merge_base_commit: { sha: string };
   status: string;
 };
 
@@ -1672,6 +1675,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
   if (parsed.kind === "repository") {
     const repository = await githubRequest<Repository>(parsed.apiPath, token);
     const repositoryRef = parsed.repositoryRef ?? repository.default_branch;
+    const commit = await githubRequest<Commit>(`${parsed.apiPath}/commits/${encodeURIComponent(repositoryRef)}`, token);
     const sourcePath = parsed.filePath
       ? `/blob/${encodeURIComponent(repositoryRef)}/${parsed.filePath.split("/").map(encodeURIComponent).join("/")}`
       : parsed.repositoryRef ? `/tree/${encodeURIComponent(repositoryRef)}` : "";
@@ -1684,6 +1688,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
       filePath: parsed.filePath,
       repository: parsed.repository,
       repositoryRef,
+      revisionKey: `${parsed.repository}:${commit.sha}`,
       sourceUrl: `${repository.html_url}${sourcePath}`,
       title: repository.name,
     };
@@ -1705,6 +1710,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
       headLabel: pullRequest.head.label,
       pullRequest: workspace,
       repository: parsed.repository,
+      revisionKey: `${parsed.repository}:${pullRequest.base.sha}:${pullRequest.head.sha}`,
       sourceUrl: pullRequest.html_url,
       title: pullRequest.title,
     };
@@ -1714,6 +1720,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
     const comparison = await githubRequest<Compare>(parsed.apiPath, token);
     const [baseLabel, headLabel] = parsed.value.split("...");
     const owner = parsed.repository.split("/")[0];
+    const headCommit = comparison.commits.at(-1)?.sha ?? comparison.base_commit.sha;
 
     return {
       author: owner,
@@ -1723,6 +1730,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
       description: `${comparison.ahead_by} commits ahead and ${comparison.behind_by} behind · ${comparison.status}`,
       headLabel,
       repository: parsed.repository,
+      revisionKey: `${parsed.repository}:${comparison.merge_base_commit.sha}:${headCommit}`,
       sourceUrl: comparison.html_url,
       title: `${baseLabel}…${headLabel}`,
     };
@@ -1740,6 +1748,7 @@ export async function getDiffDocument(source: string[], token?: string, includeP
     deletions: commit.stats?.deletions,
     description: description.join("\n").trim() || undefined,
     repository: parsed.repository,
+    revisionKey: `${parsed.repository}:${commit.parents?.[0]?.sha ?? "root"}:${commit.sha}`,
     sourceUrl: commit.html_url,
     title,
   };

@@ -37,6 +37,7 @@ type DiffViewerProps = {
   openAIConnected: boolean;
   pullRequestState?: "closed" | "merged" | "open";
   repositoryRef?: string;
+  revisionKey: string;
   reviewThreads?: PullRequestReviewThread[];
   source: string[];
 };
@@ -254,6 +255,7 @@ export function DiffViewer({
   openAIConnected,
   pullRequestState,
   repositoryRef,
+  revisionKey,
   reviewThreads = EMPTY_REVIEW_THREADS,
   source,
 }: DiffViewerProps) {
@@ -633,7 +635,7 @@ export function DiffViewer({
 
     /** Transfers a hovered response stream when possible, then falls back to the worker's normal fetch. */
     function startParser(stream?: ReadableStream<Uint8Array>): void {
-      const request = { cacheKey: source.join("/"), repository, url: `/api/diff/${path}` };
+      const request = { cacheKey: revisionKey, repository, url: `/api/diff/${path}` };
       if (!stream) {
         worker.postMessage(request);
         return;
@@ -666,7 +668,7 @@ export function DiffViewer({
       disposed = true;
       worker.terminate();
     };
-  }, [filePath, repository, source]);
+  }, [filePath, repository, revisionKey, source]);
 
   const diffFiles = parsedFiles ?? EMPTY_FILES;
   const codeFiles = repositoryFiles ?? EMPTY_REPOSITORY_FILES;
@@ -858,7 +860,7 @@ export function DiffViewer({
 
   /** Hydrates GitHub patch diffs with full old/new file contents so Pierre can attach its editor. */
   const loadDiffFiles = useCallback(async (fileDiff: FileDiffMetadata): Promise<FileDiffLoadedFiles> => {
-    const cacheKey = `${sourceKey}\0${fileDiff.name}\0${fileDiff.prevName ?? ""}\0${fileDiff.type}`;
+    const cacheKey = `${revisionKey}\0${fileDiff.name}\0${fileDiff.prevName ?? ""}\0${fileDiff.type}`;
     const cached = loadedDiffFilesRef.current.get(cacheKey);
     if (cached) return cached;
 
@@ -878,7 +880,7 @@ export function DiffViewer({
     loadedDiffFilesRef.current.set(cacheKey, request);
     request.catch(() => loadedDiffFilesRef.current.delete(cacheKey));
     return request;
-  }, [source, sourceKey]);
+  }, [revisionKey, source]);
 
   /** Records the current contents reported by a live Diffs editor. */
   const rememberItemEdit = useCallback((event: EditorChangeEvent<EditorType, undefined, undefined>, item: CodeViewItem<undefined>): void => {
@@ -893,6 +895,9 @@ export function DiffViewer({
     return "accept";
   }, [syncEditedFile]);
 
+  /** Retains an editor's in-memory view state only for the exact source revision it edits. */
+  const getEditStateKey = useCallback((item: CodeViewItem<undefined>) => `${revisionKey}\0${item.id}`, [revisionKey]);
+
   const items = useMemo<CodeViewItem<undefined>[]>(
     () => repository
       ? codeFiles.map((file) => ({
@@ -901,7 +906,7 @@ export function DiffViewer({
           file: {
             name: file.name,
             contents: canEdit ? file.contents : (editedFilesRef.current.get(file.name) ?? file.contents),
-            cacheKey: `${file.name}:${fileVersions[file.name] ?? 0}`,
+            cacheKey: `${revisionKey}:${file.name}:${fileVersions[file.name] ?? 0}`,
           },
           collapsed,
           edit: canEdit,
@@ -916,7 +921,7 @@ export function DiffViewer({
               file: {
                 name: file.name,
                 contents: editedFilesRef.current.get(file.name) ?? contentsFromDiffLines(file.additionLines),
-                cacheKey: `${file.name}:${fileVersions[file.name] ?? 0}`,
+                cacheKey: `${revisionKey}:${file.name}:${fileVersions[file.name] ?? 0}`,
               },
               collapsed,
               edit: true,
@@ -933,7 +938,7 @@ export function DiffViewer({
             version,
           };
         }),
-    [canEdit, codeFiles, collapsed, diffFiles, fileVersions, repository],
+    [canEdit, codeFiles, collapsed, diffFiles, fileVersions, repository, revisionKey],
   );
   const codeViewOptions = useMemo<CodeViewReactOptions<undefined, undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
@@ -994,7 +999,6 @@ export function DiffViewer({
         }
       }
     },
-    useTokenTransformer: true,
     unsafeCSS: DIFF_VIEWER_CSS,
   }), [diffTheme, editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
@@ -1148,6 +1152,7 @@ export function DiffViewer({
                 key={`${sourceKey}:${expandedContextVersion}`}
                 ref={viewerRef}
                 editorOptions={editorOptions}
+                getEditStateKey={getEditStateKey}
                 items={items}
                 onItemEditChange={rememberItemEdit}
                 onItemEditComplete={completeItemEdit}

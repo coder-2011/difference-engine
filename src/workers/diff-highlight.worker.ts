@@ -34,7 +34,7 @@ let renderOptions: RenderDiffOptions = {
   maxLineDiffLength: 1000,
   theme: "pierre-dark",
   tokenizeMaxLineLength: 5000,
-  useTokenTransformer: true,
+  useTokenTransformer: false,
 };
 
 async function getHighlighter(): Promise<DiffsHighlighter> {
@@ -62,11 +62,8 @@ async function handleInitialize(request: InitializeWorkerRequest) {
   if (request.resolvedLanguages) {
     attachResolvedLanguages(request.resolvedLanguages, highlighter);
   }
-  // SAFETY: InitializeWorkerRequest passes compatible render options; keep token transformer on for edit mode.
-  renderOptions = {
-    ...request.renderOptions,
-    useTokenTransformer: true,
-  } as RenderDiffOptions;
+  // SAFETY: InitializeWorkerRequest is the Diffs worker protocol's compatible render-options payload.
+  renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "initialize",
@@ -78,11 +75,8 @@ async function handleInitialize(request: InitializeWorkerRequest) {
 async function handleSetRenderOptions(request: SetRenderOptionsWorkerRequest) {
   const highlighter = await getHighlighter();
   attachResolvedThemes(request.resolvedThemes, highlighter);
-  // SAFETY: SetRenderOptionsWorkerRequest passes compatible render options; keep token transformer on for edit mode.
-  renderOptions = {
-    ...request.renderOptions,
-    useTokenTransformer: true,
-  } as RenderDiffOptions;
+  // SAFETY: SetRenderOptionsWorkerRequest is the Diffs worker protocol's compatible render-options payload.
+  renderOptions = request.renderOptions as RenderDiffOptions;
   self.postMessage({
     id: request.id,
     requestType: "set-render-options",
