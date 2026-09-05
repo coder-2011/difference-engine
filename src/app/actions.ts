@@ -9,10 +9,14 @@ import { getGitHubAccessToken } from "@/lib/session";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const MAX_AI_LAUNCHER_CANDIDATES = 200;
+// Candidate selection has one model round and needs room for a populated dashboard prompt.
+const AI_LAUNCHER_TIMEOUT_MS = 25_000;
 
 /** Extracts the text returned by one non-streaming ChatGPT response. */
 function modelOutputText(value: JsonValue): string {
-  if (!isRecord(value) || !Array.isArray(value.output)) return "";
+  if (!isRecord(value)) return "";
+  if (isString(value.output_text)) return value.output_text.trim();
+  if (!Array.isArray(value.output)) return "";
 
   return value.output.flatMap((item: JsonValue) => {
     if (!isRecord(item) || !Array.isArray(item.content)) return [];
@@ -23,13 +27,16 @@ function modelOutputText(value: JsonValue): string {
   }).join("").trim();
 }
 
-/** Accepts the one returned dashboard path while tolerating harmless Markdown wrappers. */
+/** Accepts one listed dashboard path even when the model adds harmless response wrappers. */
 function selectedViewerPath(value: JsonValue, paths: ReadonlySet<string>): string | null {
   const output = modelOutputText(value)
     .replace(/^```(?:text)?\s*|\s*```$/g, "")
     .trim()
     .replace(/^["'`]+|["'`]+$/g, "");
-  return paths.has(output) ? output : null;
+  if (paths.has(output)) return output;
+
+  const matches = Array.from(paths).filter((path) => output.includes(path));
+  return matches.length === 1 ? matches[0] : null;
 }
 
 /** Uses the lightweight ChatGPT model to select one exact pull request from the signed-in user's dashboard. */
@@ -51,6 +58,7 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
   const response = await fetch(CODEX_RESPONSES_URL, {
     method: "POST",
     headers: {
+      Accept: "application/json",
       Authorization: `Bearer ${access.accessToken}`,
       "chatgpt-account-id": access.session.accountId,
       "Content-Type": "application/json",
@@ -73,7 +81,7 @@ async function viewerPathFromRequest(value: string): Promise<string | null> {
       stream: false,
       tools: [],
     }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(AI_LAUNCHER_TIMEOUT_MS),
   });
 
   if (!response.ok) return null;
