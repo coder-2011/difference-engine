@@ -1,8 +1,8 @@
 "use client";
 
-import type { CodeViewItem, CodeViewLineSelection, FileContents, FileDiffLoadedFiles, FileDiffMetadata } from "@pierre/diffs";
-import { Editor, type EditorOptions } from "@pierre/diffs/edit";
-import type { CodeViewHandle, CodeViewReactOptions, CreateEditor } from "@pierre/diffs/react";
+import type { CodeViewItem, CodeViewLineSelection, FileDiffLoadedFiles, FileDiffMetadata } from "@pierre/diffs";
+import { Editor, type EditorChangeEvent, type EditorFactory, type EditorOptions, type EditorType } from "@pierre/diffs/edit";
+import type { CodeViewHandle, CodeViewItemEditCompleteHandler, CodeViewReactOptions } from "@pierre/diffs/react";
 import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView, EditProvider, WorkerPoolContext } from "@pierre/diffs/react";
@@ -142,7 +142,8 @@ const DIFF_VIEWER_CSS = `
 
 configureDiffHighlighting();
 
-const createDiffEditor: CreateEditor<undefined> = (options: EditorOptions<undefined>) => new Editor(options);
+/** Creates the matching Diffs editor for each file or diff item. */
+const createDiffEditor: EditorFactory<undefined, undefined> = (editorType, options, editStateKey) => new Editor(editorType, options, editStateKey);
 
 /** Maps Diffs' change vocabulary onto Trees' git-status vocabulary. */
 function gitStatusForFile(file: FileDiffMetadata): GitStatus {
@@ -285,7 +286,7 @@ export function DiffViewer({
   const committingRef = useRef(false);
   const commitStatusTimerRef = useRef<number>(0);
   const openChatRef = useRef<(() => void) | null>(null);
-  const viewerRef = useRef<CodeViewHandle<undefined>>(null);
+  const viewerRef = useRef<CodeViewHandle<undefined, undefined>>(null);
   const expandedContextScrollTopRef = useRef<number | undefined>(undefined);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
@@ -339,8 +340,7 @@ export function DiffViewer({
     if (viewer) {
       const tracked = repository ? (repositoryFiles ?? EMPTY_REPOSITORY_FILES) : (parsedFiles ?? EMPTY_FILES);
       for (const file of tracked) {
-        // SAFETY: CodeViewHandle.getEditor returns DiffsEditor; createDiffEditor always constructs Editor.
-        const live = (viewer.getEditor(file.name) as Editor<undefined> | undefined)?.getFile()?.contents;
+        const live = viewer.getEditor(file.name)?.getFile()?.contents;
         if (live === undefined) continue;
         syncEditedFile(file.name, live);
       }
@@ -836,7 +836,7 @@ export function DiffViewer({
 
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
   // CodeView already retains per-item editors. persistState would restore the shared list scrollTop per file.
-  const editorOptions = useMemo<EditorOptions<undefined>>(() => ({}), []);
+  const editorOptions = useMemo<EditorOptions<EditorType, undefined, undefined>>(() => ({}), []);
   const canEdit = editMode && !isReadOnly;
   const loadedDiffFilesRef = useRef(new Map<string, Promise<FileDiffLoadedFiles>>());
 
@@ -864,11 +864,20 @@ export function DiffViewer({
     return request;
   }, [source, sourceKey]);
 
-  const rememberItemEdit = useCallback((item: CodeViewItem, file: FileContents) => {
-    syncEditedFile(item.id, file.contents);
+  /** Records the current contents reported by a live Diffs editor. */
+  const rememberItemEdit = useCallback((event: EditorChangeEvent<EditorType, undefined, undefined>, item: CodeViewItem<undefined>): void => {
+    syncEditedFile(item.id, event.file.contents);
   }, [syncEditedFile]);
 
-  const items = useMemo<CodeViewItem[]>(
+  /** Accepts Diffs' completed editor state after recording its final file contents. */
+  const completeItemEdit = useCallback<CodeViewItemEditCompleteHandler<undefined, undefined>>((event, item) => {
+    // Diffs emits a file directly for file edits and the new side for diff edits.
+    const file = "file" in event ? event.file : event.newFile;
+    if (file) syncEditedFile(item.id, file.contents);
+    return "accept";
+  }, [syncEditedFile]);
+
+  const items = useMemo<CodeViewItem<undefined>[]>(
     () => repository
       ? codeFiles.map((file) => ({
           id: file.name,
@@ -910,7 +919,7 @@ export function DiffViewer({
         }),
     [canEdit, codeFiles, collapsed, diffFiles, fileVersions, repository],
   );
-  const codeViewOptions = useMemo<CodeViewReactOptions<undefined>>(() => ({
+  const codeViewOptions = useMemo<CodeViewReactOptions<undefined, undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
     enableLineSelection: repository && (!editMode || isReadOnly),
@@ -1120,7 +1129,7 @@ export function DiffViewer({
                 editorOptions={editorOptions}
                 items={items}
                 onItemEditChange={rememberItemEdit}
-                onItemEditComplete={rememberItemEdit}
+                onItemEditComplete={completeItemEdit}
                 onSelectedLinesChange={repository ? rememberRepositorySelection : undefined}
                 options={codeViewOptions}
               />

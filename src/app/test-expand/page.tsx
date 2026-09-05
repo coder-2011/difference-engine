@@ -1,9 +1,10 @@
 "use client";
 
 import type { CodeViewItem } from "@pierre/diffs";
-import { Editor, type EditorOptions } from "@pierre/diffs/edit";
+import { Editor, type EditorFactory } from "@pierre/diffs/edit";
 import { parsePatchFiles } from "@pierre/diffs";
-import { CodeView, EditProvider, WorkerPoolContext, type CodeViewHandle, type CodeViewReactOptions, type CreateEditor } from "@pierre/diffs/react";
+import { CodeView, EditProvider, WorkerPoolContext, type CodeViewHandle, type CodeViewReactOptions } from "@pierre/diffs/react";
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef } from "react";
 import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 
@@ -23,14 +24,19 @@ const PATCH = [
   " const tailB = 12;",
 ].join("\n");
 
-const createDiffEditor: CreateEditor<undefined> = (options: EditorOptions<undefined>) => new Editor(options);
+/** Creates the matching Diffs editor for each file or diff item. */
+const createDiffEditor: EditorFactory<undefined, undefined> = (editorType, options, editStateKey) => new Editor(editorType, options, editStateKey);
+
+type CodeViewStyle = CSSProperties & { "--diffs-font-size": string };
+
+const codeViewStyle: CodeViewStyle = { "--diffs-font-size": "13px" };
 
 export default function TestExpandPage() {
-  const viewerRef = useRef<CodeViewHandle<undefined>>(null);
+  const viewerRef = useRef<CodeViewHandle<undefined, undefined>>(null);
   const workerPool = useMemo(() => getDiffWorkerPool(), []);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const instance = (viewerRef.current as { getInstance?: () => unknown } | null)?.getInstance?.();
+      const instance = viewerRef.current?.getInstance();
       console.log("[test] instance:", instance == null ? "null" : "present");
       // SAFETY: diagnostic page only.
       const container = document.querySelector("main > div:last-of-type > div") as HTMLElement | null;
@@ -38,7 +44,7 @@ export default function TestExpandPage() {
     }, 2000);
     return () => window.clearTimeout(timer);
   }, []);
-  const items = useMemo<CodeViewItem[]>(() => {
+  const items = useMemo<CodeViewItem<undefined>[]>(() => {
     const [parsed] = parsePatchFiles(PATCH, "test", true);
     return parsed.files.map((file) => ({
       id: file.name,
@@ -47,7 +53,7 @@ export default function TestExpandPage() {
       collapsed: false,
     }));
   }, []);
-  const options = useMemo<CodeViewReactOptions<undefined>>(() => ({
+  const options = useMemo<CodeViewReactOptions<undefined, undefined>>(() => ({
     diffStyle: "split",
     diffIndicators: "bars",
     collapsedContextThreshold: 0,
@@ -91,7 +97,7 @@ export default function TestExpandPage() {
         expand first separator
       </button>
       <div data-count-before id="count" />
-      <div style={{ "--diffs-font-size": "13px" } as React.CSSProperties}>
+      <div style={codeViewStyle}>
         <WorkerPoolContext.Provider value={workerPool}>
           <EditProvider createEditor={createDiffEditor}>
             <CodeView ref={viewerRef} items={items} options={options} />
