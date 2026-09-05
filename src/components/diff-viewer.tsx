@@ -7,7 +7,7 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView, EditProvider, WorkerPoolContext } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { Check, ChevronDown, ChevronRight, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -262,6 +262,8 @@ export function DiffViewer({
   const [error, setError] = useState("");
   const [split, setSplit] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [expandedContextVersion, setExpandedContextVersion] = useState(0);
+  const [hasExpandedContext, setHasExpandedContext] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [codeFontSize, setCodeFontSize] = useState(DEFAULT_CODE_FONT_SIZE);
   const [rawDiffCopyStatus, setRawDiffCopyStatus] = useState("");
@@ -284,6 +286,7 @@ export function DiffViewer({
   const commitStatusTimerRef = useRef<number>(0);
   const openChatRef = useRef<(() => void) | null>(null);
   const viewerRef = useRef<CodeViewHandle<undefined>>(null);
+  const expandedContextScrollTopRef = useRef<number | undefined>(undefined);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const callFlowLoaded = loadedCallFlowSource === sourceKey;
@@ -294,7 +297,24 @@ export function DiffViewer({
     setEditedFileCount(0);
     setCommitStatus("");
     setCommitError("");
+    setHasExpandedContext(false);
   }, [sourceKey]);
+
+  // A CodeView remount resets Pierre's expanded-hunk state, so restore the user's reading position afterward.
+  useEffect(() => {
+    const scrollTop = expandedContextScrollTopRef.current;
+    if (scrollTop === undefined) return;
+
+    viewerRef.current?.scrollTo({ behavior: "instant", position: scrollTop, type: "position" });
+    expandedContextScrollTopRef.current = undefined;
+  }, [expandedContextVersion]);
+
+  /** Restores collapsed diff context after the user expanded one or more hidden line ranges. */
+  function collapseExpandedContext(): void {
+    expandedContextScrollTopRef.current = viewerRef.current?.getInstance()?.getScrollTop();
+    setExpandedContextVersion((version) => version + 1);
+    setHasExpandedContext(false);
+  }
 
   /** Records or clears a dirty file only when the editor text differs from the last saved baseline. */
   const syncEditedFile = useCallback((path: string, contents: string): void => {
@@ -908,6 +928,10 @@ export function DiffViewer({
       const shadowRoot = node.shadowRoot;
       if (!shadowRoot) return;
 
+      // Pierre only exposes expansion through its rendered line type; this keeps the matching collapse control reachable.
+      const containsExpandedContext = shadowRoot.querySelector('[data-line-type="context-expanded"]') !== null;
+      if (containsExpandedContext) setHasExpandedContext(true);
+
       shadowRoot.querySelectorAll(".diffs-inline-comment-marker").forEach((marker) => marker.remove());
       const markers = inlineCommentMarkersByFile.get(context.item.id);
       if (markers?.length) {
@@ -1067,6 +1091,11 @@ export function DiffViewer({
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
             {collapsed ? "Expand" : "Collapse"}
           </button>
+          {hasExpandedContext && !editMode && (
+            <button aria-label="Collapse expanded diff lines" onClick={collapseExpandedContext} title="Collapse expanded lines" type="button">
+              <ChevronUp size={15} /> Collapse lines
+            </button>
+          )}
           {!repository && (
             <div className="segmented-control">
               <button className={!split ? "active" : ""} onClick={() => setSplit(false)} title="Unified view"><Rows3 size={14} /></button>
@@ -1086,6 +1115,7 @@ export function DiffViewer({
           <WorkerPoolContext.Provider value={workerPool}>
             <EditProvider createEditor={createDiffEditor}>
               <CodeView
+                key={`${sourceKey}:${expandedContextVersion}`}
                 ref={viewerRef}
                 editorOptions={editorOptions}
                 items={items}
