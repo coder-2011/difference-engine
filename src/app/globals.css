@@ -3789,15 +3789,22 @@ button {
 
 .selected-snippet {
   flex: none;
-  max-height: 96px;
-  padding: 10px 12px;
-  overflow: auto;
+  min-width: 0;
   border-bottom: 1px solid var(--line-soft);
   background: #0d0d0e;
   color: #78787e;
   font-family: var(--font-mono);
   font-size: calc(var(--chat-font-size) * 0.75);
   line-height: 1.45;
+}
+
+/* Gives the saved source its own two-axis code viewport instead of clipping it in the panel. */
+.selected-snippet-code {
+  box-sizing: border-box;
+  max-height: 132px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
   white-space: pre;
 }
 
@@ -3814,6 +3821,11 @@ button {
   line-height: inherit;
   text-align: left;
   white-space: pre;
+}
+
+.selected-snippet-item code {
+  display: block;
+  font: inherit;
 }
 
 .selected-snippet-item:hover,

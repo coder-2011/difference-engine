@@ -495,7 +495,7 @@ function selectionLocation(range: Range): CodeSelectionLocation | undefined {
   };
 }
 
-/** Renders plain code until hover or focus requests cached Pierre syntax tokens. */
+/** Renders code with Pierre syntax tokens when the caller requests them. */
 function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouseLeave }: SyntaxSnippetProps) {
   const [highlighted, setHighlighted] = useState<SnippetHighlight>();
   const language = codeSelection.location ? getFiletypeFromFileName(codeSelection.location.id) : undefined;
@@ -541,34 +541,24 @@ function SyntaxSnippet({ active, className, codeSelection, onMouseEnter, onMouse
   );
 }
 
-/** Lazily applies Pierre's syntax colors while a saved selection is hovered or focused. */
+/** Renders a selected source range as formatted code and reopens it in the diff on click. */
 function SelectedSnippet({ codeSelection, onShow }: SelectedSnippetProps) {
-  const [active, setActive] = useState(false);
-
-  /** Returns to plain text when the pointer leaves the saved selection. */
-  function stopHighlighting(): void {
-    setActive(false);
-  }
-
-  /** Reveals the source and preserves syntax colors for pointer clicks that do not focus buttons. */
+  /** Reveals the source range this chat question is about. */
   function showSnippet(): void {
-    setActive(true);
     onShow(codeSelection);
   }
 
   return (
-    <button
-      className="selected-snippet-item"
-      onBlur={() => setActive(false)}
-      onClick={showSnippet}
-      onFocus={() => setActive(true)}
-      onMouseEnter={() => setActive(true)}
-      onMouseLeave={stopHighlighting}
-      title="Show this code in the diff"
-      type="button"
-    >
-      <SyntaxSnippet active={active} codeSelection={codeSelection} />
-    </button>
+    <pre className="selected-snippet-code">
+      <button
+        className="selected-snippet-item"
+        onClick={showSnippet}
+        title="Show this code in the diff"
+        type="button"
+      >
+        <code><SyntaxSnippet active codeSelection={codeSelection} /></code>
+      </button>
+    </pre>
   );
 }
 
