@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { createCommitAndPush, getCommitSubjectContext, GitHubError, type CommitFileChange } from "@/lib/github";
 import { isRecord, isString } from "@/lib/json";
 import { getOpenAIAccess, isSameOrigin } from "@/lib/openai-auth";
 import { getGitHubAccessToken } from "@/lib/session";
+import { parseStructured, readStreamedOutputText, structuredTextFormat } from "@/lib/structured";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const COMMIT_SUBJECT_MODEL = "gpt-5.3-codex-spark";
 const COMMIT_SUBJECT_FALLBACK_MODEL = process.env.OPENAI_OAUTH_AUTOCOMPLETE_MODEL ?? "gpt-5.6-luna";
-const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Use the repository tree, README, pull request description, and the unified diffs of the files being committed. Describe these edits, not the whole pull request, unless the edits are the whole change. Write a concise, one-line git commit subject. Output only one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes. Return only the commit subject.";
+const COMMIT_SUBJECT_INSTRUCTIONS = "You generate concise git commit subjects following Naman's style. Use the repository tree, README, pull request description, and the unified diffs of the files being committed. Describe these edits, not the whole pull request, unless the edits are the whole change. Write a concise, one-line git commit subject. Set the subject field to one line: a lowercase, literal description of the change (e.g. \"update landing hero layout\" or \"fix token expiration check\"). Prefer a short action phrase starting with a verb like \"add\", \"fix\", \"update\", \"remove\", \"make\", \"speed up\". Do not use conventional-commit prefixes like feat: or fix:. Do not use emojis, trailing periods, scopes, quotes, or em dashes.";
+const COMMIT_SUBJECT_SCHEMA = z.strictObject({ subject: z.string() });
 
 type RouteContext = {
   params: Promise<{ source: string[] }>;
@@ -40,7 +43,7 @@ async function requestCommitSubject(access: { accessToken: string; session: { ac
   const upstream = await fetch(CODEX_RESPONSES_URL, {
     method: "POST",
     headers: {
-      Accept: "application/json",
+      Accept: "text/event-stream",
       Authorization: `Bearer ${access.accessToken}`,
       "chatgpt-account-id": access.session.accountId,
       "Content-Type": "application/json",
@@ -54,20 +57,16 @@ async function requestCommitSubject(access: { accessToken: string; session: { ac
       reasoning: { effort: "low" },
       service_tier: "priority",
       store: false,
-      stream: false,
+      stream: true,
+      text: structuredTextFormat("commit_subject", COMMIT_SUBJECT_SCHEMA),
       tools: [],
     }),
   });
 
   if (!upstream.ok) return "";
 
-  const payload: unknown = await upstream.json().catch(() => null);
-  if (!isRecord(payload) || !Array.isArray(payload.output)) return "";
-  return payload.output.flatMap((item) => (
-    isRecord(item) && Array.isArray(item.content)
-      ? item.content.flatMap((content) => isRecord(content) && content.type === "output_text" && isString(content.text) ? [content.text] : [])
-      : []
-  )).join("");
+  const structured = parseStructured(COMMIT_SUBJECT_SCHEMA, await readStreamedOutputText(upstream));
+  return structured?.subject ?? "";
 }
 
 /** Generates a concise git commit subject following Naman's writing style. */
