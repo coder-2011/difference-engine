@@ -7,7 +7,7 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { getFiletypeFromFileName, preloadHighlighter } from "@pierre/diffs";
 import { CodeView, EditProvider, WorkerPoolContext } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, ClipboardCopy, Columns2, FileText, GitCommitHorizontal, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Pencil, Rows3 } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,7 @@ import { configureDiffHighlighting } from "@/lib/diff-highlighting";
 import { takePreloadedDiff } from "@/lib/diff-preload";
 import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
+import { ChatMark } from "./chat-mark";
 import { PR_WORKSPACE_REFRESH_EVENT } from "./pull-request-workspace";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
@@ -1023,7 +1024,7 @@ export function DiffViewer({
           onClick={() => openChatRef.current?.()}
           type="button"
         >
-          <Sparkles size={13} />
+          <ChatMark />
           <span>Ask Diffs</span>
         </button>
         {!showingCallDiff && !isReadOnly && (

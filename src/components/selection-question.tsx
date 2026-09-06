@@ -1,11 +1,12 @@
 "use client";
 
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
-import { Check, ClipboardCopy, CornerDownLeft, GitFork, Github, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, Sparkles, X } from "lucide-react";
+import { Check, ClipboardCopy, CornerDownLeft, GitFork, Github, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChatMark } from "@/components/chat-mark";
 import { GitHubMarkdown, parseCodeReference, type CodeReference } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { isInteger, isRecord, isString, type JsonValue } from "@/lib/json";
@@ -1323,7 +1324,7 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
         onPointerMove={movePanel}
         onPointerUp={stopDragging}
       >
-        <span className="question-panel-title"><Sparkles size={14} /><span>Ask Diffs</span><GripHorizontal className="drag-hint" size={13} /></span>
+        <span className="question-panel-title"><ChatMark /><span>Ask Diffs</span><GripHorizontal className="drag-hint" size={13} /></span>
         <span className="question-panel-header-actions">
           <button aria-label="Fork chat" onClick={forkPanel} title="Fork chat" type="button"><GitFork size={14} /></button>
           <button aria-label="Close" onClick={closePanel} type="button"><X size={15} /></button>
