@@ -3,7 +3,7 @@
 import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import Image from "next/image";
 import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
@@ -155,34 +155,55 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const pendingActionRef = useRef<PullRequestAction["action"] | undefined>(undefined);
   const refreshGenerationRef = useRef(0);
   pendingActionRef.current = pendingAction;
-  // Keep a preserved client workspace renderable while a deployment adds new conversation fields.
-  const reviewThreads = workspace.reviewThreads ?? [];
-  const timelineEvents = workspace.timelineEvents ?? [];
-  // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
-  const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
-  const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
-  const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
-  const openState = openPullRequestState(workspace);
-  // GitHub interleaves normal comments, reviews, and activity records by time in one conversation.
-  const conversationItems = [
-    ...workspace.comments.map((entry) => ({ createdAt: entry.createdAt, entry, kind: "comment" as const, key: entry.key })),
-    ...timelineEvents.map((event) => ({ createdAt: event.createdAt, event, kind: "event" as const, key: event.key })),
-  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
-  const reviewThreadsByReview = new Map<number, typeof reviewThreads>();
-  // Group each inline discussion once before rendering every submitted review in the timeline.
-  for (const thread of reviewThreads) {
-    if (!thread.reviewId) continue;
-    const threads = reviewThreadsByReview.get(thread.reviewId) ?? [];
-    threads.push(thread);
-    reviewThreadsByReview.set(thread.reviewId, threads);
-  }
-  const renderedReviewIds = new Set(
-    conversationItems
-      .filter((item): item is typeof item & { kind: "comment" } => item.kind === "comment")
-      .map((item) => item.entry.reviewId)
-      .filter((id): id is number => typeof id === "number"),
-  );
-  const unattachedThreads = reviewThreads.filter((thread) => !thread.reviewId || !renderedReviewIds.has(thread.reviewId));
+  const {
+    conversationItems,
+    failedCheckCount,
+    openState,
+    reviewThreads,
+    reviewThreadsByReview,
+    skippedOrPendingCheckCount,
+    successfulCheckCount,
+    unattachedThreads,
+  } = useMemo(() => {
+    // Keep a preserved client workspace renderable while a deployment adds new conversation fields.
+    const reviewThreads = workspace.reviewThreads ?? [];
+    const timelineEvents = workspace.timelineEvents ?? [];
+    // Collapses GitHub workflow state into the color counts exposed by the compact CI footer.
+    const successfulCheckCount = workspace.workflowRuns.filter((run) => run.status === "completed" && run.conclusion === "success").length;
+    const skippedOrPendingCheckCount = workspace.workflowRuns.filter((run) => run.conclusion === "skipped" || run.status !== "completed" || run.conclusion === "neutral" || run.conclusion === "stale").length;
+    const failedCheckCount = workspace.workflowRuns.filter((run) => ["action_required", "cancelled", "failure", "startup_failure", "timed_out"].includes(run.conclusion ?? "")).length;
+    // GitHub interleaves normal comments, reviews, and activity records by time in one conversation.
+    const conversationItems = [
+      ...workspace.comments.map((entry) => ({ createdAt: entry.createdAt, entry, kind: "comment" as const, key: entry.key })),
+      ...timelineEvents.map((event) => ({ createdAt: event.createdAt, event, kind: "event" as const, key: event.key })),
+    ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+    const reviewThreadsByReview = new Map<number, typeof reviewThreads>();
+    // Group each inline discussion once before rendering every submitted review in the timeline.
+    for (const thread of reviewThreads) {
+      if (!thread.reviewId) continue;
+      const threads = reviewThreadsByReview.get(thread.reviewId) ?? [];
+      threads.push(thread);
+      reviewThreadsByReview.set(thread.reviewId, threads);
+    }
+    const renderedReviewIds = new Set(
+      conversationItems
+        .filter((item): item is typeof item & { kind: "comment" } => item.kind === "comment")
+        .map((item) => item.entry.reviewId)
+        .filter((id): id is number => typeof id === "number"),
+    );
+    const unattachedThreads = reviewThreads.filter((thread) => !thread.reviewId || !renderedReviewIds.has(thread.reviewId));
+
+    return {
+      conversationItems,
+      failedCheckCount,
+      openState: openPullRequestState(workspace),
+      reviewThreads,
+      reviewThreadsByReview,
+      skippedOrPendingCheckCount,
+      successfulCheckCount,
+      unattachedThreads,
+    };
+  }, [workspace]);
   // Hide automation metadata in rendered prose while retaining it in the editable GitHub body.
   const visibleBody = body.replace(PR_STATES_BLOCK, "").trim();
 

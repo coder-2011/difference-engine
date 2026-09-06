@@ -23,13 +23,14 @@ const EMPTY_PULL_REQUEST_PAGE: PullRequestPage = {
 
 /** Renders the URL launcher and, when authenticated, the user's active and recent PR inbox. */
 export default async function Home({ searchParams }: HomeProps) {
-  const [session, params, accessToken, openAIConnected] = await Promise.all([
+  const accessTokenPromise = getGitHubAccessToken();
+  const [session, params, accessToken, githubConnected, openAIConnected] = await Promise.all([
     auth(),
     searchParams,
-    getGitHubAccessToken(),
+    accessTokenPromise,
+    accessTokenPromise.then(isGitHubConnected),
     isOpenAIConnected(),
   ]);
-  const githubConnected = await isGitHubConnected(accessToken);
   const githubToken = githubConnected ? accessToken : undefined;
   const [pullRequestPage, recentPullRequests] = githubToken
     ? await Promise.all([

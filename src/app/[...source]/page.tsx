@@ -33,12 +33,13 @@ export async function generateMetadata({ params }: DiffPageProps): Promise<Metad
 
 /** Renders GitHub metadata above the virtualized, interactive diff workspace. */
 export default async function DiffPage({ params }: DiffPageProps) {
-  const [{ source }, accessToken, openAIConnected] = await Promise.all([
+  const accessTokenPromise = getGitHubAccessToken();
+  const [{ source }, accessToken, githubConnected, openAIConnected] = await Promise.all([
     params,
-    getGitHubAccessToken(),
+    accessTokenPromise,
+    accessTokenPromise.then(isGitHubConnected),
     isOpenAIConnected(),
   ]);
-  const githubConnected = await isGitHubConnected(accessToken);
   const githubSignedOut = Boolean(accessToken && !githubConnected);
   const githubToken = githubConnected ? accessToken : undefined;
   const sourceKey = JSON.stringify(source);
