@@ -26,6 +26,7 @@ const MAX_PRIOR_HIGHLIGHTS = 3;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
 const RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const;
+const OPENAI_ACCESS_HEADER = "x-diffs-openai-access";
 
 type Point = {
   x: number;
@@ -214,6 +215,17 @@ type SnippetHighlight = {
   source: string;
   tokens: SnippetToken[][];
 };
+
+/** Refreshes the normal OpenAI login before each Eve request without exposing its token to browser code. */
+async function eveHeaders(): Promise<Record<string, string>> {
+  const response = await fetch("/api/auth/openai/eve", { method: "POST" });
+  const payload: unknown = await response.json().catch(() => null);
+  const credential = isRecord(payload) && isString(payload.credential) ? payload.credential : "";
+  const error = isRecord(payload) && isString(payload.error) ? payload.error : "OpenAI could not authenticate this request.";
+  if (!response.ok || !credential) throw new Error(error);
+
+  return { [OPENAI_ACCESS_HEADER]: credential };
+}
 
 /** Builds a GitHub-style patch fragment from one copied annotation. */
 function annotationDiff(code: string, location?: CodeSelectionLocation): string[] {
@@ -599,6 +611,7 @@ function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork,
   const inputResizeRef = useRef<InputResizeState | null>(null);
   const momentumFrameRef = useRef(0);
   const agent = useEveAgent({
+    headers: eveHeaders,
     onError(error) {
       // Eve transport errors do not append an assistant message, so attach one to the active turn.
       setAgentError(error.message);

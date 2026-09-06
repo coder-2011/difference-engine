@@ -1010,6 +1010,7 @@ export function DiffViewer({
     unsafeCSS: DIFF_VIEWER_CSS,
   }), [diffTheme, editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
   const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
+  const askEnabled = githubConnected && openAIConnected;
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
 
@@ -1028,9 +1029,9 @@ export function DiffViewer({
         <button
           aria-label="Open Ask Diffs"
           className="sidebar-bottom-action ask-diffs-btn"
-          disabled={!githubConnected}
+          disabled={!askEnabled}
           onClick={() => openChatRef.current?.()}
-          title={githubConnected ? "Open Ask Diffs" : "Sign in with GitHub to ask about this review"}
+          title={askEnabled ? "Open Ask Diffs" : githubConnected ? "Connect OpenAI to ask about this review" : "Sign in with GitHub to ask about this review"}
           type="button"
         >
           <ChatMark />
@@ -1175,7 +1176,7 @@ export function DiffViewer({
       </div>
       </>}
       <SelectionQuestion
-        aiEnabled={githubConnected}
+        aiEnabled={askEnabled}
         annotationContainerKey={`${reviewView}-${sidebarOpen}`}
         githubConnected={githubConnected}
         onAnnotationsChange={setLocalAnnotations}
