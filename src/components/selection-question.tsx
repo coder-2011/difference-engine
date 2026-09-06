@@ -1189,7 +1189,7 @@ function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork,
     <aside
       ref={panelRef}
       aria-label={selection.text ? "Ask about selected code" : "Ask Diffs"}
-      className={`question-panel${isActive ? " active" : ""}${isDraggingFiles ? " dragging-files" : ""}`}
+      className={`question-panel${conversationActive ? " has-conversation" : ""}${isActive ? " active" : ""}${isDraggingFiles ? " dragging-files" : ""}`}
       data-chat-id={chat.id}
       onDragEnter={beginFileDrag}
       onDragLeave={endFileDrag}

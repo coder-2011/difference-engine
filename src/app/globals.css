@@ -3679,7 +3679,7 @@ button {
   right: 16px;
   bottom: 16px;
   display: flex;
-  max-height: min(640px, calc(100vh - 32px));
+  max-height: calc(100vh - 32px);
   max-width: calc(100vw - 16px);
   width: min(380px, calc(100vw - 32px));
   min-width: 300px;
@@ -3694,6 +3694,10 @@ button {
 
 .question-panel.active {
   z-index: 91;
+}
+
+.question-panel.has-conversation {
+  height: min(760px, calc(100vh - 32px));
 }
 
 /* Preserves a clean panel edge while accepting all edge and corner resize gestures. */
@@ -4266,8 +4270,9 @@ button {
 }
 
 .chat-markdown pre {
+  max-height: min(420px, 55vh);
   padding: 8px;
-  overflow-x: auto;
+  overflow: auto;
   border: 1px solid #29292d;
   border-radius: 6px;
   background: #0c0c0d;
