@@ -4297,7 +4297,7 @@ button {
 
 .asked-question.chat-markdown {
   color: #fff;
-  font-size: 12px;
+  font-size: var(--chat-font-size);
   font-weight: 680;
   line-height: 1.4;
 }
