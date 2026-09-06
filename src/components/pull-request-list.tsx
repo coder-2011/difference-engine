@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ChevronDown, ChevronUp, Search } from "lucide-react";
+import { ArrowRight, ChevronDown, Search } from "lucide-react";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { cancelPullRequestDiffPreload, preloadPullRequestDiff } from "@/lib/diff-preload";
 import type { PullRequestPage, PullRequestSummary } from "@/types/github";
@@ -99,7 +99,7 @@ export function PullRequestList({ initialPage, pullRequests: staticPullRequests 
     : filteredPullRequests.slice(0, INITIAL_COUNT);
   const hiddenCount = Math.max(0, filteredPullRequests.length - INITIAL_COUNT);
   const canLoadMore = variant === "open" && nextCursor !== null;
-  const canShowMore = hiddenCount > 0 || canLoadMore;
+  const canShowMore = (!expanded && hiddenCount > 0) || canLoadMore;
 
   /** Updates the filter and returns the list to its compact state. */
   function handleQueryChange(value: string): void {
@@ -151,7 +151,6 @@ export function PullRequestList({ initialPage, pullRequests: staticPullRequests 
       return;
     }
 
-    setExpanded(false);
   }
 
   /** Begins loading the hovered pull request's raw diff before navigation. */
@@ -226,8 +225,8 @@ export function PullRequestList({ initialPage, pullRequests: staticPullRequests 
 
       {canShowMore && (
         <button aria-busy={loadingMore} className="pull-more" disabled={loadingMore} type="button" onClick={showMore}>
-          {loadingMore ? "loading more" : loadMoreError ? "retry loading" : !expanded && hiddenCount > 0 ? `load next ${hiddenCount}` : canLoadMore ? "load more" : "show less"}
-          {expanded && !canLoadMore ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {loadingMore ? "loading more" : loadMoreError ? "retry loading" : !expanded && hiddenCount > 0 ? `load next ${hiddenCount}` : "load more"}
+          <ChevronDown size={14} />
         </button>
       )}
     </div>
