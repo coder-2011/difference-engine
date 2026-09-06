@@ -365,6 +365,9 @@ const ANONYMOUS_CONTEXT_FILE_COUNT = 8;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
 const REPOSITORY_PATH_PAGE_SIZE = 250;
+const REPOSITORY_SEARCH_FILE_LIMIT = 1_000_000;
+const REPOSITORY_SEARCH_MATCH_LIMIT = 24;
+const REPOSITORY_SEARCH_PAGE_SIZE = 16;
 const COMMIT_CONTEXT_TREE_LIMIT = 20_000;
 const COMMIT_CONTEXT_README_LIMIT = 8_000;
 const COMMIT_CONTEXT_DESCRIPTION_LIMIT = 8_000;
@@ -1628,6 +1631,41 @@ export async function listRepositoryPaths(source: string[], cursor: number, quer
     revision: repositorySnapshot.revision,
     totalPaths: paths.length,
   };
+}
+
+/** Finds matching text in one bounded page of source files from the selected repository revision. */
+export async function searchRepositoryText(source: string[], query: string, cursor: number, token?: string, revision?: string): Promise<{ matches: Array<{ line: number; path: string; preview: string }>; nextCursor?: number; revision: string; scannedPaths: string[]; totalPaths: number }> {
+  const repositorySnapshot = await getRepositorySnapshot(parseSource(source), token, revision);
+  const normalizedQuery = query.toLocaleLowerCase();
+  const entries = repositorySnapshot.tree.tree
+    .filter((entry) => entry.type === "blob" && (entry.size ?? 0) <= REPOSITORY_SEARCH_FILE_LIMIT && isRepositorySourceFile(entry.path))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const start = Math.min(cursor, entries.length);
+  const page = entries.slice(start, start + REPOSITORY_SEARCH_PAGE_SIZE);
+  const matches = (await Promise.all(page.map(async (entry) => {
+    const blob = await githubRequest<GitBlob>(`/repos/${repositorySnapshot.encodedRepository}/git/blobs/${entry.sha}`, token);
+    return repositoryTextMatches(entry.path, decodeGitBlob(blob), normalizedQuery);
+  }))).flat().slice(0, REPOSITORY_SEARCH_MATCH_LIMIT);
+  const nextCursor = start + page.length;
+
+  return {
+    matches,
+    nextCursor: nextCursor < entries.length ? nextCursor : undefined,
+    revision: repositorySnapshot.revision,
+    scannedPaths: page.map((entry) => entry.path),
+    totalPaths: entries.length,
+  };
+}
+
+/** Returns line-addressable previews for every case-insensitive match in one text file. */
+function repositoryTextMatches(path: string, text: string, normalizedQuery: string): Array<{ line: number; path: string; preview: string }> {
+  if (!text || !normalizedQuery) return [];
+
+  return text.split("\n").flatMap((line, index) => (
+    line.toLocaleLowerCase().includes(normalizedQuery)
+      ? [{ line: index + 1, path, preview: line.trim().slice(0, 300) }]
+      : []
+  ));
 }
 
 /** Reads a bounded, newline-aligned portion of one tracked text file so large files remain inspectable. */

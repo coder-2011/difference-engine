@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { defineDynamic, defineTool } from "eve/tools";
-import { listRepositoryPaths, readRepositoryDiff, readRepositoryFile, readRepositoryFiles } from "@/lib/github";
+import { listRepositoryPaths, readRepositoryDiff, readRepositoryFile, readRepositoryFiles, searchRepositoryText } from "@/lib/github";
 import { unsealGitHubAccessToken } from "../lib/github-token";
 
 const CLIENT_CONTEXT_PREFIX = "Client context:\n";
@@ -63,6 +63,16 @@ export default defineDynamic({
           }),
           async execute({ cursor, query }, toolContext) {
             return listRepositoryPaths(repository.source, cursor, query, await repositoryAccessToken(toolContext.session.auth.current?.attributes), repository.revision);
+          },
+        }),
+        search_repository_text: defineTool({
+          description: "Search one exact repository revision for text or a symbol. Follow nextCursor until matches are found or it is absent, then read matching files for complete context.",
+          inputSchema: z.object({
+            cursor: z.number().int().min(0).default(0),
+            query: z.string().min(1).max(256),
+          }),
+          async execute({ cursor, query }, toolContext) {
+            return searchRepositoryText(repository.source, query, cursor, await repositoryAccessToken(toolContext.session.auth.current?.attributes), repository.revision);
           },
         }),
         read_repository_file: defineTool({

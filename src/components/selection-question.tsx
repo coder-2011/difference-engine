@@ -1069,6 +1069,7 @@ function AskDiffsPanel({ baseRevision, chat, isActive, onChatChange, onClose, on
           turns: turns.slice(-6),
           ...(baseRevision ? { baseRevision } : {}),
           ...(revision ? { revision } : {}),
+          ...(questionSelection.location ? { selectedPath: questionSelection.location.id } : {}),
         },
       });
     } catch (error) {
