@@ -1,20 +1,20 @@
 "use client";
 
 import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
+import { useEveAgent } from "eve/react";
 import { Check, ClipboardCopy, CornerDownLeft, GitFork, Github, GripHorizontal, MessageSquarePlus, Minus, Paperclip, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { ChangeEvent, DragEvent, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { UserContent } from "ai";
 import { ChatMark } from "@/components/chat-mark";
 import { GitHubMarkdown, parseCodeReference, type CodeReference } from "@/components/github-markdown";
-import { OpenAIConnection } from "@/components/openai-connection";
 import { isInteger, isRecord, isString, type JsonValue } from "@/lib/json";
 import {
   MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_ATTACHMENT_BYTES,
   MAX_CHAT_ATTACHMENT_TOTAL_BYTES,
-  MAX_CHAT_HISTORY_TURNS,
   type ChatTurn,
 } from "@/types/chat";
 
@@ -25,7 +25,6 @@ const CHAT_ZOOM_PRESETS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 
 const MAX_PRIOR_HIGHLIGHTS = 3;
 const MIN_PANEL_HEIGHT = 120;
 const MIN_PANEL_WIDTH = 300;
-const STREAM_CHARS_PER_FRAME = 18;
 const RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const;
 
 type Point = {
@@ -100,13 +99,6 @@ type SelectionRequest = {
   sequence: number;
 };
 
-type ModelAnnotation = {
-  code: string;
-  line: number;
-  path: string;
-  text: string;
-};
-
 type SelectionState = CodeSelection & {
   open: boolean;
 };
@@ -145,7 +137,6 @@ export type ProgrammaticSelection = Point & {
 type SelectionQuestionProps = {
   aiEnabled: boolean;
   annotationContainerKey?: string;
-  annotationPaths: string[];
   githubConnected: boolean;
   onAnnotationsChange?: (annotations: LocalAnnotationMarker[]) => void;
   onChatMarkersChange?: (markers: ChatMarker[]) => void;
@@ -178,7 +169,6 @@ type SubmitQuestion = (
 ) => Promise<void>;
 
 type AskDiffsPanelProps = {
-  annotationPaths: string[];
   chat: ChatSession;
   isActive: boolean;
   onChatChange: (chat: ChatSession) => void;
@@ -186,7 +176,6 @@ type AskDiffsPanelProps = {
   onFocus: () => void;
   onFork: (chat: ChatSession) => void;
   onMarkersChange: (chatId: string, markers: ChatSession["markers"]) => void;
-  onModelAnnotation: (annotation: Partial<ModelAnnotation>) => void;
   onRevealLocation: (location: CodeSelectionLocation) => void;
   onShowSelection: (selection: CodeSelection) => void;
   position?: Point;
@@ -225,14 +214,6 @@ type SnippetHighlight = {
   source: string;
   tokens: SnippetToken[][];
 };
-
-/** Gives each selected range a stable identity so stale Tab suggestions cannot replace a newer highlight. */
-function selectionContextKey(selection: SelectionState | null): string {
-  if (!selection) return "";
-
-  const location = selection.location;
-  return [location?.id, location?.lineNumber, location?.endLineNumber, location?.side, location?.endSide, selection.text].join("\0");
-}
 
 /** Builds a GitHub-style patch fragment from one copied annotation. */
 function annotationDiff(code: string, location?: CodeSelectionLocation): string[] {
@@ -579,8 +560,8 @@ function AnnotationSnippet({ codeSelection }: AnnotationSnippetProps) {
 }
 
 /** Renders the in-progress reply as Markdown as soon as each construct is complete. */
-function StreamingAnswer({ answer, codeReferencePaths, onCodeReference }: { answer: string; codeReferencePaths: string[]; onCodeReference: (reference: CodeReference) => void }) {
-  return <div className="chat-markdown chat-streaming-answer"><GitHubMarkdown codeReferencePaths={codeReferencePaths} onCodeReference={onCodeReference}>{answer}</GitHubMarkdown><span aria-hidden="true" className="chat-streaming-caret" /></div>;
+function StreamingAnswer({ answer, onCodeReference }: { answer: string; onCodeReference: (reference: CodeReference) => void }) {
+  return <div className="chat-markdown chat-streaming-answer"><GitHubMarkdown onCodeReference={onCodeReference}>{answer}</GitHubMarkdown><span aria-hidden="true" className="chat-streaming-caret" /></div>;
 }
 
 /** Gives each source range one stable identity within a purple chat marker track. */
@@ -595,17 +576,16 @@ function chatMarkerLocationKey(location: CodeSelectionLocation): string {
 }
 
 /** Renders one independent Ask Diffs conversation, including its own request and queue state. */
-function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose, onFocus, onFork, onMarkersChange, onModelAnnotation, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
+function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork, onMarkersChange, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
   const [selection, setSelection] = useState<SelectionState>(chat.selection);
   const [question, setQuestion] = useState(chat.draft);
   const [turns, setTurns] = useState<ChatTurn[]>(chat.turns);
-  const [loading, setLoading] = useState(false);
   const [suggestion, setSuggestion] = useState(chat.suggestion);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [queuedQuestions, setQueuedQuestions] = useState<QueuedQuestion[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [openAIError, setOpenAIError] = useState("");
+  const [agentError, setAgentError] = useState("");
   const [chatZoom, setChatZoom] = useState(chat.chatZoom);
   const [chatZoomInput, setChatZoomInput] = useState(String(chat.chatZoom));
   const [markers, setMarkers] = useState<ChatSession["markers"]>(chat.markers);
@@ -618,7 +598,24 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
   const resizeRef = useRef<ResizeState | null>(null);
   const inputResizeRef = useRef<InputResizeState | null>(null);
   const momentumFrameRef = useRef(0);
-  const requestRef = useRef<AbortController | null>(null);
+  const agent = useEveAgent({
+    onError(error) {
+      // Eve transport errors do not append an assistant message, so attach one to the active turn.
+      setAgentError(error.message);
+      setTurns((current) => current.map((turn, index) => (
+        index === current.length - 1 ? { ...turn, answer: turn.answer || error.message } : turn
+      )));
+    },
+    onEvent(event) {
+      // Preserve the current panel's incremental rendering while Eve owns the durable stream.
+      if (event.type !== "message.appended") return;
+      setTurns((current) => current.map((turn, index) => (
+        index === current.length - 1 ? { ...turn, answer: turn.answer + event.data.messageDelta } : turn
+      )));
+    },
+  });
+  const cancelAgent = agent.cancel;
+  const loading = agent.status === "submitted" || agent.status === "streaming";
   // Attachment encoding starts a request before a chat turn exists, so loading alone cannot identify a streamed turn.
   const runningTurnRef = useRef(false);
   const followsConversationRef = useRef(true);
@@ -627,8 +624,6 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
   const queuedQuestionCounterRef = useRef(0);
   const submitQuestionRef = useRef<SubmitQuestion | undefined>(undefined);
   const lastSelectionRequestRef = useRef<number | undefined>(undefined);
-  const selectionRef = useRef(selection);
-  const suggestionRequestRef = useRef<AbortController | null>(null);
   const conversationActive = Boolean(turns.length || loading);
   const chatFontSize = (DEFAULT_CHAT_FONT_SIZE * chatZoom) / DEFAULT_CHAT_ZOOM;
 
@@ -668,35 +663,6 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
     onMarkersChange(chat.id, markers);
   }, [chat.id, markers, onMarkersChange]);
 
-  // Keep asynchronous Tab suggestions tied to the selection currently visible in this chat.
-  useEffect(() => {
-    selectionRef.current = selection;
-  }, [selection]);
-
-  /** Updates Tab with a context-aware follow-up while the generic prompt remains usable immediately. */
-  const refreshSuggestion = useCallback((nextSelection: SelectionState): void => {
-    suggestionRequestRef.current?.abort();
-    const controller = new AbortController();
-    suggestionRequestRef.current = controller;
-
-    void fetch("/api/ask/suggestion", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ selection: nextSelection.text, turns }),
-    }).then(async (response) => {
-      const body: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isRecord(body) || !isString(body.suggestion)) return;
-      if (suggestionRequestRef.current === controller && selectionContextKey(selectionRef.current) === selectionContextKey(nextSelection)) {
-        setSuggestion(body.suggestion);
-      }
-    }).catch(() => {
-      // The generic prompt stays available when the lightweight suggestion request fails.
-    }).finally(() => {
-      if (suggestionRequestRef.current === controller) suggestionRequestRef.current = null;
-    });
-  }, [turns]);
-
   const [lastHandledSelectionSequence, setLastHandledSelectionSequence] = useState<number | undefined>(undefined);
   if (selectionRequest && selectionRequest.chatId === chat.id && lastHandledSelectionSequence !== selectionRequest.sequence) {
     setLastHandledSelectionSequence(selectionRequest.sequence);
@@ -713,20 +679,16 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
     if (!selectionRequest || selectionRequest.chatId !== chat.id || lastSelectionRequestRef.current === selectionRequest.sequence) return;
 
     lastSelectionRequestRef.current = selectionRequest.sequence;
-    const nextSelection = { ...selectionRequest.selection, open: true };
-    selectionRef.current = nextSelection;
-    refreshSuggestion(nextSelection);
     followsConversationRef.current = true;
     inputRef.current?.focus();
-  }, [chat.id, refreshSuggestion, selectionRequest]);
+  }, [chat.id, selectionRequest]);
 
   useEffect(() => {
     return () => {
-      requestRef.current?.abort();
-      suggestionRequestRef.current?.abort();
+      void cancelAgent();
       window.cancelAnimationFrame(momentumFrameRef.current);
     };
-  }, []);
+  }, [cancelAgent]);
 
   useEffect(() => {
     const conversation = conversationRef.current;
@@ -1053,7 +1015,7 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
     addAttachments(Array.from(event.dataTransfer.files));
   }
 
-  /** Sends one question against this panel's captured code selection, history, and attachments. */
+  /** Sends one question with one-turn repository context through Eve. */
   async function submitQuestion(
     value: string,
     questionAttachments: File[],
@@ -1061,137 +1023,44 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
     questionPriorHighlights: string[] = priorHighlights,
   ): Promise<void> {
     const submittedQuestion = value.trim();
-    if (!questionSelection || !submittedQuestion || requestRef.current) return;
+    if (!questionSelection || !submittedQuestion || loading) return;
     trackQuestionSelection(questionSelection);
-    const selectedCode = questionSelection.text;
-
-    const controller = new AbortController();
-    requestRef.current = controller;
-    suggestionRequestRef.current?.abort();
-    setLoading(true);
+    setAgentError("");
     setSuggestion("");
-    const questionSelectionKey = selectionContextKey(questionSelection);
-    let pendingDelta = "";
-    let flushFrame: number | undefined;
-    let resolveDrain: (() => void) | undefined;
-    let startedTurn = false;
-    let streamedSuggestion = "";
-
-    /** Reveals one small answer batch on the next paint, not on an independent timer. */
-    function flushDelta(): void {
-      flushFrame = undefined;
-      if (controller.signal.aborted) pendingDelta = "";
-      if (!pendingDelta) {
-        resolveDrain?.();
-        resolveDrain = undefined;
-        return;
-      }
-
-      const text = pendingDelta.slice(0, STREAM_CHARS_PER_FRAME);
-      pendingDelta = pendingDelta.slice(text.length);
-      setTurns((current) => current.map((turn, index) => (
-        index === current.length - 1 ? { ...turn, answer: turn.answer + text } : turn
-      )));
-      if (pendingDelta) flushFrame = window.requestAnimationFrame(flushDelta);
-      else {
-        resolveDrain?.();
-        resolveDrain = undefined;
-      }
-    }
-
-    /** Buffers irregular model deltas behind the steady visible reveal. */
-    function queueDelta(text: string): void {
-      pendingDelta += text;
-      if (flushFrame === undefined) flushFrame = window.requestAnimationFrame(flushDelta);
-    }
-
-    /** Waits for the visible answer to catch up before ending the loading state. */
-    function drainDeltas(): Promise<void> {
-      if (!pendingDelta && flushFrame === undefined) return Promise.resolve();
-
-      return new Promise((resolve) => {
-        resolveDrain = resolve;
-        if (flushFrame === undefined) flushFrame = window.requestAnimationFrame(flushDelta);
-      });
-    }
 
     try {
       const uploadedAttachments = await Promise.all(questionAttachments.map(encodeAttachment));
-      if (controller.signal.aborted) return;
       const attachmentNames = uploadedAttachments.map((attachment) => attachment.name);
+      const message: UserContent = uploadedAttachments.length
+        ? [
+          { text: submittedQuestion, type: "text" },
+          ...uploadedAttachments.map((attachment) => ({
+            data: attachment.data,
+            filename: attachment.name,
+            mediaType: attachment.type || "application/octet-stream",
+            type: "file" as const,
+          })),
+        ]
+        : submittedQuestion;
       runningTurnRef.current = true;
       setTurns((current) => [...current, { answer: "", attachments: attachmentNames, question: submittedQuestion }]);
-      startedTurn = true;
-      const response = await fetch("/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          annotationPaths,
-          attachments: uploadedAttachments,
-          fullHistory: turns,
-          history: turns.slice(-MAX_CHAT_HISTORY_TURNS),
-          question: submittedQuestion,
+      await agent.send(message, {
+        clientContext: {
           priorHighlights: questionPriorHighlights,
-          selection: selectedCode,
+          selection: questionSelection.text,
           source,
-        }),
+          turns: turns.slice(-6),
+        },
       });
-      if (!response.ok || !response.body) {
-        const body: unknown = await response.json();
-        const message = isRecord(body) && isString(body.error) ? body.error : "No answer was returned.";
-        if (response.status === 401) setOpenAIError(message);
-        throw new Error(message);
-      }
-
-      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (controller.signal.aborted) return;
-        buffer += value ?? "";
-        if (done) buffer += "\n";
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line) continue;
-          const event: unknown = JSON.parse(line);
-          if (!isRecord(event)) continue;
-          if (event.type === "delta" && isString(event.text)) queueDelta(event.text);
-          if (event.type === "suggestion" && isString(event.text)) streamedSuggestion = event.text;
-          if (event.type === "annotation" && isRecord(event.annotation)) {
-            // SAFETY: addModelAnnotation validates each untyped field before creating a source annotation.
-            onModelAnnotation(event.annotation as Partial<ModelAnnotation>);
-          }
-          if (event.type === "error") throw new Error(isString(event.message) ? event.message : "No answer was returned.");
-        }
-
-        if (done) break;
-      }
-      await drainDeltas();
-      if (controller.signal.aborted) return;
-      if (streamedSuggestion && selectionContextKey(selectionRef.current) === questionSelectionKey) setSuggestion(streamedSuggestion);
     } catch (error) {
-      if (controller.signal.aborted) {
-        if (flushFrame !== undefined) window.cancelAnimationFrame(flushFrame);
-        return;
-      }
-      await drainDeltas();
-      if (!controller.signal.aborted && startedTurn) {
-        const message = error instanceof Error ? error.message : "The question could not be answered. Please try again.";
-        setTurns((current) => current.map((turn, index) => (
-          index === current.length - 1 ? { ...turn, answer: turn.answer || message } : turn
-        )));
-      }
-      if (!controller.signal.aborted && !startedTurn) setAttachmentError("The attachment could not be read. Try it again.");
+      const message = error instanceof Error ? error.message : "The question could not be answered. Please try again.";
+      setAgentError(message);
+      setTurns((current) => current.map((turn, index) => (
+        index === current.length - 1 ? { ...turn, answer: turn.answer || message } : turn
+      )));
     } finally {
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        runningTurnRef.current = false;
-        setLoading(false);
-      }
+      runningTurnRef.current = false;
+      setSuggestion(DEFAULT_QUESTION);
     }
   }
 
@@ -1200,7 +1069,7 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
   });
 
   useEffect(() => {
-    if (loading || requestRef.current) return;
+    if (loading) return;
 
     const [nextQuestion, ...remainingQuestions] = queuedQuestionsRef.current;
     if (!nextQuestion) return;
@@ -1216,14 +1085,14 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
     const submittedQuestion = question.trim();
     if (!submittedQuestion) return;
 
-    const location = parseCodeReference(submittedQuestion, new Set(annotationPaths));
+    const location = parseCodeReference(submittedQuestion);
     if (location) {
       setQuestion("");
       revealCodeReference(location);
       return;
     }
 
-    if (loading || requestRef.current) {
+    if (loading) {
       queueQuestion(submittedQuestion);
       return;
     }
@@ -1283,8 +1152,7 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
 
   /** Closes only this panel while retaining its latest marker-backed snapshot. */
   function closePanel(): void {
-    requestRef.current?.abort();
-    requestRef.current = null;
+    void cancelAgent();
     window.cancelAnimationFrame(momentumFrameRef.current);
     clearQueuedQuestions();
     onClose(snapshot());
@@ -1331,13 +1199,12 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
         </span>
       </div>
 
-      {openAIError && (
+      {agentError && (
         <div className="openai-session-error" role="alert">
           <div>
-            <strong>OpenAI signed out</strong>
-            <span>{openAIError}</span>
+            <strong>Ask Diffs unavailable</strong>
+            <span>{agentError}</span>
           </div>
-          <OpenAIConnection compact initiallyConnected={false} />
         </div>
       )}
 
@@ -1356,8 +1223,8 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
               <div className="chat-turn-divider" />
               {turn.answer
                 ? index === turns.length - 1 && loading
-                  ? <StreamingAnswer answer={turn.answer} codeReferencePaths={annotationPaths} onCodeReference={revealCodeReference} />
-                  : <div className="chat-markdown"><GitHubMarkdown codeReferencePaths={annotationPaths} onCodeReference={revealCodeReference}>{turn.answer}</GitHubMarkdown></div>
+                  ? <StreamingAnswer answer={turn.answer} onCodeReference={revealCodeReference} />
+                  : <div className="chat-markdown"><GitHubMarkdown onCodeReference={revealCodeReference}>{turn.answer}</GitHubMarkdown></div>
                 : <div aria-label="Loading response" className="chat-loading-wave" role="status"><span /><span /><span /></div>}
             </article>
           ))}
@@ -1460,7 +1327,7 @@ function AskDiffsPanel({ annotationPaths, chat, isActive, onChatChange, onClose,
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotationPaths, githubConnected, onAnnotationsChange, onChatMarkersChange, onRegisterOpenChat, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, githubConnected, onAnnotationsChange, onChatMarkersChange, onRegisterOpenChat, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -1835,16 +1702,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
     });
   }
 
-  /** Stores a source-validated annotation emitted by Ask Diffs without requiring an active selection. */
-  function addModelAnnotation(annotation: Partial<ModelAnnotation>): void {
-    const path = isString(annotation.path) ? annotation.path.trim() : "";
-    const line = annotation.line;
-    const text = isString(annotation.text) ? annotation.text.trim() : "";
-    if (!path || !isString(annotation.code) || !isInteger(line) || line < 1 || !text) return;
-
-    addAnnotation({ location: { id: path, lineNumber: line }, text: annotation.code, x: 0, y: 0 }, text);
-  }
-
   /** Saves the manual annotation draft and returns the selection controls to their normal state. */
   function saveAnnotation(event: FormEvent): void {
     event.preventDefault();
@@ -2137,7 +1994,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
 
         return (
           <AskDiffsPanel
-            annotationPaths={annotationPaths}
             chat={chat}
             isActive={chat.id === activeChatId}
             key={chat.id}
@@ -2146,7 +2002,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, annotatio
             onFocus={() => focusChat(chat.id)}
             onFork={openChat}
             onMarkersChange={updateChatMarkers}
-            onModelAnnotation={addModelAnnotation}
             onRevealLocation={onRevealSelection}
             onShowSelection={showSelection}
             position={chatPositions.get(chat.id)}

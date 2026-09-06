@@ -22,7 +22,7 @@ import { RepositorySearch } from "./repository-search";
 import type { PullRequestReviewThread, RepositoryFile } from "@/types/github";
 import type { ChatMarker, ChatResumeRequest, LocalAnnotationMarker, ProgrammaticSelection } from "./selection-question";
 
-// Keep the Markdown chat bundle out of reviews that have no OpenAI session.
+// Keep the browser-only chat implementation out of the server-rendered diff workspace.
 const SelectionQuestion = dynamic(
   () => import("./selection-question").then((module) => module.SelectionQuestion),
   { ssr: false },
@@ -682,6 +682,13 @@ export function DiffViewer({
 
   /** Selects and centers a saved code line even after virtualization replaced its DOM nodes. */
   const revealSelection = useCallback((location: CodeLocation) => {
+    // A repository lookup can cite a file outside the current patch, so load that exact immutable revision first.
+    if (!paths.includes(location.id)) {
+      const revision = revisionKey.split(":").at(-1);
+      if (revision) window.location.assign(repositoryFileUrl(source, revision, location.id, location.lineNumber, location.endLineNumber));
+      return;
+    }
+
     /** Reveals a saved Call Flow reference in Files Changed after the selected tab has mounted. */
     function selectCode(): void {
       const end = location.endLineNumber ?? location.lineNumber;
@@ -696,7 +703,7 @@ export function DiffViewer({
       return;
     }
     selectCode();
-  }, [reviewView, selectReviewView]);
+  }, [paths, revisionKey, reviewView, selectReviewView, source]);
 
   useEffect(() => {
     /** Clears the temporary annotation focus when the user clicks anywhere else. */
@@ -1021,7 +1028,9 @@ export function DiffViewer({
         <button
           aria-label="Open Ask Diffs"
           className="sidebar-bottom-action ask-diffs-btn"
+          disabled={!githubConnected}
           onClick={() => openChatRef.current?.()}
+          title={githubConnected ? "Open Ask Diffs" : "Sign in with GitHub to ask about this review"}
           type="button"
         >
           <ChatMark />
@@ -1166,9 +1175,8 @@ export function DiffViewer({
       </div>
       </>}
       <SelectionQuestion
-        aiEnabled={openAIConnected}
+        aiEnabled={githubConnected}
         annotationContainerKey={`${reviewView}-${sidebarOpen}`}
-        annotationPaths={paths}
         githubConnected={githubConnected}
         onAnnotationsChange={setLocalAnnotations}
         onChatMarkersChange={setChatMarkers}

@@ -81,10 +81,10 @@ function insertSoftBreaks(node: MarkdownNode): void {
   node.children?.forEach(insertSoftBreaks);
 }
 
-/** Parses one repository-relative location only when the viewer can reveal its file. */
-export function parseCodeReference(value: string, paths: ReadonlySet<string>): CodeReference | undefined {
+/** Parses one repository-relative location, optionally limiting it to known paths. */
+export function parseCodeReference(value: string, paths?: ReadonlySet<string>): CodeReference | undefined {
   const match = value.match(CODE_REFERENCE);
-  if (!match || !paths.has(match[1])) return undefined;
+  if (!match || (paths && !paths.has(match[1]))) return undefined;
 
   const lineNumber = Number(match[2]);
   const endLineNumber = match[3] ? Number(match[3]) : undefined;
@@ -99,7 +99,7 @@ function codeReferenceUrl(reference: CodeReference): string {
 }
 
 /** Splits ordinary Markdown text into unchanged text and clickable source-location links. */
-function linkCodeReferenceText(value: string, paths: ReadonlySet<string>): MarkdownNode[] {
+function linkCodeReferenceText(value: string, paths?: ReadonlySet<string>): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
   const matcher = new RegExp(CODE_REFERENCE_TEXT.source, "g");
   let cursor = 0;
@@ -121,13 +121,13 @@ function linkCodeReferenceText(value: string, paths: ReadonlySet<string>): Markd
   return nodes;
 }
 
-/** Turns visible `path:line` references into links without touching code blocks or existing links. */
-function githubCodeReferences(paths: readonly string[]) {
-  /** Installs the immutable visible-path set before Unified begins walking one Markdown tree. */
+/** Turns repository `path:line` references into links without touching code blocks or existing links. */
+function githubCodeReferences(paths?: readonly string[]) {
+  /** Installs the optional immutable path set before Unified begins walking one Markdown tree. */
   return function installCodeReferences() {
-    const visiblePaths = new Set(paths);
+    const visiblePaths = paths ? new Set(paths) : undefined;
 
-    /** Replaces visible source references with links without touching code blocks or existing links. */
+    /** Replaces source references with links without touching code blocks or existing links. */
     return function markCodeReferences(node: MarkdownNode): void {
       if (!node.children || node.type === "code" || node.type === "link") return;
 
@@ -149,7 +149,7 @@ function CodeReferenceLink({ codeReferencePaths, href, onCodeReference, ...props
   let reference: CodeReference | undefined;
   if (href?.startsWith(CODE_REFERENCE_PREFIX)) {
     try {
-      reference = parseCodeReference(decodeURIComponent(href.slice(CODE_REFERENCE_PREFIX.length)), new Set(codeReferencePaths));
+      reference = parseCodeReference(decodeURIComponent(href.slice(CODE_REFERENCE_PREFIX.length)), codeReferencePaths ? new Set(codeReferencePaths) : undefined);
     } catch {
       // A malformed fragment remains a normal inert link.
     }
@@ -178,7 +178,7 @@ export const GitHubMarkdown = memo(function GitHubMarkdown({ children, codeRefer
     };
   }, [codeReferencePaths, onCodeReference]);
   const markdownPlugins = useMemo(
-    () => onCodeReference ? [...MARKDOWN_PLUGINS, githubCodeReferences(codeReferencePaths ?? [])] : MARKDOWN_PLUGINS,
+    () => onCodeReference ? [...MARKDOWN_PLUGINS, githubCodeReferences(codeReferencePaths)] : MARKDOWN_PLUGINS,
     [codeReferencePaths, onCodeReference],
   );
 
