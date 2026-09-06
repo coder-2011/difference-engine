@@ -17,6 +17,8 @@ export default defineAgent({
         const openai = createOpenAI({
           apiKey: credential.accessToken,
           baseURL: CODEX_RESPONSES_URL,
+          // Eve only injects safety_identifier for providers named "openai"; ChatGPT OAuth rejects it.
+          name: "chatgpt",
           headers: {
             "chatgpt-account-id": credential.accountId,
             "OpenAI-Beta": "responses=experimental",
