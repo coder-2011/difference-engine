@@ -364,6 +364,7 @@ const CONTEXT_FILE_COUNT = 24;
 const ANONYMOUS_CONTEXT_FILE_COUNT = 8;
 const TOOL_FILE_COUNT = 8;
 const TOOL_FILES_LIMIT = 48_000;
+const REPOSITORY_PATH_PAGE_SIZE = 250;
 const COMMIT_CONTEXT_TREE_LIMIT = 20_000;
 const COMMIT_CONTEXT_README_LIMIT = 8_000;
 const COMMIT_CONTEXT_DESCRIPTION_LIMIT = 8_000;
@@ -1299,9 +1300,9 @@ async function getSourceRevision(parsed: ReturnType<typeof parseSource>, token?:
   return pullRequest.head.sha;
 }
 
-/** Loads the immutable revision and file tree shared by one code-question request. */
-async function getRepositorySnapshot(parsed: ReturnType<typeof parseSource>, token?: string): Promise<RepositorySnapshot> {
-  const revision = await getSourceRevision(parsed, token);
+/** Loads one immutable revision and its complete Git tree for repository tools. */
+async function getRepositorySnapshot(parsed: ReturnType<typeof parseSource>, token?: string, requestedRevision?: string): Promise<RepositorySnapshot> {
+  const revision = requestedRevision ?? await getSourceRevision(parsed, token);
   const tree = await githubRequest<GitTree>(`/repos/${parsed.encodedRepository}/git/trees/${encodeURIComponent(revision)}?recursive=1`, token);
   return { encodedRepository: parsed.encodedRepository, revision, tree };
 }
@@ -1566,8 +1567,8 @@ export async function getRepositoryContext(source: string[], token?: string): Pr
 }
 
 /** Reads a small, exact set of files from the same revision that supplied the model context. */
-export async function readRepositoryFiles(source: string[], paths: string[], token?: string, snapshot?: RepositorySnapshot): Promise<{ files: Array<{ path: string; text?: string; error?: string }>; revision: string }> {
-  const repositorySnapshot = snapshot ?? await getRepositorySnapshot(parseSource(source), token);
+export async function readRepositoryFiles(source: string[], paths: string[], token?: string, requestedRevision?: string, snapshot?: RepositorySnapshot): Promise<{ files: Array<{ path: string; text?: string; error?: string }>; revision: string }> {
+  const repositorySnapshot = snapshot ?? await getRepositorySnapshot(parseSource(source), token, requestedRevision);
   const { revision, tree } = repositorySnapshot;
   const requestedPaths = [...new Set(paths)].slice(0, TOOL_FILE_COUNT);
   const requestedPathSet = new Set(requestedPaths);
@@ -1606,6 +1607,68 @@ export async function readRepositoryFiles(source: string[], paths: string[], tok
   }
 
   return { files, revision };
+}
+
+/** Lists one deterministic page of tracked paths from the repository revision selected in the viewer. */
+export async function listRepositoryPaths(source: string[], cursor: number, query?: string, token?: string, revision?: string): Promise<{ nextCursor?: number; paths: string[]; revision: string; totalPaths: number }> {
+  const repositorySnapshot = await getRepositorySnapshot(parseSource(source), token, revision);
+  const normalizedQuery = query?.trim().toLocaleLowerCase();
+  const paths = repositorySnapshot.tree.tree
+    .filter((entry) => entry.type === "blob")
+    .map((entry) => entry.path)
+    .filter((path) => !normalizedQuery || path.toLocaleLowerCase().includes(normalizedQuery))
+    .sort((left, right) => left.localeCompare(right));
+  const start = Math.min(cursor, paths.length);
+  const page = paths.slice(start, start + REPOSITORY_PATH_PAGE_SIZE);
+  const nextCursor = start + page.length;
+
+  return {
+    nextCursor: nextCursor < paths.length ? nextCursor : undefined,
+    paths: page,
+    revision: repositorySnapshot.revision,
+    totalPaths: paths.length,
+  };
+}
+
+/** Reads a bounded, newline-aligned portion of one tracked text file so large files remain inspectable. */
+export async function readRepositoryFile(source: string[], path: string, offset: number, token?: string, revision?: string): Promise<{ nextOffset?: number; path: string; startLine: number; text?: string; totalLength?: number; error?: string; revision: string }> {
+  const repositorySnapshot = await getRepositorySnapshot(parseSource(source), token, revision);
+  const entry = repositorySnapshot.tree.tree.find((candidate) => candidate.type === "blob" && candidate.path === path);
+  if (!entry) return { error: "File not found at this revision.", path, revision: repositorySnapshot.revision, startLine: 1 };
+
+  const blob = await githubRequest<GitBlob>(`/repos/${repositorySnapshot.encodedRepository}/git/blobs/${entry.sha}`, token);
+  const contents = decodeGitBlob(blob);
+  if (!contents) return { error: "File is binary or empty.", path, revision: repositorySnapshot.revision, startLine: 1 };
+
+  const start = Math.min(offset, contents.length);
+  const limit = Math.min(start + TOOL_FILES_LIMIT, contents.length);
+  const newline = contents.lastIndexOf("\n", limit);
+  const end = newline > start ? newline + 1 : limit;
+  const startLine = contents.slice(0, start).split("\n").length;
+
+  return {
+    nextOffset: end < contents.length ? end : undefined,
+    path,
+    revision: repositorySnapshot.revision,
+    startLine,
+    text: contents.slice(start, end),
+    totalLength: contents.length,
+  };
+}
+
+/** Reads one bounded page of the exact diff range rendered in the viewer. */
+export async function readRepositoryDiff(source: string[], offset: number, token?: string, baseRevision?: string, revision?: string): Promise<{ diff: string; nextOffset?: number; totalLength: number }> {
+  const comparisonSource = baseRevision && revision ? [source[0], source[1], "compare", `${baseRevision}...${revision}`] : source;
+  const response = await getDiffResponse(comparisonSource, token);
+  const diff = await response.text();
+  const start = Math.min(offset, diff.length);
+  const end = Math.min(start + TOOL_FILES_LIMIT, diff.length);
+
+  return {
+    diff: diff.slice(start, end),
+    nextOffset: end < diff.length ? end : undefined,
+    totalLength: diff.length,
+  };
 }
 
 /** Reads one tree blob as text, treating missing or binary files as empty. */

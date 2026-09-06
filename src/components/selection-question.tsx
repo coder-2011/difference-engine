@@ -138,12 +138,14 @@ export type ProgrammaticSelection = Point & {
 type SelectionQuestionProps = {
   aiEnabled: boolean;
   annotationContainerKey?: string;
+  baseRevision?: string;
   githubConnected: boolean;
   onAnnotationsChange?: (annotations: LocalAnnotationMarker[]) => void;
   onChatMarkersChange?: (markers: ChatMarker[]) => void;
   onRegisterOpenChat?: (fn: () => void) => void;
   programmaticSelection?: ProgrammaticSelection;
   onRevealSelection: (location: CodeSelectionLocation) => void;
+  revision?: string;
   resumeChat?: ChatResumeRequest;
   source: string[];
 };
@@ -170,6 +172,7 @@ type SubmitQuestion = (
 ) => Promise<void>;
 
 type AskDiffsPanelProps = {
+  baseRevision?: string;
   chat: ChatSession;
   isActive: boolean;
   onChatChange: (chat: ChatSession) => void;
@@ -180,6 +183,7 @@ type AskDiffsPanelProps = {
   onRevealLocation: (location: CodeSelectionLocation) => void;
   onShowSelection: (selection: CodeSelection) => void;
   position?: Point;
+  revision?: string;
   selectionRequest?: SelectionRequest;
   source: string[];
 };
@@ -588,7 +592,7 @@ function chatMarkerLocationKey(location: CodeSelectionLocation): string {
 }
 
 /** Renders one independent Ask Diffs conversation, including its own request and queue state. */
-function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork, onMarkersChange, onRevealLocation, onShowSelection, position, selectionRequest, source }: AskDiffsPanelProps) {
+function AskDiffsPanel({ baseRevision, chat, isActive, onChatChange, onClose, onFocus, onFork, onMarkersChange, onRevealLocation, onShowSelection, position, revision, selectionRequest, source }: AskDiffsPanelProps) {
   const [selection, setSelection] = useState<SelectionState>(chat.selection);
   const [question, setQuestion] = useState(chat.draft);
   const [turns, setTurns] = useState<ChatTurn[]>(chat.turns);
@@ -1063,6 +1067,8 @@ function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork,
           selection: questionSelection.text,
           source,
           turns: turns.slice(-6),
+          ...(baseRevision ? { baseRevision } : {}),
+          ...(revision ? { revision } : {}),
         },
       });
     } catch (error) {
@@ -1340,7 +1346,7 @@ function AskDiffsPanel({ chat, isActive, onChatChange, onClose, onFocus, onFork,
 }
 
 /** Detects code selections and presents a movable, multi-turn code conversation. */
-export function SelectionQuestion({ aiEnabled, annotationContainerKey, githubConnected, onAnnotationsChange, onChatMarkersChange, onRegisterOpenChat, onRevealSelection, programmaticSelection, resumeChat, source }: SelectionQuestionProps) {
+export function SelectionQuestion({ aiEnabled, annotationContainerKey, baseRevision, githubConnected, onAnnotationsChange, onChatMarkersChange, onRegisterOpenChat, onRevealSelection, programmaticSelection, revision, resumeChat, source }: SelectionQuestionProps) {
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -2007,6 +2013,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, githubCon
 
         return (
           <AskDiffsPanel
+            baseRevision={baseRevision}
             chat={chat}
             isActive={chat.id === activeChatId}
             key={chat.id}
@@ -2018,6 +2025,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, githubCon
             onRevealLocation={onRevealSelection}
             onShowSelection={showSelection}
             position={chatPositions.get(chat.id)}
+            revision={revision}
             selectionRequest={selectionRequest}
             source={source}
           />

@@ -268,6 +268,9 @@ export function DiffViewer({
   const isReadOnly = isMerged || isClosed || isCommit || isCompare;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
   const sourceKey = source.join("\0");
+  const revisionParts = revisionKey.split(":");
+  const revision = revisionParts.at(-1);
+  const baseRevision = revisionParts.length > 2 ? revisionParts.at(-2) : undefined;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
@@ -1178,6 +1181,7 @@ export function DiffViewer({
       <SelectionQuestion
         aiEnabled={askEnabled}
         annotationContainerKey={`${reviewView}-${sidebarOpen}`}
+        baseRevision={baseRevision}
         githubConnected={githubConnected}
         onAnnotationsChange={setLocalAnnotations}
         onChatMarkersChange={setChatMarkers}
@@ -1186,6 +1190,7 @@ export function DiffViewer({
         }}
         onRevealSelection={revealSelection}
         programmaticSelection={callFlowSelection}
+        revision={revision}
         resumeChat={resumeChat}
         source={source}
       />
