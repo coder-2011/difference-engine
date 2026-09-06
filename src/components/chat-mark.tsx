@@ -1,10 +1,10 @@
-import { MessageCircle } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 
-/** Solid black chat glyph on a light chip so it stays visible across the dark UI. */
+/** Text-bearing chat glyph on a light chip so it stays visible across the dark UI. */
 export function ChatMark() {
   return (
     <span aria-hidden className="chat-mark">
-      <MessageCircle color="#0b0b0c" fill="#0b0b0c" size={11} />
+      <MessageSquareText color="#0b0b0c" size={12} strokeWidth={2.5} />
     </span>
   );
 }
