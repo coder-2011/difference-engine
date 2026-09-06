@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { HomeDataRefresh } from "@/components/home-data-refresh";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body><HomeDataRefresh />{children}</body>
     </html>
   );
 }
