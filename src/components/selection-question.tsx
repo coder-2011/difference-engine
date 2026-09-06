@@ -34,6 +34,7 @@ type Point = {
 };
 
 type CodeSelection = Point & {
+  diffText?: string;
   location?: CodeSelectionLocation;
   range?: Range;
   text: string;
@@ -75,7 +76,7 @@ export type ChatResumeRequest = {
 };
 
 type StoredAnnotation = Omit<Annotation, "selection"> & {
-  selection: Pick<CodeSelection, "location" | "text">;
+  selection: Pick<CodeSelection, "diffText" | "location" | "text">;
 };
 
 type AnnotationDraft = Point & {
@@ -263,7 +264,7 @@ function annotationCodeFence(language: string, lines: string[]): string[] {
   return [`${fence}${language}`, ...lines, fence];
 }
 
-/** Formats annotations as GitHub-style patches plus language-tagged source blocks. */
+/** Formats annotations as GitHub-style patches that retain every selected line's diff marker. */
 function formattedAnnotations(annotations: Annotation[]): string {
   return annotations.map((annotation) => {
     const location = annotation.selection.location;
@@ -275,10 +276,9 @@ function formattedAnnotations(annotations: Annotation[]): string {
     // Continuations must remain part of their source-anchored list item.
     const text = annotation.text.replace(/\r?\n/g, "\n  ");
     const code = annotation.selection.text.replace(/\r?\n/g, "\n");
-    const diffLines = annotationCodeFence("diff", annotationDiff(code, location)).map((line) => `  ${line}`);
-    const language = location ? getFiletypeFromFileName(location.id) : "text";
-    const copiedLines = annotationCodeFence(language, code.split("\n")).map((line) => `  ${line}`);
-    return [`- ${reference}${text}`, "", ...diffLines, "", ...copiedLines].join("\n");
+    const diffText = annotation.selection.diffText ?? annotationDiff(code, location).join("\n");
+    const diffLines = annotationCodeFence("diff", diffText.split("\n")).map((line) => `  ${line}`);
+    return [`- ${reference}${text}`, "", ...diffLines].join("\n");
   }).join("\n");
 }
 
@@ -313,12 +313,13 @@ function storedAnnotations(sourceKey: string): Annotation[] {
 
     return stored.flatMap((value: JsonValue): Annotation[] => {
       if (!isRecord(value) || !isString(value.id) || !isString(value.text) || !isRecord(value.selection) || !isString(value.selection.text)) return [];
+      const diffText = value.selection.diffText;
       const location = storedLocation(value.selection.location);
-      if (location === null) return [];
+      if (location === null || (diffText !== undefined && !isString(diffText))) return [];
 
       return [{
         id: value.id,
-        selection: { location, text: value.selection.text, x: 0, y: 0 },
+        selection: { diffText, location, text: value.selection.text, x: 0, y: 0 },
         text: value.text,
       }];
     });
@@ -331,7 +332,7 @@ function storedAnnotations(sourceKey: string): Annotation[] {
 function storeAnnotations(sourceKey: string, annotations: Annotation[]): void {
   const stored: StoredAnnotation[] = annotations.map(({ id, selection, text }) => ({
     id,
-    selection: { location: selection.location, text: selection.text },
+    selection: { diffText: selection.diffText, location: selection.location, text: selection.text },
     text,
   }));
 
@@ -1652,7 +1653,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, baseRevis
       const preferredY = triggerAnchor.y + 10 <= maxY ? triggerAnchor.y + 10 : triggerAnchor.y - 41;
       const x = Math.min(Math.max(triggerAnchor.x + 10, 8), maxX);
       const y = Math.min(Math.max(preferredY, 8), maxY);
-      const nextSelection = { location: selectionLocation(range), range, text, x, y };
+      const nextSelection = { diffText: copiedDiffText(range), location: selectionLocation(range), range, text, x, y };
       // A chat keeps its current model context until the user explicitly adds this range.
       if (openChatIdsRef.current.length) {
         setPendingSelection(nextSelection);
