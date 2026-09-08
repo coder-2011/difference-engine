@@ -1398,11 +1398,6 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, baseRevis
   /** Stores one panel snapshot without making streamed tokens rerender the surrounding diff. */
   const updateChatSession = useCallback((chat: ChatSession): void => {
     chatSessionsRef.current.set(chat.id, chat);
-    setChatSessions((current) => {
-      const next = new Map(current);
-      next.set(chat.id, chat);
-      return next;
-    });
   }, []);
 
   /** Exposes only durable source locations for this chat's purple gutter markers. */
@@ -1590,7 +1585,7 @@ export function SelectionQuestion({ aiEnabled, annotationContainerKey, baseRevis
   useEffect(() => {
     if (!resumeChat || lastResumedChatSequenceRef.current === resumeChat.sequence) return;
 
-    const chat = chatSessions.get(resumeChat.chatId) ?? chatSessionsRef.current.get(resumeChat.chatId);
+    const chat = chatSessionsRef.current.get(resumeChat.chatId) ?? chatSessions.get(resumeChat.chatId);
     const marker = chat?.markers.find((candidate) => candidate.id === resumeChat.markerId);
     if (!chat || !marker) return;
 
