@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
 import { usePullRequestLive } from "@/components/pull-request-live";
+import { notificationAffectsPullRequest } from "@/lib/pull-request-notification";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
@@ -161,6 +162,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const refreshQueuedRef = useRef(false);
   const freshQueuedRef = useRef(false);
   const refreshWorkspaceRef = useRef<(allowPendingAction?: boolean, fresh?: boolean) => Promise<void>>(undefined);
+  const refreshOnVisibleRef = useRef(false);
   const {
     conversationItems,
     failedCheckCount,
@@ -384,16 +386,28 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         const client = new Pusher(settings.key, { channelAuthorization: { endpoint: `/api/realtime/${path}`, transport: "ajax" }, cluster: settings.cluster, forceTLS: true });
         const channel = client.subscribe(settings.channel);
 
-        /** Coalesces event bursts and revalidates CI even for anonymous viewers. */
-        function changed(): void {
+        function scheduleRefresh(): void {
           window.clearTimeout(debounce);
+          if (document.visibilityState !== "visible") {
+            refreshOnVisibleRef.current = true;
+            return;
+          }
           debounce = window.setTimeout(() => {
-            if (document.visibilityState === "visible") void refreshWorkspace(false, true);
+            if (document.visibilityState === "visible") {
+              refreshOnVisibleRef.current = false;
+              void refreshWorkspace(false, true);
+            } else {
+              refreshOnVisibleRef.current = true;
+            }
           }, 300);
         }
 
+        function changed(notification: unknown): void {
+          if (notificationAffectsPullRequest(notification, Number(source[3]))) scheduleRefresh();
+        }
+
         channel.bind("changed", changed);
-        channel.bind("pusher:subscription_succeeded", changed);
+        channel.bind("pusher:subscription_succeeded", scheduleRefresh);
         disconnect = () => { channel.unbind_all(); client.disconnect(); };
       } catch {
         // The normal polling path remains active if realtime is unavailable.
@@ -413,7 +427,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     /** Keeps the conversation current while this tab is visible. */
     function poll(): void {
       if (document.visibilityState !== "visible") return;
-      void refreshWorkspace();
+      const fresh = refreshOnVisibleRef.current;
+      refreshOnVisibleRef.current = false;
+      void refreshWorkspace(false, fresh);
     }
 
     function restored(event: PageTransitionEvent): void {

@@ -43,7 +43,7 @@ Webhooks are optional. Without them, open PRs continue to check GitHub every 30 
 3. Give the GitHub App read permissions for Actions, Checks, Commit statuses, Contents, Issues, and Pull requests. Subscribe to `check_run`, `check_suite`, `commit_comment`, `create`, `delete`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `pull_request_review_thread`, `push`, `status`, and `workflow_run`.
 4. Install the GitHub App on the repositories that should send updates. A repository or organization administrator must approve an installation on repositories you do not own.
 
-GitHub signs each delivery, and Diffs forwards only an empty change notification over a private repository channel. A subscriber must first prove it can read the PR using its own GitHub session; the actual PR data is fetched separately using that session. The 30-second conditional check remains active for repositories without the app and for missed or failed deliveries. GitHub does not automatically retry failed deliveries, and deliveries above 4 MiB fall back to the conditional check.
+GitHub signs each delivery, and Diffs forwards a change notification over a private repository channel. The notification includes a PR number when GitHub identifies one; repository-wide events omit it. A subscriber must first prove it can read the PR using its own GitHub session; the actual PR data is fetched separately using that session. The 30-second conditional check remains active for repositories without the app and for missed or failed deliveries. GitHub does not automatically retry failed deliveries, and deliveries above 4 MiB fall back to the conditional check.
 
 ## Why it exists
 
