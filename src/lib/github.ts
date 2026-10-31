@@ -35,10 +35,11 @@ type AnonymousRequestCacheEntry = {
   body: unknown;
   etag?: string;
   expires: number;
+  link?: string;
 };
 
 const anonymousRequestCache = new Map<string, AnonymousRequestCacheEntry>();
-const anonymousRequestInFlight = new Map<string, Promise<unknown>>();
+const anonymousRequestInFlight = new Map<string, Promise<AnonymousRequestCacheEntry>>();
 const authenticatedRequestCache = new Map<string, { body: unknown; etag: string; expires: number; link?: string }>();
 
 type GitHubUser = {
@@ -445,64 +446,67 @@ function setAnonymousRequestCacheEntry(path: string, entry: AnonymousRequestCach
   if (oldest !== undefined) anonymousRequestCache.delete(oldest);
 }
 
-/** Revalidates an expired public response and reuses its body when GitHub reports that its ETag is unchanged. */
-async function refreshAnonymousRequest<T>(path: string, cached?: AnonymousRequestCacheEntry): Promise<T> {
+/** Revalidates a public page, retaining its pagination metadata on a 304 response. */
+async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCacheEntry): Promise<AnonymousRequestCacheEntry> {
   try {
     const response = await githubResponse(path, undefined, "GET", undefined, cached?.etag);
     if (response.status === 304 && cached) {
-      setAnonymousRequestCacheEntry(path, { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL });
-      // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
-      return cached.body as T;
+      return { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL };
     }
     if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
 
-    // SAFETY: This helper is called only through githubRequest with the fixed endpoint response type.
-    const body = await response.json() as T;
-    setAnonymousRequestCacheEntry(path, {
-      body,
+    return {
+      body: await response.json() as unknown,
       etag: response.headers.get("etag") ?? undefined,
       expires: Date.now() + ANONYMOUS_CACHE_TTL,
-    });
-    return body;
+      link: response.headers.get("link") ?? undefined,
+    };
   } catch (error) {
-    if (isRateLimitError(error) && cached) {
-      // SAFETY: A rate-limit fallback returns the same path-specific body that was previously stored as T.
-      return cached.body as T;
-    }
+    if (isRateLimitError(error) && cached) return cached;
     throw error;
   }
 }
 
-/** Performs a typed GitHub API request with optional private-repository access. */
-async function githubRequest<T>(path: string, token?: string, revalidate = false): Promise<T> {
-  if (token) {
-    return (await authenticatedJson<T>(path, token)).body;
-  }
-
+/** Reuses public pages until expiry; a forced request starts after its triggering event. */
+async function anonymousJson<T>(path: string, revalidate = false): Promise<{ body: T; link?: string }> {
   // Anonymous quota is shared and tiny, so public responses are reused briefly and served
   // stale when GitHub starts rejecting requests.
   const cached = getAnonymousRequestCacheEntry(path);
   if (!revalidate && cached && cached.expires > Date.now()) {
     // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
-    return cached.body as T;
+    return { body: cached.body as T, link: cached.link };
   }
 
   const inFlight = anonymousRequestInFlight.get(path);
-  if (inFlight) {
-    // SAFETY: In-flight requests are keyed to the same fixed GitHub path and resolve to its response type.
-    return inFlight as Promise<T>;
+  if (!revalidate && inFlight) {
+    const entry = await inFlight;
+    // SAFETY: In-flight requests use the same fixed GitHub path and response type.
+    return { body: entry.body as T, link: entry.link };
   }
 
-  const request = refreshAnonymousRequest<T>(path, cached);
-  // Keep burst traffic from retaining an unbounded set of user-supplied public paths.
-  if (anonymousRequestInFlight.size >= ANONYMOUS_CACHE_LIMIT) return request;
+  // Only the newest request for a path may publish its result to the shared cache.
+  const tracked = Boolean(inFlight) || anonymousRequestInFlight.size < ANONYMOUS_CACHE_LIMIT;
+  const request = refreshAnonymousRequest(path, cached);
+  if (!tracked) {
+    const entry = await request;
+    // SAFETY: The response is from the requested fixed GitHub path.
+    return { body: entry.body as T, link: entry.link };
+  }
   anonymousRequestInFlight.set(path, request);
 
   try {
-    return await request;
+    const entry = await request;
+    if (anonymousRequestInFlight.get(path) === request) setAnonymousRequestCacheEntry(path, entry);
+    // SAFETY: The response is from the requested fixed GitHub path.
+    return { body: entry.body as T, link: entry.link };
   } finally {
-    anonymousRequestInFlight.delete(path);
+    if (anonymousRequestInFlight.get(path) === request) anonymousRequestInFlight.delete(path);
   }
+}
+
+/** Performs a typed GitHub API request with optional private-repository access. */
+async function githubRequest<T>(path: string, token?: string, revalidate = false): Promise<T> {
+  return (token ? await authenticatedJson<T>(path, token) : await anonymousJson<T>(path, revalidate)).body;
 }
 
 /** Revalidates token-scoped JSON without sharing private responses between GitHub identities. */
@@ -547,17 +551,16 @@ export async function isGitHubConnected(token?: string): Promise<boolean> {
 }
 
 /** Reads every page in a GitHub conversation collection so older discussion is not silently omitted. */
-async function githubAllItems<T>(path: string, token?: string): Promise<T[]> {
+async function githubAllItems<T>(path: string, token?: string, revalidate = false): Promise<T[]> {
   const items: T[] = [];
   let nextPath: string | undefined = path;
 
   while (nextPath) {
-    const result: { body: T[]; link?: string } | undefined = token ? await authenticatedJson<T[]>(nextPath, token) : undefined;
-    const response = result ? undefined : await githubResponse(nextPath, token);
-    // SAFETY: This helper is used only with the collection type documented by its GitHub endpoint.
-    const page = result?.body ?? await response!.json() as T[];
-    items.push(...page);
-    const nextUrl: string | undefined = (result?.link ?? response?.headers.get("link"))?.match(/<([^>]+)>; rel="next"/)?.[1];
+    const result: { body: T[]; link?: string } = token
+      ? await authenticatedJson<T[]>(nextPath, token)
+      : await anonymousJson<T[]>(nextPath, revalidate);
+    items.push(...result.body);
+    const nextUrl: string | undefined = result.link?.match(/<([^>]+)>; rel="next"/)?.[1];
 
     if (!nextUrl) break;
 
@@ -956,9 +959,9 @@ function summarizeTimelineEvent(event: GitHubTimelineEvent): PullRequestTimeline
 }
 
 /** Loads the recent commit history without preventing the rest of the PR workspace from rendering. */
-async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestCommitList> {
+async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, token?: string, revalidate = false): Promise<PullRequestCommitList> {
   try {
-    const commits = await githubAllItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token);
+    const commits = await githubAllItems<PullRequestCommitRecord>(`${parsed.apiPath}/commits?per_page=100`, token, revalidate);
     const detailedCommits: PullRequestCommitRecord[] = [];
 
     // Keep the expanded commit list responsive without flooding GitHub with detail requests.
@@ -980,10 +983,10 @@ async function getPullRequestCommits(parsed: ReturnType<typeof parseSource>, tok
 }
 
 /** Loads the non-comment activity records that GitHub places between conversation messages. */
-async function getPullRequestTimeline(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestTimeline> {
+async function getPullRequestTimeline(parsed: ReturnType<typeof parseSource>, token?: string, revalidate = false): Promise<PullRequestTimeline> {
   try {
     const path = `${parsed.apiPath.replace("/pulls/", "/issues/")}/timeline?per_page=100`;
-    const events = await githubAllItems<GitHubTimelineEvent>(path, token);
+    const events = await githubAllItems<GitHubTimelineEvent>(path, token, revalidate);
     return { events: events.flatMap((event) => {
       const summary = summarizeTimelineEvent(event);
       return summary ? [summary] : [];
@@ -994,12 +997,12 @@ async function getPullRequestTimeline(parsed: ReturnType<typeof parseSource>, to
 }
 
 /** Loads the authenticated conversation records shown in the PR workspace. */
-async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string): Promise<PullRequestConversation> {
+async function getPullRequestConversation(parsed: ReturnType<typeof parseSource>, token?: string, revalidate = false): Promise<PullRequestConversation> {
   // Preserve available records while telling the UI when GitHub could not provide the full conversation.
   const [commentsResult, reviewsResult, reviewCommentsResult, threadMetadataResult] = await Promise.allSettled([
-    githubAllItems<IssueComment>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=asc`, token),
-    githubAllItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token),
-    githubAllItems<PullRequestReviewComment>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=asc`, token),
+    githubAllItems<IssueComment>(`${parsed.apiPath.replace("/pulls/", "/issues/")}/comments?per_page=100&sort=created&direction=asc`, token, revalidate),
+    githubAllItems<PullRequestReview>(`${parsed.apiPath}/reviews?per_page=100`, token, revalidate),
+    githubAllItems<PullRequestReviewComment>(`${parsed.apiPath}/comments?per_page=100&sort=created&direction=asc`, token, revalidate),
     token ? getPullRequestReviewThreadMetadata(parsed, token) : Promise.resolve(new Map<string, PullRequestReviewThreadMetadata>()),
   ]);
   const comments = commentsResult.status === "fulfilled" ? commentsResult.value : [];
@@ -1140,9 +1143,9 @@ function hasMergeConflicts(pullRequest: PullRequest, capabilities: PullRequestCa
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
 async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string, revalidate = false): Promise<PullRequestWorkspace> {
   const [conversation, commits, timeline, { capabilities, workflowRuns }] = await Promise.all([
-    getPullRequestConversation(parsed, token),
-    getPullRequestCommits(parsed, token),
-    getPullRequestTimeline(parsed, token),
+    getPullRequestConversation(parsed, token, revalidate),
+    getPullRequestCommits(parsed, token, revalidate),
+    getPullRequestTimeline(parsed, token, revalidate),
     getPullRequestControls(parsed, pullRequest, token, revalidate),
   ]);
   const state = pullRequest.merged ? "merged" : pullRequest.state;
