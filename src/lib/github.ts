@@ -448,8 +448,10 @@ function setAnonymousRequestCacheEntry(path: string, entry: AnonymousRequestCach
 }
 
 /** A full terminal page can gain a next page without changing its ETag. */
-function mayHaveNewNextPage(body: unknown, cachedLink?: string, responseLink?: string): boolean {
-  return Array.isArray(body) && body.length === 100 && !cachedLink?.includes('rel="next"') && !responseLink?.includes('rel="next"');
+function mayHaveNewNextPage(path: string, body: unknown, cachedLink?: string, responseLink?: string): boolean {
+  const pageSize = Number(new URL(path, GITHUB_API).searchParams.get("per_page") ?? 30);
+  return Number.isSafeInteger(pageSize) && pageSize > 0 && Array.isArray(body) && body.length === pageSize
+    && !cachedLink?.includes('rel="next"') && !responseLink?.includes('rel="next"');
 }
 
 /** Revalidates a public page, retaining its pagination metadata on a 304 response. */
@@ -458,7 +460,7 @@ async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCa
     let response = await githubResponse(path, undefined, "GET", undefined, cached?.etag);
     if (response.status === 304 && cached) {
       const link = response.headers.get("link") ?? undefined;
-      if (collection && mayHaveNewNextPage(cached.body, cached.link, link)) {
+      if (collection && mayHaveNewNextPage(path, cached.body, cached.link, link)) {
         response = await githubResponse(path);
       } else {
         return { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL, link: link ?? cached.link };
@@ -534,7 +536,7 @@ async function authenticatedJson<T>(path: string, token: string, collection = fa
     let response = await githubResponse(path, token, "GET", undefined, cached?.etag);
     if (response.status === 304 && cached) {
       const link = response.headers.get("link") ?? undefined;
-      if (collection && mayHaveNewNextPage(cached.body, cached.link, link)) {
+      if (collection && mayHaveNewNextPage(path, cached.body, cached.link, link)) {
         response = await githubResponse(path, token);
       } else {
         if (current()) {
