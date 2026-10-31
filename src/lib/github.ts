@@ -779,6 +779,13 @@ function pullRequestSource(source: string[]): ReturnType<typeof parseSource> {
   return parsed;
 }
 
+/** Checks current GitHub access without allowing the anonymous stale-cache fallback. */
+export async function verifyPullRequestAccess(source: string[], token?: string): Promise<void> {
+  const parsed = pullRequestSource(source);
+  const response = await githubResponse(parsed.apiPath, token);
+  await response.body?.cancel();
+}
+
 /** Maps GitHub's raw issue-comment response into the small client-side conversation shape. */
 function summarizeComment(comment: IssueComment): PullRequestComment {
   return {
@@ -1176,10 +1183,10 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 }
 
 /** Loads the current PR workspace after a client mutation refreshes its canonical GitHub state. */
-export async function getPullRequestWorkspace(source: string[], token?: string): Promise<PullRequestWorkspace> {
+export async function getPullRequestWorkspace(source: string[], token?: string, revalidate = false): Promise<PullRequestWorkspace> {
   const parsed = pullRequestSource(source);
   const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token, true);
-  return buildPullRequestWorkspace(parsed, pullRequest, token);
+  return buildPullRequestWorkspace(parsed, pullRequest, token, revalidate);
 }
 
 /** Requires a GitHub sign-in before attempting a user-authorized mutation. */

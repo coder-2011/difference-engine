@@ -34,6 +34,17 @@ Code questions use a separate OpenAI device authorization. The user completes th
 
 Use `npm run typecheck`, `npm run lint`, and `npm run build` before deploying.
 
+## GitHub webhook updates
+
+Webhooks are optional. Without them, open PRs continue to check GitHub every 30 seconds while visible. To receive updates immediately:
+
+1. Create a [Pusher Channels](https://pusher.com/channels/) app and set `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, and `PUSHER_CLUSTER` in the deployment environment. Keep the app secret on the server.
+2. Register a separate [GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app) with its webhook URL set to `https://<your-host>/api/github-webhook`. Generate a webhook secret and set the same value as `GITHUB_WEBHOOK_SECRET` in the deployment environment. The existing GitHub OAuth app remains responsible for sign-in.
+3. Give the GitHub App read permissions for Actions, Checks, Commit statuses, Contents, Issues, and Pull requests. Subscribe to `check_run`, `check_suite`, `commit_comment`, `create`, `delete`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `pull_request_review_thread`, `push`, `status`, and `workflow_run`.
+4. Install the GitHub App on the repositories that should send updates. A repository or organization administrator must approve an installation on repositories you do not own.
+
+GitHub signs each delivery, and Diffs forwards only an empty change notification over a private repository channel. A subscriber must first prove it can read the PR using its own GitHub session; the actual PR data is fetched separately using that session. The 30-second conditional check remains active for repositories without the app and for missed or failed deliveries. GitHub does not automatically retry failed deliveries, and deliveries above 4 MiB fall back to the conditional check.
+
 ## Why it exists
 
 Code review is already difficult. The interface should not add to it. Diffs keeps the useful parts close, removes the rest, and gives the change enough room to be understood.

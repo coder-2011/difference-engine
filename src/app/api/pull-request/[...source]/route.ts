@@ -67,7 +67,8 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const [{ source }, accessToken] = await Promise.all([context.params, getGitHubAccessToken(request)]);
 
   try {
-    return NextResponse.json({ workspace: await getPullRequestWorkspace(source, accessToken) });
+    const revalidate = new URL(request.url).searchParams.get("fresh") === "1";
+    return NextResponse.json({ workspace: await getPullRequestWorkspace(source, accessToken, revalidate) });
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;
     const message = error instanceof Error ? error.message : "The pull request could not be loaded";

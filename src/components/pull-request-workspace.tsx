@@ -3,7 +3,7 @@
 import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import Image from "next/image";
 import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPullRequest, GitPullRequestClosed, Pencil, Send } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
 import { usePullRequestLive } from "@/components/pull-request-live";
@@ -143,6 +143,7 @@ function openPullRequestState(workspace: PullRequestWorkspace): string | undefin
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
 export function PullRequestWorkspace({ description: initialBody, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
   const live = usePullRequestLive();
+  const publishWorkspace = live?.publish;
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [body, setBody] = useState(initialBody ?? "");
   const [bodyDraft, setBodyDraft] = useState<string>();
@@ -157,7 +158,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const pendingActionRef = useRef<PullRequestAction["action"] | undefined>(undefined);
   const refreshGenerationRef = useRef(0);
   const refreshInFlightRef = useRef(false);
-  pendingActionRef.current = pendingAction;
+  const refreshQueuedRef = useRef(false);
+  const freshQueuedRef = useRef(false);
+  const refreshWorkspaceRef = useRef<(allowPendingAction?: boolean, fresh?: boolean) => Promise<void>>(undefined);
   const {
     conversationItems,
     failedCheckCount,
@@ -291,19 +294,23 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   }
 
   /** Replaces the conversation with GitHub's latest workspace without touching in-progress drafts. */
-  function applyWorkspace(nextWorkspace: PullRequestWorkspace): void {
+  const applyWorkspace = useCallback((nextWorkspace: PullRequestWorkspace): void => {
     const refreshedMergeMethods = nextWorkspace.mergeMethods;
     setWorkspace((current) => JSON.stringify(current) === JSON.stringify(nextWorkspace) ? current : nextWorkspace);
     if (nextWorkspace.details) setBody(nextWorkspace.details.description);
-    live?.publish(nextWorkspace);
+    publishWorkspace?.(nextWorkspace);
     setMergeMethod((currentMethod) => refreshedMergeMethods.includes(currentMethod)
       ? currentMethod
       : initialMergeMethod(refreshedMergeMethods));
-  }
+  }, [publishWorkspace]);
 
   /** Reloads the PR conversation from GitHub, ignoring overlapping stale responses. */
-  async function refreshWorkspace(allowPendingAction = false): Promise<void> {
-    if (refreshInFlightRef.current || (pendingActionRef.current && !allowPendingAction)) return;
+  const refreshWorkspace = useCallback(async (allowPendingAction = false, fresh = false): Promise<void> => {
+    if (refreshInFlightRef.current || (pendingActionRef.current && !allowPendingAction)) {
+      refreshQueuedRef.current = true;
+      freshQueuedRef.current ||= fresh;
+      return;
+    }
     refreshInFlightRef.current = true;
 
     const generation = refreshGenerationRef.current + 1;
@@ -311,7 +318,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     const path = source.map(encodeURIComponent).join("/");
 
     try {
-      const response = await fetch(`/api/pull-request/${path}`, { cache: "no-store" });
+      const response = await fetch(`/api/pull-request/${path}${fresh ? "?fresh=1" : ""}`, { cache: "no-store" });
       // SAFETY: The same-origin pull-request GET route returns this workspace envelope.
       const result = await response.json() as { error?: string; workspace?: PullRequestWorkspace };
       if (!response.ok || !result.workspace || generation !== refreshGenerationRef.current || (pendingActionRef.current && !allowPendingAction)) return;
@@ -320,8 +327,18 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       return;
     } finally {
       refreshInFlightRef.current = false;
+      if (refreshQueuedRef.current && !pendingActionRef.current) {
+        const nextFresh = freshQueuedRef.current;
+        refreshQueuedRef.current = false;
+        freshQueuedRef.current = false;
+        void refreshWorkspaceRef.current?.(false, nextFresh);
+      }
     }
-  }
+  }, [applyWorkspace, source]);
+
+  useEffect(() => {
+    refreshWorkspaceRef.current = refreshWorkspace;
+  }, [refreshWorkspace]);
 
   useEffect(() => {
     let retry = 0;
@@ -338,7 +355,59 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       window.clearTimeout(retry);
       window.removeEventListener(PR_WORKSPACE_REFRESH_EVENT, handleRefreshEvent);
     };
-  }, [source]);
+  }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (pendingAction || refreshInFlightRef.current || !refreshQueuedRef.current) return;
+    const fresh = freshQueuedRef.current;
+    refreshQueuedRef.current = false;
+    freshQueuedRef.current = false;
+    void refreshWorkspace(false, fresh);
+  }, [pendingAction, refreshWorkspace]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    let debounce = 0;
+    let disconnect: (() => void) | undefined;
+    const path = source.map(encodeURIComponent).join("/");
+
+    /** Connects only when webhook delivery is configured for this deployment. */
+    async function subscribe(): Promise<void> {
+      try {
+        const response = await fetch(`/api/realtime/${path}`, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        // SAFETY: The same-origin realtime configuration route returns these public connection fields.
+        const settings = await response.json() as { channel: string; cluster: string; key: string };
+        const { default: Pusher } = await import("pusher-js");
+        if (disposed) return;
+        const client = new Pusher(settings.key, { channelAuthorization: { endpoint: `/api/realtime/${path}`, transport: "ajax" }, cluster: settings.cluster, forceTLS: true });
+        const channel = client.subscribe(settings.channel);
+
+        /** Coalesces event bursts and revalidates CI even for anonymous viewers. */
+        function changed(): void {
+          window.clearTimeout(debounce);
+          debounce = window.setTimeout(() => {
+            if (document.visibilityState === "visible") void refreshWorkspace(false, true);
+          }, 300);
+        }
+
+        channel.bind("changed", changed);
+        channel.bind("pusher:subscription_succeeded", changed);
+        disconnect = () => { channel.unbind_all(); client.disconnect(); };
+      } catch {
+        // The normal polling path remains active if realtime is unavailable.
+      }
+    }
+
+    void subscribe();
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearTimeout(debounce);
+      disconnect?.();
+    };
+  }, [refreshWorkspace, source]);
 
   useEffect(() => {
     /** Keeps the conversation current while this tab is visible. */
@@ -361,10 +430,12 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       window.removeEventListener("pageshow", restored);
       window.removeEventListener("online", poll);
     };
-  }, [source]);
+  }, [refreshWorkspace]);
 
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
+    if (pendingActionRef.current) return false;
+    pendingActionRef.current = action.action;
     refreshGenerationRef.current += 1;
     setPendingAction(action.action);
     setMessage(undefined);
@@ -395,6 +466,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       if (action.action === "ready") void refreshWorkspace(true);
       return false;
     } finally {
+      pendingActionRef.current = undefined;
       setPendingAction(undefined);
     }
   }
