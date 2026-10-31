@@ -163,7 +163,6 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const refreshQueuedRef = useRef(false);
   const freshQueuedRef = useRef(false);
   const refreshWorkspaceRef = useRef<(allowPendingAction?: boolean, fresh?: boolean) => Promise<void>>(undefined);
-  const refreshOnVisibleRef = useRef(false);
   const {
     conversationItems,
     failedCheckCount,
@@ -389,17 +388,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
         function scheduleRefresh(): void {
           window.clearTimeout(debounce);
-          if (document.visibilityState !== "visible") {
-            refreshOnVisibleRef.current = true;
-            return;
-          }
+          if (document.visibilityState !== "visible") return;
           debounce = window.setTimeout(() => {
-            if (document.visibilityState === "visible") {
-              refreshOnVisibleRef.current = false;
-              void refreshWorkspace(false, true);
-            } else {
-              refreshOnVisibleRef.current = true;
-            }
+            if (document.visibilityState === "visible") void refreshWorkspace(false, true);
           }, 300);
         }
 
@@ -428,9 +419,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     /** Keeps the conversation current while this tab is visible. */
     function poll(): void {
       if (document.visibilityState !== "visible") return;
-      const fresh = refreshOnVisibleRef.current;
-      refreshOnVisibleRef.current = false;
-      void refreshWorkspace(false, fresh);
+      void refreshWorkspace(false, true);
     }
 
     function restored(event: PageTransitionEvent): void {
