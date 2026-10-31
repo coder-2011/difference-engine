@@ -52,17 +52,39 @@ test("taking an unresolved preload keeps its timeout and cancels a late response
   let finish;
   let signal;
   let cancelled = false;
+  const delays = [];
   const pending = new Promise((resolve) => { finish = resolve; });
-  const timers = { setTimeout(fn) { timeout = fn; return 1; }, clearTimeout() {} };
+  const timers = { setTimeout(fn, delay) { timeout = fn; delays.push(delay); return delays.length; }, clearTimeout() {} };
   const body = new ReadableStream({ cancel() { cancelled = true; } });
   await withGlobals((_url, options) => { signal = options.signal; return pending; }, async () => {
     preloadPullRequestDiff(path);
     const result = takePreloadedDiff(source);
+    assert.deepEqual(delays, [15_000, 300]);
     timeout();
     assert.equal(signal.aborted, true);
     finish(new Response(body, { headers: { "X-Diff-Revision": "owner/repo:A:A" } }));
     assert.equal(await result, null);
     assert.equal(cancelled, true);
+  }, timers);
+});
+
+test("a completed handoff clears both timeouts without aborting the stream", async () => {
+  const delays = [];
+  const cleared = [];
+  let signal;
+  const timers = { setTimeout(_fn, delay) { delays.push(delay); return delays.length; }, clearTimeout(id) { cleared.push(id); } };
+  const body = new ReadableStream({});
+  await withGlobals(async (_url, options) => {
+    signal = options.signal;
+    return new Response(body, { headers: { "X-Diff-Revision": "owner/repo:A:A" } });
+  }, async () => {
+    preloadPullRequestDiff(path);
+    const result = await takePreloadedDiff(source);
+    assert.deepEqual(delays, [15_000, 300]);
+    assert.deepEqual(cleared, [1, 2]);
+    assert.equal(signal.aborted, false);
+    assert.equal(result.stream, body);
+    await result.stream.cancel();
   }, timers);
 });
 

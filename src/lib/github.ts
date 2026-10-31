@@ -407,7 +407,8 @@ async function githubError(response: Response): Promise<GitHubError> {
 }
 
 /** Performs one GitHub API request while keeping the authenticated token on the server. */
-async function githubResponse(path: string, token?: string, method = "GET", body?: GitHubRequestBody, etag?: string): Promise<Response> {
+async function githubResponse(path: string, token?: string, method = "GET", body?: GitHubRequestBody, etag?: string, signal?: AbortSignal): Promise<Response> {
+  signal?.throwIfAborted();
   const headers = githubHeaders("application/vnd.github+json", token);
   headers.set("X-GitHub-Api-Version", "2022-11-28");
   if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -417,10 +418,16 @@ async function githubResponse(path: string, token?: string, method = "GET", body
     cache: "no-store" as const,
     headers,
     method,
+    ...(signal ? { signal } : {}),
   };
   const response = body === undefined
     ? await fetch(`${GITHUB_API}${path}`, init)
     : await fetch(`${GITHUB_API}${path}`, { ...init, body: JSON.stringify(body) });
+
+  if (signal?.aborted) {
+    void response.body?.cancel().catch(() => {});
+    signal.throwIfAborted();
+  }
 
   if (!response.ok && response.status !== 304) throw await githubError(response);
 
@@ -820,10 +827,11 @@ export async function verifyPullRequestAccess(source: string[], token?: string):
 }
 
 /** Reads current PR revisions without using a stale cached response. */
-export async function getPullRequestRevision(source: string[], token?: string): Promise<string> {
+export async function getPullRequestRevision(source: string[], token?: string, signal?: AbortSignal): Promise<string> {
   const parsed = pullRequestSource(source);
-  const response = await githubResponse(parsed.apiPath, token);
+  const response = await githubResponse(parsed.apiPath, token, "GET", undefined, undefined, signal);
   const pullRequest = await response.json() as PullRequest;
+  signal?.throwIfAborted();
   return `${parsed.repository}:${pullRequest.base.sha}:${pullRequest.head.sha}`;
 }
 
@@ -2006,7 +2014,8 @@ async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?
 }
 
 /** Streams the raw GitHub diff so large comparisons are not serialized through React. */
-export async function getDiffResponse(source: string[], token?: string, etag?: string): Promise<Response> {
+export async function getDiffResponse(source: string[], token?: string, etag?: string, signal?: AbortSignal): Promise<Response> {
+  signal?.throwIfAborted();
   const parsed = parseSource(source);
   if (parsed.kind === "repository") return Response.json(await getRepositoryFiles(parsed, token), { headers: { "Cache-Control": "no-store" } });
 
@@ -2015,7 +2024,13 @@ export async function getDiffResponse(source: string[], token?: string, etag?: s
   const response = await fetch(`${GITHUB_API}${parsed.apiPath}`, {
     headers,
     cache: "no-store",
+    ...(signal ? { signal } : {}),
   });
+
+  if (signal?.aborted) {
+    void response.body?.cancel().catch(() => {});
+    signal.throwIfAborted();
+  }
 
   if (response.status === 304 && etag) return diffResponse(null, response.headers.get("etag") ?? etag, 304);
   if (response.ok && response.body) return diffResponse(response.body, response.headers.get("etag") ?? undefined);
@@ -2028,7 +2043,12 @@ export async function getDiffResponse(source: string[], token?: string, etag?: s
     const publicResponse = await fetch(publicDiffUrl, {
       cache: "no-store",
       redirect: "follow",
+      ...(signal ? { signal } : {}),
     });
+    if (signal?.aborted) {
+      void publicResponse.body?.cancel().catch(() => {});
+      signal.throwIfAborted();
+    }
     const contentType = publicResponse.headers.get("content-type") ?? "";
 
     if (publicResponse.ok && publicResponse.body && contentType.startsWith("text/plain")) {
@@ -2036,7 +2056,7 @@ export async function getDiffResponse(source: string[], token?: string, etag?: s
     }
 
     if (parsed.kind === "pull" && token) {
-      return diffResponse(await getLargePullRequestDiff(parsed.apiPath, token));
+      return diffResponse(await getLargePullRequestDiff(parsed.apiPath, token, signal));
     }
   }
 
@@ -2397,11 +2417,16 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
 }
 
 /** Reconstructs an oversized private PR from GitHub's paginated file patches. */
-async function getLargePullRequestDiff(apiPath: string, token: string): Promise<string> {
+async function getLargePullRequestDiff(apiPath: string, token: string, signal?: AbortSignal): Promise<string> {
   const files: PullRequestFile[] = [];
 
   for (let page = 1; page <= 30; page += 1) {
-    const batch = await githubRequest<PullRequestFile[]>(`${apiPath}/files?per_page=100&page=${page}`, token);
+    signal?.throwIfAborted();
+    const path = `${apiPath}/files?per_page=100&page=${page}`;
+    const batch = signal
+      ? await (await githubResponse(path, token, "GET", undefined, undefined, signal)).json() as PullRequestFile[]
+      : await githubRequest<PullRequestFile[]>(path, token);
+    signal?.throwIfAborted();
     files.push(...batch);
     if (batch.length < 100) break;
   }

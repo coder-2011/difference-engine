@@ -8,6 +8,7 @@ type DiffPreload = {
 };
 
 const DIFF_PRELOAD_TIMEOUT = 15_000;
+const DIFF_PRELOAD_HANDOFF_TIMEOUT = 300;
 let activePreload: DiffPreload | undefined;
 
 /** Converts a dashboard PR path into the same encoded diff endpoint used by the viewer. */
@@ -66,6 +67,8 @@ export function takePreloadedDiff(source: string[]): Promise<PreloadedDiff | nul
   if (!preload || preload.endpoint !== sourceDiffEndpoint(source)) return null;
 
   activePreload = undefined;
+  window.clearTimeout(preload.timer);
+  preload.timer = window.setTimeout(() => discardPreload(preload), DIFF_PRELOAD_HANDOFF_TIMEOUT);
   return preload.stream.then((result) => {
     window.clearTimeout(preload.timer);
     if (!preload.controller.signal.aborted) return result;

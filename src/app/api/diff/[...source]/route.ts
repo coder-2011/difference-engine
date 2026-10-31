@@ -13,10 +13,14 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   let preloaded: Response | undefined;
   try {
     if (source[2] === "pull" && new URL(request.url).searchParams.get("preload") === "1") {
-      const before = await getPullRequestRevision(source, accessToken);
-      preloaded = await getDiffResponse(source, accessToken);
-      const after = await getPullRequestRevision(source, accessToken);
-      if (before !== after || request.signal.aborted) {
+      request.signal.throwIfAborted();
+      const before = await getPullRequestRevision(source, accessToken, request.signal);
+      request.signal.throwIfAborted();
+      preloaded = await getDiffResponse(source, accessToken, undefined, request.signal);
+      request.signal.throwIfAborted();
+      const after = await getPullRequestRevision(source, accessToken, request.signal);
+      request.signal.throwIfAborted();
+      if (before !== after) {
         void preloaded.body?.cancel().catch(() => {});
         return new Response(null, { status: 409 });
       }
@@ -26,6 +30,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     return await getDiffResponse(source, accessToken, request.headers.get("if-none-match") ?? undefined);
   } catch (error) {
     void preloaded?.body?.cancel().catch(() => {});
+    if (request.signal.aborted) return new Response(null, { status: 499 });
     const status = error instanceof GitHubError ? error.status : 500;
     const message = error instanceof Error ? error.message : "The diff could not be loaded";
     return NextResponse.json({ error: message }, { status });

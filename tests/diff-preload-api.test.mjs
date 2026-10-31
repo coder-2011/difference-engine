@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-function fixture(revisions = ["owner/repo:A:A", "owner/repo:A:A"]) {
+function fixture(revisions = ["owner/repo:A:A", "owner/repo:A:A"], hooks = {}) {
   const calls = [];
   let cancelled = false;
   class GitHubError extends Error { constructor(message, status) { super(message); this.status = status; } }
@@ -12,15 +12,18 @@ function fixture(revisions = ["owner/repo:A:A", "owner/repo:A:A"]) {
     "next/server": { NextResponse: { json: Response.json } },
     "@/lib/github": {
       GitHubError,
-      async getPullRequestRevision(_source, token) {
+      async getPullRequestRevision(_source, token, signal) {
         calls.push(["revision", token]);
+        await hooks.revision?.(calls.length, signal);
         const value = revisions.shift();
         if (typeof value !== "string") throw new GitHubError("GitHub rate limit exceeded", 429);
         return value;
       },
-      async getDiffResponse(_source, token, etag) {
+      async getDiffResponse(_source, token, etag, signal) {
         calls.push(["diff", token, etag]);
-        return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "Content-Type": "text/plain" } });
+        const result = new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "Content-Type": "text/plain" } });
+        await hooks.diff?.(signal);
+        return result;
       },
     },
     "@/lib/session": { async getGitHubAccessToken() { return "token"; } },
@@ -29,7 +32,7 @@ function fixture(revisions = ["owner/repo:A:A", "owner/repo:A:A"]) {
   const source = readFileSync(new URL("../src/app/api/diff/[...source]/route.ts", import.meta.url), "utf8");
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   runInNewContext(output, { exports, require: (name) => modules[name], URL, Response, Error });
-  return { calls, cancelled: () => cancelled, run: (path, source) => exports.GET(new Request(`https://example.test${path}`), { params: Promise.resolve({ source }) }) };
+  return { calls, cancelled: () => cancelled, run: (path, source, signal) => exports.GET(new Request(`https://example.test${path}`, { signal }), { params: Promise.resolve({ source }) }) };
 }
 const pull = ["owner", "repo", "pull", "1"];
 
@@ -74,4 +77,40 @@ test("ordinary PR and non-PR fetches never require metadata checks", async () =>
     assert.deepEqual(app.calls, [["diff", "token", undefined]]);
     await response.body.cancel();
   }
+});
+
+for (const stage of ["first revision", "diff", "second revision"]) {
+  test(`aborting during ${stage} stops the remaining speculative work`, async () => {
+    const controller = new AbortController();
+    let entered;
+    let release;
+    let passedSignal;
+    const started = new Promise((resolve) => { entered = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    const pause = async (signal) => { passedSignal = signal; entered(); await gate; };
+    const app = fixture(undefined, {
+      revision: async (count, signal) => {
+        if ((stage === "first revision" && count === 1) || (stage === "second revision" && count === 3)) await pause(signal);
+      },
+      diff: async (signal) => { if (stage === "diff") await pause(signal); },
+    });
+    const pending = app.run("/api/diff/owner/repo/pull/1?preload=1", pull, controller.signal);
+    await started;
+    controller.abort();
+    release();
+    const response = await pending;
+    assert.equal(response.status, 499);
+    assert.equal(passedSignal.aborted, true);
+    assert.equal(app.calls.length, stage === "first revision" ? 1 : stage === "diff" ? 2 : 3);
+    assert.equal(app.cancelled(), stage !== "first revision");
+  });
+}
+
+test("aborting just after diff acquisition prevents the second revision request", async () => {
+  const controller = new AbortController();
+  const app = fixture(undefined, { diff: async () => controller.abort() });
+  const response = await app.run("/api/diff/owner/repo/pull/1?preload=1", pull, controller.signal);
+  assert.equal(response.status, 499);
+  assert.deepEqual(app.calls, [["revision", "token"], ["diff", "token", undefined]]);
+  assert.equal(app.cancelled(), true);
 });
