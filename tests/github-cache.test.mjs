@@ -256,3 +256,81 @@ await test("forced refresh evicts an old page even when the in-flight limit is f
     await Promise.all(requests);
   }
 });
+
+for (const token of [undefined, "pagination-viewer"]) {
+  await test(`full terminal page rechecks pagination after 304 (${token ? "authenticated" : "anonymous"})`, async () => {
+    const repo = token ? "pageauth" : "pageanon";
+    const source = ["owner", repo, "pull", "123"];
+    const comments = `/repos/owner/${repo}/issues/123/comments?per_page=100&sort=created&direction=asc`;
+    const next = `${comments}&page=2`;
+    const records = Array.from({ length: 100 }, (_, index) => comment(index + 1, `comment ${index + 1}`));
+    let appended = false;
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      const parsed = new URL(url);
+      const path = parsed.pathname + parsed.search;
+      const validator = new Headers(init.headers).get("if-none-match");
+      calls.push({ path, validator });
+      if (path === "/graphql") return ok({ data: { repository: null } });
+      if (path === `/repos/owner/${repo}/pulls/123`) return ok(pull, { ETag: '"pull"' });
+      if (path === comments) {
+        if (validator) return new Response(null, { status: 304 });
+        return ok(records, appended
+          ? { ETag: '"first"', Link: `<https://api.github.com${next}>; rel="next"` }
+          : { ETag: '"first"' });
+      }
+      if (path === next) return ok(appended ? [comment(101, "new comment")] : [], { ETag: appended ? '"page2"' : '"empty"' });
+      if (path.includes("/actions/runs")) return ok({ workflow_runs: [] }, { ETag: '"other"' });
+      return ok([], { ETag: '"other"' });
+    };
+    assert.equal((await getPullRequestWorkspace(source, token)).comments.length, 100);
+    calls.length = 0;
+    appended = true;
+    const updated = await getPullRequestWorkspace(source, token, true);
+    assert.equal(updated.comments.length, 101);
+    assert.ok(updated.comments.some((item) => item.body === "new comment"));
+    assert.deepEqual(calls.filter(({ path }) => path === comments).map(({ validator }) => validator), ['"first"', null]);
+    assert.ok(calls.some(({ path }) => path === next));
+    appended = false;
+    const afterRemoval = await getPullRequestWorkspace(source, token, true);
+    assert.equal(afterRemoval.comments.length, 100);
+    assert.ok(afterRemoval.comments.every((item) => item.body !== "new comment"));
+  });
+}
+
+await test("older authenticated responses cannot replace newer viewer data", async () => {
+  const source = ["owner", "authrace", "pull", "123"];
+  const comments = "/repos/owner/authrace/issues/123/comments?per_page=100&sort=created&direction=asc";
+  let count = 0;
+  let validator;
+  let release;
+  let signal;
+  const started = new Promise((resolve) => { signal = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    if (path === "/graphql") return ok({ data: { repository: null } });
+    if (path === "/repos/owner/authrace/pulls/123") return ok(pull, { ETag: '"pull"' });
+    if (path === comments) {
+      count += 1;
+      if (count === 1) {
+        signal();
+        await held;
+        return ok([comment(1, "old")], { ETag: '"old"' });
+      }
+      if (count === 2) return ok([comment(1, "new")], { ETag: '"new"' });
+      validator = new Headers(init.headers).get("if-none-match");
+      return new Response(null, { status: 304 });
+    }
+    if (path.includes("/actions/runs")) return ok({ workflow_runs: [] }, { ETag: '"other"' });
+    return ok([], { ETag: '"other"' });
+  };
+  const oldWorkspace = getPullRequestWorkspace(source, "auth-race-viewer");
+  await started;
+  assert.equal((await getPullRequestWorkspace(source, "auth-race-viewer")).comments[0]?.body, "new");
+  release();
+  assert.equal((await oldWorkspace).comments[0]?.body, "old");
+  assert.equal((await getPullRequestWorkspace(source, "auth-race-viewer")).comments[0]?.body, "new");
+  assert.equal(validator, '"new"');
+});

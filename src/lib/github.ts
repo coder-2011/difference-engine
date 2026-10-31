@@ -41,6 +41,7 @@ type AnonymousRequestCacheEntry = {
 const anonymousRequestCache = new Map<string, AnonymousRequestCacheEntry>();
 const anonymousRequestInFlight = new Map<string, Promise<AnonymousRequestCacheEntry>>();
 const authenticatedRequestCache = new Map<string, { body: unknown; etag: string; expires: number; link?: string }>();
+const authenticatedRequestInFlight = new Map<string, symbol>();
 
 type GitHubUser = {
   avatar_url: string;
@@ -446,12 +447,22 @@ function setAnonymousRequestCacheEntry(path: string, entry: AnonymousRequestCach
   if (oldest !== undefined) anonymousRequestCache.delete(oldest);
 }
 
+/** A full terminal page can gain a next page without changing its ETag. */
+function mayHaveNewNextPage(body: unknown, cachedLink?: string, responseLink?: string): boolean {
+  return Array.isArray(body) && body.length === 100 && !cachedLink?.includes('rel="next"') && !responseLink?.includes('rel="next"');
+}
+
 /** Revalidates a public page, retaining its pagination metadata on a 304 response. */
-async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCacheEntry): Promise<AnonymousRequestCacheEntry> {
+async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCacheEntry, collection = false): Promise<AnonymousRequestCacheEntry> {
   try {
-    const response = await githubResponse(path, undefined, "GET", undefined, cached?.etag);
+    let response = await githubResponse(path, undefined, "GET", undefined, cached?.etag);
     if (response.status === 304 && cached) {
-      return { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL };
+      const link = response.headers.get("link") ?? undefined;
+      if (collection && mayHaveNewNextPage(cached.body, cached.link, link)) {
+        response = await githubResponse(path);
+      } else {
+        return { ...cached, expires: Date.now() + ANONYMOUS_CACHE_TTL, link: link ?? cached.link };
+      }
     }
     if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
 
@@ -468,7 +479,7 @@ async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCa
 }
 
 /** Reuses public pages until expiry; a forced request always starts a new revalidation. */
-async function anonymousJson<T>(path: string, revalidate = false): Promise<{ body: T; link?: string }> {
+async function anonymousJson<T>(path: string, revalidate = false, collection = false): Promise<{ body: T; link?: string }> {
   // Anonymous quota is shared and tiny, so public responses are reused briefly and served
   // stale when GitHub starts rejecting requests.
   const cached = getAnonymousRequestCacheEntry(path);
@@ -483,7 +494,7 @@ async function anonymousJson<T>(path: string, revalidate = false): Promise<{ bod
   }
 
   const tracked = Boolean(inFlight) || anonymousRequestInFlight.size < ANONYMOUS_CACHE_LIMIT;
-  const request = refreshAnonymousRequest(path, cached);
+  const request = refreshAnonymousRequest(path, cached, collection);
   if (!tracked) {
     if (revalidate) anonymousRequestCache.delete(path);
     const entry = await request;
@@ -509,32 +520,50 @@ async function githubRequest<T>(path: string, token?: string, revalidate = false
 }
 
 /** Revalidates token-scoped JSON without sharing private responses between GitHub identities. */
-async function authenticatedJson<T>(path: string, token: string): Promise<{ body: T; link?: string }> {
+async function authenticatedJson<T>(path: string, token: string, collection = false): Promise<{ body: T; link?: string }> {
   const key = `${createHash("sha256").update(token).digest("hex")}\0${path}`;
   const entry = authenticatedRequestCache.get(key);
   const cached = entry && entry.expires > Date.now() ? entry : undefined;
   if (entry && !cached) authenticatedRequestCache.delete(key);
-  const response = await githubResponse(path, token, "GET", undefined, cached?.etag);
-  if (response.status === 304 && cached) {
-    authenticatedRequestCache.delete(key);
-    authenticatedRequestCache.set(key, cached);
-    // SAFETY: The key includes the token and exact endpoint used to obtain this response.
-    return { body: cached.body as T, link: cached.link };
+  const generation = Symbol();
+  const tracked = authenticatedRequestInFlight.has(key) || authenticatedRequestInFlight.size < ANONYMOUS_CACHE_LIMIT;
+  if (tracked) authenticatedRequestInFlight.set(key, generation);
+  else authenticatedRequestCache.delete(key);
+  const current = () => tracked && authenticatedRequestInFlight.get(key) === generation;
+  try {
+    let response = await githubResponse(path, token, "GET", undefined, cached?.etag);
+    if (response.status === 304 && cached) {
+      const link = response.headers.get("link") ?? undefined;
+      if (collection && mayHaveNewNextPage(cached.body, cached.link, link)) {
+        response = await githubResponse(path, token);
+      } else {
+        if (current()) {
+          authenticatedRequestCache.delete(key);
+          authenticatedRequestCache.set(key, { ...cached, link: link ?? cached.link });
+        }
+        // SAFETY: The key includes the token and exact endpoint used to obtain this response.
+        return { body: cached.body as T, link: link ?? cached.link };
+      }
+    }
+    if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
+    // SAFETY: Each caller supplies the documented response type for its fixed GitHub endpoint.
+    const body = await response.json() as T;
+    const etag = response.headers.get("etag");
+    const link = response.headers.get("link") ?? undefined;
+    if (current()) {
+      authenticatedRequestCache.delete(key);
+      if (etag && JSON.stringify(body).length <= GITHUB_CACHE_MAX_BODY) {
+        authenticatedRequestCache.set(key, { body, etag, expires: Date.now() + AUTHENTICATED_CACHE_TTL, link });
+      }
+      if (authenticatedRequestCache.size > ANONYMOUS_CACHE_LIMIT) {
+        const oldest = authenticatedRequestCache.keys().next().value;
+        if (oldest !== undefined) authenticatedRequestCache.delete(oldest);
+      }
+    }
+    return { body, link };
+  } finally {
+    if (current()) authenticatedRequestInFlight.delete(key);
   }
-  if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
-  // SAFETY: Each caller supplies the documented response type for its fixed GitHub endpoint.
-  const body = await response.json() as T;
-  const etag = response.headers.get("etag");
-  const link = response.headers.get("link") ?? undefined;
-  authenticatedRequestCache.delete(key);
-  if (etag && JSON.stringify(body).length <= GITHUB_CACHE_MAX_BODY) {
-    authenticatedRequestCache.set(key, { body, etag, expires: Date.now() + AUTHENTICATED_CACHE_TTL, link });
-  }
-  if (authenticatedRequestCache.size > ANONYMOUS_CACHE_LIMIT) {
-    const oldest = authenticatedRequestCache.keys().next().value;
-    if (oldest !== undefined) authenticatedRequestCache.delete(oldest);
-  }
-  return { body, link };
 }
 
 /** Confirms GitHub authentication while treating temporary API failures as an unknown, not a logout. */
@@ -556,8 +585,8 @@ async function githubAllItems<T>(path: string, token?: string, revalidate = fals
 
   while (nextPath) {
     const result: { body: T[]; link?: string } = token
-      ? await authenticatedJson<T[]>(nextPath, token)
-      : await anonymousJson<T[]>(nextPath, revalidate);
+      ? await authenticatedJson<T[]>(nextPath, token, true)
+      : await anonymousJson<T[]>(nextPath, revalidate, true);
     items.push(...result.body);
     const nextUrl: string | undefined = result.link?.match(/<([^>]+)>; rel="next"/)?.[1];
 
