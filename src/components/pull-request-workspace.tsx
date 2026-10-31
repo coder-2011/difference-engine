@@ -8,6 +8,7 @@ import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
 import { usePullRequestLive } from "@/components/pull-request-live";
 import { notificationAffectsPullRequest } from "@/lib/pull-request-notification";
+import { draftStatus, type PullRequestDraft } from "@/lib/pull-request-draft";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
@@ -147,7 +148,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const publishWorkspace = live?.publish;
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [body, setBody] = useState(initialBody ?? "");
-  const [bodyDraft, setBodyDraft] = useState<string>();
+  const [bodyDraft, setBodyDraft] = useState<PullRequestDraft>();
   const [comment, setComment] = useState("");
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(() => initialMergeMethod(initialWorkspace.mergeMethods));
   const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
@@ -498,9 +499,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   /** Saves the complete Markdown body to GitHub and updates the rendered description only after confirmation. */
   async function submitBody(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (bodyDraft === undefined || bodyDraft === body || pendingAction) return;
+    if (bodyDraft === undefined || draftStatus(bodyDraft, body) !== "save" || pendingAction) return;
 
-    const savedBody = bodyDraft;
+    const savedBody = bodyDraft.value;
     if (!await runAction({ action: "edit-body", body: savedBody })) return;
 
     setBody(savedBody);
@@ -531,7 +532,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         <section className="pr-description">
           <div className="pr-description-heading">
             <span>Pull request description</span>
-            {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(body)} type="button"><Pencil size={13} /> Edit body</button>}
+            {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft({ base: body, value: body })} type="button"><Pencil size={13} /> Edit body</button>}
           </div>
           {workspace.hasMergeConflicts && <p className="pr-merge-conflict" role="status">Merge conflicts prevent merging.</p>}
           {visibleBody && <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>}
@@ -548,9 +549,10 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               </div>
               <div className="pr-body-editor-actions">
                 <button disabled={Boolean(pendingAction)} onClick={() => setBodyDraft(undefined)} type="button">Cancel</button>
-                <button className="save" disabled={bodyDraft === body || Boolean(pendingAction)} type="submit">Save to GitHub</button>
+                <button className="save" disabled={draftStatus(bodyDraft, body) !== "save" || Boolean(pendingAction)} type="submit">Save to GitHub</button>
               </div>
             </header>
+            {draftStatus(bodyDraft, body) === "conflict" && <p className="pr-body-editor-conflict" role="alert">Description changed on GitHub. Copy your draft, then cancel and reopen.</p>}
             <div className="pr-body-editor-panes">
               <label className="pr-body-editor-pane">
                 <span>Markdown</span>
@@ -558,16 +560,16 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
                   aria-label="Pull request body Markdown"
                   autoFocus
                   disabled={Boolean(pendingAction)}
-                  onChange={(event) => setBodyDraft(event.target.value)}
+                  onChange={(event) => setBodyDraft({ ...bodyDraft, value: event.target.value })}
                   onKeyDown={submitBodyOnMetaEnter}
                   spellCheck
-                  value={bodyDraft}
+                  value={bodyDraft.value}
                 />
               </label>
               <section aria-label="Markdown preview" className="pr-body-editor-pane pr-body-editor-preview">
                 <span>Preview</span>
                 <div className="markdown-body">
-                  {bodyDraft ? <GitHubMarkdown>{bodyDraft}</GitHubMarkdown> : <p className="pr-body-editor-empty">Nothing to preview.</p>}
+                  {bodyDraft.value ? <GitHubMarkdown>{bodyDraft.value}</GitHubMarkdown> : <p className="pr-body-editor-empty">Nothing to preview.</p>}
                 </div>
               </section>
             </div>

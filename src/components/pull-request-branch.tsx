@@ -4,6 +4,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 import { usePullRequestLive } from "@/components/pull-request-live";
+import { draftStatus, type PullRequestDraft } from "@/lib/pull-request-draft";
 import type { PullRequestWorkspace } from "@/types/github";
 
 type PullRequestBranchProps = {
@@ -17,15 +18,16 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
   const live = usePullRequestLive();
   const [savedBranch, setBranch] = useState(initialBranch);
   const branch = live?.workspace?.details?.headBranch ?? savedBranch;
-  const [draft, setDraft] = useState<string>();
+  const [draft, setDraft] = useState<PullRequestDraft>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const status = draft && draftStatus({ base: draft.base.trim(), value: draft.value.trim() }, branch.trim());
   const label = live?.workspace?.details?.headLabel ?? initialLabel;
   const prefix = label.endsWith(branch) ? label.slice(0, -branch.length) : "";
 
   /** Opens the inline editor with the current head branch name. */
   function beginEditing(): void {
-    setDraft(branch);
+    setDraft({ base: branch, value: branch });
     setError(undefined);
   }
 
@@ -42,12 +44,13 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
 
   /** Renames the current pull request head branch after GitHub accepts the new name. */
   async function saveBranch(): Promise<void> {
-    const nextBranch = draft?.trim() ?? "";
+    const nextBranch = draft?.value.trim() ?? "";
     if (!nextBranch || pending) return;
-    if (nextBranch === branch) {
+    if (status === "unchanged") {
       cancelEditing();
       return;
     }
+    if (status === "conflict") return;
 
     setPending(true);
     setError(undefined);
@@ -97,12 +100,13 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
         autoFocus
         disabled={pending}
         maxLength={255}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => setDraft({ ...draft, value: event.target.value })}
         onKeyDown={handleKeyDown}
-        value={draft}
+        value={draft.value}
       />
-      <button disabled={!draft.trim() || draft.trim() === branch || pending} type="submit">Save</button>
+      <button disabled={!draft.value.trim() || status !== "save" || pending} type="submit">Save</button>
       <button disabled={pending} onClick={cancelEditing} type="button">Cancel</button>
+      {status === "conflict" && <span className="pr-branch-error" role="alert">Branch changed on GitHub. Copy your draft, then cancel and reopen.</span>}
       {error && <span className="pr-branch-error" role="alert">{error}</span>}
     </form>
   );

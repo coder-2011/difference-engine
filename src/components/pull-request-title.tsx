@@ -4,6 +4,7 @@ import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 import { usePullRequestLive } from "@/components/pull-request-live";
+import { draftStatus, type PullRequestDraft } from "@/lib/pull-request-draft";
 import type { PullRequestWorkspace } from "@/types/github";
 
 type PullRequestTitleProps = {
@@ -17,13 +18,14 @@ export function PullRequestTitle({ editable = true, initialTitle, source }: Pull
   const live = usePullRequestLive();
   const [savedTitle, setTitle] = useState(initialTitle);
   const title = live?.workspace?.details?.title ?? savedTitle;
-  const [draft, setDraft] = useState<string>();
+  const [draft, setDraft] = useState<PullRequestDraft>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const status = draft && draftStatus({ base: draft.base.trim(), value: draft.value.trim() }, title.trim());
 
   /** Opens the inline editor with the current GitHub title. */
   function beginEditing(): void {
-    setDraft(title);
+    setDraft({ base: title, value: title });
     setError(undefined);
   }
 
@@ -40,12 +42,13 @@ export function PullRequestTitle({ editable = true, initialTitle, source }: Pull
 
   /** Persists one non-empty title and exits edit mode after GitHub confirms it. */
   async function saveTitle(): Promise<void> {
-    const nextTitle = draft?.trim() ?? "";
+    const nextTitle = draft?.value.trim() ?? "";
     if (!nextTitle || pending) return;
-    if (nextTitle === title) {
+    if (status === "unchanged") {
       cancelEditing();
       return;
     }
+    if (status === "conflict") return;
 
     setPending(true);
     setError(undefined);
@@ -104,12 +107,13 @@ export function PullRequestTitle({ editable = true, initialTitle, source }: Pull
         autoFocus
         disabled={pending}
         maxLength={256}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => setDraft({ ...draft, value: event.target.value })}
         onKeyDown={handleKeyDown}
-        value={draft}
+        value={draft.value}
       />
-      <button className="save" disabled={!draft.trim() || draft.trim() === title || pending} type="submit">Save</button>
+      <button className="save" disabled={!draft.value.trim() || status !== "save" || pending} type="submit">Save</button>
       <button disabled={pending} onClick={cancelEditing} type="button">Cancel</button>
+      {status === "conflict" && <span className="pr-title-error" role="alert">Title changed on GitHub. Copy your draft, then cancel and reopen.</span>}
       {error && <span className="pr-title-error" role="alert">{error}</span>}
     </form>
   );

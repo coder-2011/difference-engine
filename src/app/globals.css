@@ -2390,6 +2390,13 @@ button {
   gap: 8px;
 }
 
+.pr-body-editor-conflict {
+  margin: 0;
+  padding: 10px 14px;
+  color: #dc949a;
+  font-size: 12px;
+}
+
 .pr-title-editor button,
 .pr-body-editor-actions button {
   height: 31px;
