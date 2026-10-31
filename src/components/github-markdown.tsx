@@ -98,6 +98,23 @@ function codeReferenceUrl(reference: CodeReference): string {
   return `${CODE_REFERENCE_PREFIX}${encodeURIComponent(`${reference.path}:${reference.lineNumber}${end}`)}`;
 }
 
+/** Recognizes relative Markdown destinations without intercepting external links. */
+function linkedCodeReference(node: MarkdownNode, paths?: ReadonlySet<string>): CodeReference | undefined {
+  const url = node.url;
+  if (!url || /^(?:[a-z][a-z\d+.-]*:\/\/|\/\/)/i.test(url)) return undefined;
+
+  const hash = url.match(/^(.+)#L([1-9]\d*)(?:-L([1-9]\d*))?$/);
+  const destination = hash ? `${hash[1]}:${hash[2]}${hash[3] ? `-${hash[3]}` : ""}` : url;
+  const reference = parseCodeReference(destination.replace(/^\.\//, ""), paths);
+  if (reference) return reference;
+
+  const label = node.children?.length === 1 ? node.children[0] : undefined;
+  const fromLabel = label && (label.type === "text" || label.type === "inlineCode") && label.value
+    ? parseCodeReference(label.value, paths)
+    : undefined;
+  return fromLabel && url.replace(/^\.\//, "") === fromLabel.path ? fromLabel : undefined;
+}
+
 /** Splits ordinary Markdown text into unchanged text and clickable source-location links. */
 function linkCodeReferenceText(value: string, paths?: ReadonlySet<string>): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -121,15 +138,20 @@ function linkCodeReferenceText(value: string, paths?: ReadonlySet<string>): Mark
   return nodes;
 }
 
-/** Turns repository `path:line` references into links without touching code blocks or existing links. */
+/** Turns repository references into links without touching code blocks or external links. */
 function githubCodeReferences(paths?: readonly string[]) {
   /** Installs the optional immutable path set before Unified begins walking one Markdown tree. */
   return function installCodeReferences() {
     const visiblePaths = paths ? new Set(paths) : undefined;
 
-    /** Replaces source references with links without touching code blocks or existing links. */
+    /** Replaces source references with links without touching code blocks or external links. */
     return function markCodeReferences(node: MarkdownNode): void {
-      if (!node.children || node.type === "code" || node.type === "link") return;
+      if (!node.children || node.type === "code") return;
+      if (node.type === "link") {
+        const reference = linkedCodeReference(node, visiblePaths);
+        if (reference) node.url = codeReferenceUrl(reference);
+        return;
+      }
 
       node.children = node.children.flatMap((child) => {
         if (child.type === "text" && isString(child.value)) return linkCodeReferenceText(child.value, visiblePaths);

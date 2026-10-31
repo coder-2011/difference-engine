@@ -301,6 +301,7 @@ export function DiffViewer({
   const commitStatusTimerRef = useRef<number>(0);
   const openChatRef = useRef<(() => void) | null>(null);
   const viewerRef = useRef<CodeViewHandle<undefined, undefined>>(null);
+  const [pendingReveal, setPendingReveal] = useState<CodeLocation>();
   const expandedContextScrollTopRef = useRef<number | undefined>(undefined);
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
@@ -692,21 +693,27 @@ export function DiffViewer({
       return;
     }
 
-    /** Reveals a saved Call Flow reference in Files Changed after the selected tab has mounted. */
-    function selectCode(): void {
-      const end = location.endLineNumber ?? location.lineNumber;
-      const range = { start: location.lineNumber, end, side: location.side, endSide: location.endSide ?? location.side };
-      viewerRef.current?.setSelectedLines({ id: location.id, range });
-      viewerRef.current?.scrollTo({ type: "line", ...location, align: "center", behavior: "smooth" });
+    const file = repository ? undefined : diffFiles.find((candidate) => candidate.name === location.id);
+    const side = location.side ?? "additions";
+    const end = location.endLineNumber ?? location.lineNumber;
+    // A partial patch cannot display lines outside one hunk, even if the file itself is present.
+    const inHunk = file?.hunks.some((hunk) => {
+      const start = side === "deletions" ? hunk.deletionStart : hunk.additionStart;
+      const count = side === "deletions" ? hunk.deletionCount : hunk.additionCount;
+      return location.lineNumber >= start && end < start + count;
+    });
+    if (file && !inHunk && (!location.endSide || location.endSide === side)) {
+      const targetRevision = side === "deletions" ? baseRevision : revision;
+      if (targetRevision) {
+        window.location.assign(repositoryFileUrl(source, targetRevision, side === "deletions" ? file.prevName ?? file.name : file.name, location.lineNumber, end));
+        return;
+      }
     }
 
-    if (reviewView === "call-flow") {
-      selectReviewView("files");
-      window.requestAnimationFrame(selectCode);
-      return;
-    }
-    selectCode();
-  }, [paths, revisionKey, reviewView, selectReviewView, source]);
+    if (reviewView === "call-flow") selectReviewView("files");
+    if (collapsed) setCollapsed(false);
+    setPendingReveal(location);
+  }, [baseRevision, collapsed, diffFiles, paths, repository, revision, revisionKey, reviewView, selectReviewView, source]);
 
   useEffect(() => {
     /** Clears the temporary annotation focus when the user clicks anywhere else. */
@@ -951,6 +958,20 @@ export function DiffViewer({
         }),
     [canEdit, codeFiles, collapsed, diffFiles, fileVersions, repository, revisionKey],
   );
+
+  useEffect(() => {
+    if (!pendingReveal || reviewView !== "files" || collapsed) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const { id, lineNumber, endLineNumber, side, endSide } = pendingReveal;
+    const workspace = workspaceRef.current?.getBoundingClientRect();
+    if (workspace && (workspace.top > 51 || workspace.bottom <= 51)) {
+      window.scrollBy({ top: workspace.top - 51, behavior: "smooth" });
+    }
+    viewer.setSelectedLines({ id, range: { start: lineNumber, end: endLineNumber ?? lineNumber, side, endSide: endSide ?? side } });
+    viewer.scrollTo({ type: "line", ...pendingReveal, align: "center", behavior: "smooth" });
+    setPendingReveal(undefined);
+  }, [collapsed, items, pendingReveal, reviewView]);
   const codeViewOptions = useMemo<CodeViewReactOptions<undefined, undefined>>(() => ({
     diffStyle: split ? "split" : "unified",
     diffIndicators: "bars",
