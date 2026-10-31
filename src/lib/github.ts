@@ -27,7 +27,7 @@ const COMMIT_STATS_REQUEST_CONCURRENCY = 8;
 const ANONYMOUS_CACHE_TTL = 60_000;
 const ANONYMOUS_CACHE_LIMIT = 300;
 const AUTHENTICATED_CACHE_TTL = 5 * 60_000;
-const AUTHENTICATED_CACHE_MAX_BODY = 1_000_000;
+const GITHUB_CACHE_MAX_BODY = 1_000_000;
 const DASHBOARD_PULL_REQUEST_PAGE_SIZE = 24;
 const OPEN_PULL_REQUESTS_QUERY = "is:pr is:open involves:@me sort:updated-desc";
 
@@ -488,6 +488,8 @@ async function anonymousJson<T>(path: string, revalidate = false): Promise<{ bod
   const tracked = Boolean(inFlight) || anonymousRequestInFlight.size < ANONYMOUS_CACHE_LIMIT;
   const request = refreshAnonymousRequest(path, cached);
   if (!tracked) {
+    // No result can be published for this request, so do not retain the pre-event page.
+    if (revalidate) anonymousRequestCache.delete(path);
     const entry = await request;
     // SAFETY: The response is from the requested fixed GitHub path.
     return { body: entry.body as T, link: entry.link };
@@ -496,7 +498,10 @@ async function anonymousJson<T>(path: string, revalidate = false): Promise<{ bod
 
   try {
     const entry = await request;
-    if (anonymousRequestInFlight.get(path) === request) setAnonymousRequestCacheEntry(path, entry);
+    if (anonymousRequestInFlight.get(path) === request) {
+      if (JSON.stringify(entry.body).length <= GITHUB_CACHE_MAX_BODY) setAnonymousRequestCacheEntry(path, entry);
+      else anonymousRequestCache.delete(path);
+    }
     // SAFETY: The response is from the requested fixed GitHub path.
     return { body: entry.body as T, link: entry.link };
   } finally {
@@ -528,7 +533,7 @@ async function authenticatedJson<T>(path: string, token: string): Promise<{ body
   const etag = response.headers.get("etag");
   const link = response.headers.get("link") ?? undefined;
   authenticatedRequestCache.delete(key);
-  if (etag && JSON.stringify(body).length <= AUTHENTICATED_CACHE_MAX_BODY) {
+  if (etag && JSON.stringify(body).length <= GITHUB_CACHE_MAX_BODY) {
     authenticatedRequestCache.set(key, { body, etag, expires: Date.now() + AUTHENTICATED_CACHE_TTL, link });
   }
   if (authenticatedRequestCache.size > ANONYMOUS_CACHE_LIMIT) {

@@ -185,3 +185,74 @@ await test("authenticated conversation updates remain separate from public and o
   assert.equal(calls.filter(({ path, authorization }) => path === comments && authorization === "Bearer viewer-a").at(-1)?.validator, '"a-before"');
   assert.deepEqual((await getPullRequestWorkspace(source)).comments.map((item) => item.body), ["public"]);
 });
+
+await test("oversized pages replace neither newer nor older cached results", async () => {
+  const source = ["owner", "oversized", "pull", "123"];
+  const comments = "/repos/owner/oversized/issues/123/comments?per_page=100&sort=created&direction=asc";
+  const oversized = "x".repeat(1_000_001);
+  const validators = [];
+  let release;
+  let signal;
+  const started = new Promise((resolve) => { signal = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    if (path === "/repos/owner/oversized/pulls/123") return ok(pull, { ETag: '"pull"' });
+    if (path === comments) {
+      validators.push(new Headers(init.headers).get("if-none-match"));
+      if (validators.length === 1) return ok([comment(1, "before")], { ETag: '"before"' });
+      if (validators.length === 2) {
+        signal();
+        await held;
+        return new Response(null, { status: 304 });
+      }
+      return ok([comment(1, oversized)], { ETag: '"oversized"' });
+    }
+    if (path.includes("/actions/runs")) return ok({ workflow_runs: [] }, { ETag: '"other"' });
+    return ok([], { ETag: '"other"' });
+  };
+  assert.equal((await getPullRequestWorkspace(source)).comments[0]?.body, "before");
+  const oldWorkspace = getPullRequestWorkspace(source, undefined, true);
+  await started;
+  assert.equal((await getPullRequestWorkspace(source, undefined, true)).comments[0]?.body.length, oversized.length);
+  release();
+  assert.equal((await oldWorkspace).comments[0]?.body, "before");
+  assert.equal((await getPullRequestWorkspace(source)).comments[0]?.body.length, oversized.length);
+  assert.equal((await getPullRequestWorkspace(source)).comments[0]?.body.length, oversized.length);
+  assert.deepEqual(validators, [null, '"before"', '"before"', null, null]);
+});
+
+await test("forced refresh evicts an old page even when the in-flight limit is full", async () => {
+  const source = ["owner", "full", "pull", "123"];
+  const comments = "/repos/owner/full/issues/123/comments?per_page=100&sort=created&direction=asc";
+  const validators = [];
+  const held = [];
+  let oversized = false;
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    if (path.includes("/held-")) return new Promise((_, reject) => held.push(reject));
+    if (path === "/repos/owner/full/pulls/123") return ok(pull, { ETag: '"pull"' });
+    if (path === comments) {
+      validators.push(new Headers(init.headers).get("if-none-match"));
+      return ok([comment(1, oversized ? "x".repeat(1_000_001) : "before")], { ETag: oversized ? '"oversized"' : '"before"' });
+    }
+    if (path.includes("/actions/runs")) return ok({ workflow_runs: [] }, { ETag: '"other"' });
+    return ok([], { ETag: '"other"' });
+  };
+  assert.equal((await getPullRequestWorkspace(source)).comments[0]?.body, "before");
+  const requests = Array.from({ length: 300 }, (_, index) =>
+    getPullRequestWorkspace(["owner", `held-${index}`, "pull", "123"]).catch(() => {}),
+  );
+  try {
+    assert.equal(held.length, 300);
+    oversized = true;
+    assert.equal((await getPullRequestWorkspace(source, undefined, true)).comments[0]?.body.length, 1_000_001);
+    assert.equal((await getPullRequestWorkspace(source)).comments[0]?.body.length, 1_000_001);
+    assert.deepEqual(validators, [null, '"before"', null]);
+  } finally {
+    for (const reject of held) reject(new Error("finished"));
+    await Promise.all(requests);
+  }
+});
