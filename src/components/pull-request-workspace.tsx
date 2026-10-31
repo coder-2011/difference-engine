@@ -6,6 +6,7 @@ import { Check, CheckCircle2, ChevronDown, CircleX, GitCommitHorizontal, GitPull
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { PullRequestReviewThread } from "@/components/pull-request-review-thread";
+import { usePullRequestLive } from "@/components/pull-request-live";
 import type { PullRequestAction, PullRequestMergeMethod, PullRequestWorkspace } from "@/types/github";
 
 type PullRequestWorkspaceProps = {
@@ -141,6 +142,7 @@ function openPullRequestState(workspace: PullRequestWorkspace): string | undefin
 
 /** Renders the PR description and GitHub-backed conversation/actions as one responsive workspace. */
 export function PullRequestWorkspace({ description: initialBody, source, workspace: initialWorkspace }: PullRequestWorkspaceProps) {
+  const live = usePullRequestLive();
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [body, setBody] = useState(initialBody ?? "");
   const [bodyDraft, setBodyDraft] = useState<string>();
@@ -154,6 +156,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   const mergeMethodTriggerRef = useRef<HTMLButtonElement>(null);
   const pendingActionRef = useRef<PullRequestAction["action"] | undefined>(undefined);
   const refreshGenerationRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
   pendingActionRef.current = pendingAction;
   const {
     conversationItems,
@@ -290,7 +293,9 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
   /** Replaces the conversation with GitHub's latest workspace without touching in-progress drafts. */
   function applyWorkspace(nextWorkspace: PullRequestWorkspace): void {
     const refreshedMergeMethods = nextWorkspace.mergeMethods;
-    setWorkspace(nextWorkspace);
+    setWorkspace((current) => JSON.stringify(current) === JSON.stringify(nextWorkspace) ? current : nextWorkspace);
+    if (nextWorkspace.details) setBody(nextWorkspace.details.description);
+    live?.publish(nextWorkspace);
     setMergeMethod((currentMethod) => refreshedMergeMethods.includes(currentMethod)
       ? currentMethod
       : initialMergeMethod(refreshedMergeMethods));
@@ -298,20 +303,23 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
 
   /** Reloads the PR conversation from GitHub, ignoring overlapping stale responses. */
   async function refreshWorkspace(allowPendingAction = false): Promise<void> {
-    if (pendingActionRef.current && !allowPendingAction) return;
+    if (refreshInFlightRef.current || (pendingActionRef.current && !allowPendingAction)) return;
+    refreshInFlightRef.current = true;
 
     const generation = refreshGenerationRef.current + 1;
     refreshGenerationRef.current = generation;
     const path = source.map(encodeURIComponent).join("/");
 
     try {
-      const response = await fetch(`/api/pull-request/${path}`);
+      const response = await fetch(`/api/pull-request/${path}`, { cache: "no-store" });
       // SAFETY: The same-origin pull-request GET route returns this workspace envelope.
       const result = await response.json() as { error?: string; workspace?: PullRequestWorkspace };
       if (!response.ok || !result.workspace || generation !== refreshGenerationRef.current || (pendingActionRef.current && !allowPendingAction)) return;
       applyWorkspace(result.workspace);
     } catch {
       return;
+    } finally {
+      refreshInFlightRef.current = false;
     }
   }
 
@@ -339,16 +347,25 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
       void refreshWorkspace();
     }
 
+    function restored(event: PageTransitionEvent): void {
+      if (event.persisted) poll();
+    }
+
     const timer = window.setInterval(poll, CONVERSATION_POLL_MS);
     document.addEventListener("visibilitychange", poll);
+    window.addEventListener("pageshow", restored);
+    window.addEventListener("online", poll);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", poll);
+      window.removeEventListener("pageshow", restored);
+      window.removeEventListener("online", poll);
     };
   }, [source]);
 
   /** Sends one explicit user action to the server and replaces local data with GitHub's fresh state. */
   async function runAction(action: PullRequestAction): Promise<boolean> {
+    refreshGenerationRef.current += 1;
     setPendingAction(action.action);
     setMessage(undefined);
 

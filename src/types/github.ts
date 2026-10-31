@@ -110,6 +110,18 @@ export type PullRequestTimelineEvent = {
   text: string;
 };
 
+export type PullRequestDetails = {
+  additions: number;
+  baseLabel: string;
+  changedFiles: number;
+  deletions: number;
+  description: string;
+  headBranch: string;
+  headLabel: string;
+  revisionKey: string;
+  title: string;
+};
+
 export type PullRequestWorkspace = {
   canClose: boolean;
   canComment: boolean;
@@ -125,6 +137,7 @@ export type PullRequestWorkspace = {
   commitsUnavailable: boolean;
   conversationUnavailable: boolean;
   draft: boolean;
+  details: PullRequestDetails;
   hasGitHubAccess: boolean;
   mergeMethods: PullRequestMergeMethod[];
   reviewThreads: PullRequestReviewThread[];

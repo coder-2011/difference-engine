@@ -137,7 +137,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     : await generateCommitSubject(source, files, accessToken);
 
   try {
-    const result = await createCommitAndPush(source, accessToken, files, commitMessage);
+    const result = await createCommitAndPush(source, accessToken, files, commitMessage, isString(body.expectedHead) ? body.expectedHead : undefined);
     return NextResponse.json(result);
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;

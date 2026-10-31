@@ -25,6 +25,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       changeType,
       path,
       prevPath,
+      revisionKey: url.searchParams.get("revision") ?? undefined,
     }));
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;

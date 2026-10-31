@@ -3,6 +3,8 @@
 import type { FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
+import { usePullRequestLive } from "@/components/pull-request-live";
+import type { PullRequestWorkspace } from "@/types/github";
 
 type PullRequestBranchProps = {
   initialBranch: string;
@@ -12,11 +14,14 @@ type PullRequestBranchProps = {
 
 /** Renders a PR head branch that an authorized viewer can rename directly on GitHub. */
 export function PullRequestBranch({ initialBranch, initialLabel, source }: PullRequestBranchProps) {
-  const [branch, setBranch] = useState(initialBranch);
+  const live = usePullRequestLive();
+  const [savedBranch, setBranch] = useState(initialBranch);
+  const branch = live?.workspace?.details?.headBranch ?? savedBranch;
   const [draft, setDraft] = useState<string>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const prefix = initialLabel.endsWith(initialBranch) ? initialLabel.slice(0, -initialBranch.length) : "";
+  const label = live?.workspace?.details?.headLabel ?? initialLabel;
+  const prefix = label.endsWith(branch) ? label.slice(0, -branch.length) : "";
 
   /** Opens the inline editor with the current head branch name. */
   function beginEditing(): void {
@@ -55,11 +60,12 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
         method: "POST",
       });
       // SAFETY: The same-origin pull-request route returns this documented error envelope.
-      const result = await response.json().catch(() => null) as { error?: string } | null;
+      const result = await response.json().catch(() => null) as { error?: string; workspace?: PullRequestWorkspace } | null;
 
       if (!response.ok) throw new Error(result?.error ?? "GitHub could not rename this branch");
 
       setBranch(nextBranch);
+      if (result?.workspace) live?.publish(result.workspace);
       setDraft(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GitHub could not rename this branch");

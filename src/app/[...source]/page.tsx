@@ -9,6 +9,7 @@ import { DiffViewer } from "@/components/diff-viewer";
 import { GitHubMarkdown } from "@/components/github-markdown";
 import { OpenAIConnection } from "@/components/openai-connection";
 import { PullRequestBranch } from "@/components/pull-request-branch";
+import { PullRequestBaseLabel, PullRequestHeadLabel, PullRequestLiveProvider } from "@/components/pull-request-live";
 import { PullRequestTitle } from "@/components/pull-request-title";
 import { PullRequestWorkspace } from "@/components/pull-request-workspace";
 import { getDiffDocument, GitHubError, isGitHubConnected } from "@/lib/github";
@@ -82,20 +83,21 @@ export default async function DiffPage({ params }: DiffPageProps) {
         </div>
       </header>
 
+      <PullRequestLiveProvider initialWorkspace={document.pullRequest}>
       <section className="pr-header">
         <div className="pr-repo"><FileCode2 size={14} /> {document.repository}{document.pullRequest && <span className="pull-number">#{source[3]}</span>}</div>
-        {document.pullRequest && githubConnected
-          ? <PullRequestTitle initialTitle={document.title} source={source} />
+        {document.pullRequest
+          ? <PullRequestTitle editable={githubConnected} initialTitle={document.title} source={source} />
           : <h1>{document.title}</h1>}
         <div className="pr-byline">
           {document.avatarUrl && <Image className="avatar" src={document.avatarUrl} alt="" width={22} height={22} />}
           <strong>{document.author}</strong>
           {document.baseLabel && document.headLabel && (
             <div className="branch-pair">
-              {document.baseLabel} <span>←</span>
+              <PullRequestBaseLabel initialLabel={document.baseLabel} /> <span>←</span>
               {document.pullRequest && githubConnected && document.headBranch
                 ? <PullRequestBranch initialBranch={document.headBranch} initialLabel={document.headLabel} source={source} />
-                : document.headLabel}
+                : <PullRequestHeadLabel initialLabel={document.headLabel} />}
             </div>
           )}
         </div>
@@ -117,7 +119,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         deletions={document.deletions}
         filePath={document.filePath}
         githubConnected={githubConnected}
-        key={`${sourceKey}:${document.revisionKey}`}
+        key={document.pullRequest ? sourceKey : `${sourceKey}:${document.revisionKey}`}
         openAIConnected={openAIConnected}
         pullRequestState={document.pullRequest?.state}
         repositoryRef={document.repositoryRef}
@@ -125,6 +127,7 @@ export default async function DiffPage({ params }: DiffPageProps) {
         reviewThreads={document.pullRequest?.reviewThreads}
         source={source}
       />
+      </PullRequestLiveProvider>
     </main>
   );
 }

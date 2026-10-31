@@ -11,13 +11,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const [{ source }, accessToken] = await Promise.all([context.params, getGitHubAccessToken(request)]);
 
   try {
-    const response = await getDiffResponse(source, accessToken);
-    if (accessToken) return response;
-
-    const headers = new Headers(response.headers);
-    // Public revisions can reuse the completed GitHub stream without sharing authenticated diffs.
-    headers.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
-    return new Response(response.body, { headers });
+    return await getDiffResponse(source, accessToken, request.headers.get("if-none-match") ?? undefined);
   } catch (error) {
     const status = error instanceof GitHubError ? error.status : 500;
     const message = error instanceof Error ? error.message : "The diff could not be loaded";

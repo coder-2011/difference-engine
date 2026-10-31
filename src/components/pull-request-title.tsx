@@ -3,15 +3,20 @@
 import type { FocusEvent, FormEvent, KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
+import { usePullRequestLive } from "@/components/pull-request-live";
+import type { PullRequestWorkspace } from "@/types/github";
 
 type PullRequestTitleProps = {
   initialTitle: string;
+  editable?: boolean;
   source: string[];
 };
 
 /** Renders a PR title that authorized viewers can rename directly on GitHub. */
-export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps) {
-  const [title, setTitle] = useState(initialTitle);
+export function PullRequestTitle({ editable = true, initialTitle, source }: PullRequestTitleProps) {
+  const live = usePullRequestLive();
+  const [savedTitle, setTitle] = useState(initialTitle);
+  const title = live?.workspace?.details?.title ?? savedTitle;
   const [draft, setDraft] = useState<string>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -53,11 +58,12 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
         method: "POST",
       });
       // SAFETY: The same-origin pull-request route returns this documented error envelope.
-      const result = await response.json().catch(() => null) as { error?: string } | null;
+      const result = await response.json().catch(() => null) as { error?: string; workspace?: PullRequestWorkspace } | null;
 
       if (!response.ok) throw new Error(result?.error ?? "GitHub could not rename this pull request");
 
       setTitle(nextTitle);
+      if (result?.workspace) live?.publish(result.workspace);
       document.title = `${nextTitle} · Diffs`;
       setDraft(undefined);
     } catch (caught) {
@@ -79,6 +85,7 @@ export function PullRequestTitle({ initialTitle, source }: PullRequestTitleProps
     void saveTitle();
   }
 
+  if (!editable) return <h1>{title}</h1>;
   if (draft === undefined) {
     return (
       <h1>

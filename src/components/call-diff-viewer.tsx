@@ -14,6 +14,7 @@ type CallDiffViewerProps = {
   onToggleSidebar: () => void;
   sidebarOpen: boolean;
   source: string[];
+  revisionKey: string;
 };
 
 export type CallDiffSelection = {
@@ -267,7 +268,7 @@ function CallDiffNodeRow({
 }
 
 /** Shows lazy call-flow analysis and exposes one bounded source line for each selected node. */
-export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source }: CallDiffViewerProps) {
+export function CallDiffViewer({ onSelect, onToggleSidebar, revisionKey, sidebarOpen, source }: CallDiffViewerProps) {
   const sourcePath = useMemo(() => source.map(encodeURIComponent).join("/"), [source]);
   const [state, setState] = useState<CallDiffState>({ status: "loading" });
   const [retry, setRetry] = useState(0);
@@ -287,7 +288,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
     async function loadCallDiff(): Promise<void> {
       try {
         // Bypass the prior document shape during the brief public edge-cache window after this view ships.
-        const response = await fetch(`/api/call-diff/${sourcePath}?v=2`, { signal: controller.signal });
+        const response = await fetch(`/api/call-diff/${sourcePath}?v=2&revision=${encodeURIComponent(revisionKey)}`, { signal: controller.signal });
         // SAFETY: The same-origin Call Flow endpoint returns this document or its error envelope.
         const result = await response.json() as CallDiffDocument & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "The call flow could not be loaded");
@@ -300,7 +301,7 @@ export function CallDiffViewer({ onSelect, onToggleSidebar, sidebarOpen, source 
 
     void loadCallDiff();
     return () => controller.abort();
-  }, [retry, sourcePath]);
+  }, [retry, revisionKey, sourcePath]);
 
   if (state.status === "loading") {
     return <section aria-busy="true" className="call-diff-loading"><LoaderCircle className="spinner" size={19} /><strong>Tracing changed call flow</strong><span>Reading the before and after source snapshots…</span></section>;

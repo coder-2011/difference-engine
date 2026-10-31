@@ -33,7 +33,7 @@ export function preloadPullRequestDiff(viewerPath: string): void {
   if (activePreload) discardPreload(activePreload);
 
   const controller = new AbortController();
-  const stream = fetch(endpoint, { cache: "no-store", signal: controller.signal })
+  const stream = fetch(endpoint, { signal: controller.signal })
     .then((response) => {
       if (response.ok && response.body) return response.body;
       void response.body?.cancel().catch(() => {});

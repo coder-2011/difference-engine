@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { createTwoFilesPatch } from "diff";
@@ -25,6 +26,8 @@ const RAW_GITHUB = "https://raw.githubusercontent.com";
 const COMMIT_STATS_REQUEST_CONCURRENCY = 8;
 const ANONYMOUS_CACHE_TTL = 60_000;
 const ANONYMOUS_CACHE_LIMIT = 300;
+const AUTHENTICATED_CACHE_TTL = 5 * 60_000;
+const AUTHENTICATED_CACHE_MAX_BODY = 1_000_000;
 const DASHBOARD_PULL_REQUEST_PAGE_SIZE = 24;
 const OPEN_PULL_REQUESTS_QUERY = "is:pr is:open involves:@me sort:updated-desc";
 
@@ -36,6 +39,7 @@ type AnonymousRequestCacheEntry = {
 
 const anonymousRequestCache = new Map<string, AnonymousRequestCacheEntry>();
 const anonymousRequestInFlight = new Map<string, Promise<unknown>>();
+const authenticatedRequestCache = new Map<string, { body: unknown; etag: string; expires: number; link?: string }>();
 
 type GitHubUser = {
   avatar_url: string;
@@ -470,17 +474,15 @@ async function refreshAnonymousRequest<T>(path: string, cached?: AnonymousReques
 }
 
 /** Performs a typed GitHub API request with optional private-repository access. */
-async function githubRequest<T>(path: string, token?: string): Promise<T> {
+async function githubRequest<T>(path: string, token?: string, revalidate = false): Promise<T> {
   if (token) {
-    const response = await githubResponse(path, token);
-    // SAFETY: Each caller supplies the documented response type for its fixed GitHub endpoint.
-    return response.json() as Promise<T>;
+    return (await authenticatedJson<T>(path, token)).body;
   }
 
   // Anonymous quota is shared and tiny, so public responses are reused briefly and served
   // stale when GitHub starts rejecting requests.
   const cached = getAnonymousRequestCacheEntry(path);
-  if (cached && cached.expires > Date.now()) {
+  if (!revalidate && cached && cached.expires > Date.now()) {
     // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
     return cached.body as T;
   }
@@ -503,6 +505,35 @@ async function githubRequest<T>(path: string, token?: string): Promise<T> {
   }
 }
 
+/** Revalidates token-scoped JSON without sharing private responses between GitHub identities. */
+async function authenticatedJson<T>(path: string, token: string): Promise<{ body: T; link?: string }> {
+  const key = `${createHash("sha256").update(token).digest("hex")}\0${path}`;
+  const entry = authenticatedRequestCache.get(key);
+  const cached = entry && entry.expires > Date.now() ? entry : undefined;
+  if (entry && !cached) authenticatedRequestCache.delete(key);
+  const response = await githubResponse(path, token, "GET", undefined, cached?.etag);
+  if (response.status === 304 && cached) {
+    authenticatedRequestCache.delete(key);
+    authenticatedRequestCache.set(key, cached);
+    // SAFETY: The key includes the token and exact endpoint used to obtain this response.
+    return { body: cached.body as T, link: cached.link };
+  }
+  if (response.status === 304) throw new GitHubError("GitHub request could not be revalidated", 502);
+  // SAFETY: Each caller supplies the documented response type for its fixed GitHub endpoint.
+  const body = await response.json() as T;
+  const etag = response.headers.get("etag");
+  const link = response.headers.get("link") ?? undefined;
+  authenticatedRequestCache.delete(key);
+  if (etag && JSON.stringify(body).length <= AUTHENTICATED_CACHE_MAX_BODY) {
+    authenticatedRequestCache.set(key, { body, etag, expires: Date.now() + AUTHENTICATED_CACHE_TTL, link });
+  }
+  if (authenticatedRequestCache.size > ANONYMOUS_CACHE_LIMIT) {
+    const oldest = authenticatedRequestCache.keys().next().value;
+    if (oldest !== undefined) authenticatedRequestCache.delete(oldest);
+  }
+  return { body, link };
+}
+
 /** Confirms GitHub authentication while treating temporary API failures as an unknown, not a logout. */
 export async function isGitHubConnected(token?: string): Promise<boolean> {
   if (!token) return false;
@@ -521,15 +552,16 @@ async function githubAllItems<T>(path: string, token?: string): Promise<T[]> {
   let nextPath: string | undefined = path;
 
   while (nextPath) {
-    const response = await githubResponse(nextPath, token);
+    const result: { body: T[]; link?: string } | undefined = token ? await authenticatedJson<T[]>(nextPath, token) : undefined;
+    const response = result ? undefined : await githubResponse(nextPath, token);
     // SAFETY: This helper is used only with the collection type documented by its GitHub endpoint.
-    const page = await response.json() as T[];
+    const page = result?.body ?? await response!.json() as T[];
     items.push(...page);
-    const nextUrl = response.headers.get("link")?.match(/<([^>]+)>; rel="next"/)?.[1];
+    const nextUrl: string | undefined = (result?.link ?? response?.headers.get("link"))?.match(/<([^>]+)>; rel="next"/)?.[1];
 
     if (!nextUrl) break;
 
-    const url = new URL(nextUrl, GITHUB_API);
+    const url: URL = new URL(nextUrl, GITHUB_API);
     nextPath = `${url.pathname}${url.search}`;
   }
 
@@ -1026,7 +1058,7 @@ function summarizeWorkflowRun(run: WorkflowRun): PullRequestWorkflowRun {
 }
 
 /** Loads merge, close, and reopen controls for any unmerged pull request. */
-async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string) {
+async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string, revalidate = false) {
   if (pullRequest.merged) {
     return { capabilities: undefined, workflowRuns: [] };
   }
@@ -1036,9 +1068,9 @@ async function getPullRequestControls(parsed: ReturnType<typeof parseSource>, pu
     ? getPullRequestCapabilities(parsed, pullRequest.number, token).catch(() => undefined)
     : Promise.resolve(undefined);
   const [headWorkflowRuns, branchPullRequestWorkflowRuns, pullRequestTargetWorkflowRuns, capabilities] = await Promise.all([
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
-    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?head_sha=${encodeURIComponent(pullRequest.head.sha)}&per_page=100`, token, revalidate).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request&per_page=100`, token, revalidate).catch(() => ({ workflow_runs: [] })),
+    githubRequest<WorkflowRuns>(`${workflowRunsPath}?branch=${encodeURIComponent(pullRequest.head.ref)}&event=pull_request_target&per_page=100`, token, revalidate).catch(() => ({ workflow_runs: [] })),
     capabilitiesRequest,
   ]);
 
@@ -1099,12 +1131,12 @@ function hasMergeConflicts(pullRequest: PullRequest, capabilities: PullRequestCa
 }
 
 /** Builds the PR-only conversation and action state without blocking the page on optional data. */
-async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string): Promise<PullRequestWorkspace> {
+async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>, pullRequest: PullRequest, token?: string, revalidate = false): Promise<PullRequestWorkspace> {
   const [conversation, commits, timeline, { capabilities, workflowRuns }] = await Promise.all([
     getPullRequestConversation(parsed, token),
     getPullRequestCommits(parsed, token),
     getPullRequestTimeline(parsed, token),
-    getPullRequestControls(parsed, pullRequest, token),
+    getPullRequestControls(parsed, pullRequest, token, revalidate),
   ]);
   const state = pullRequest.merged ? "merged" : pullRequest.state;
 
@@ -1123,6 +1155,17 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
     commitsUnavailable: commits.unavailable,
     conversationUnavailable: conversation.unavailable || timeline.unavailable,
     draft: pullRequest.draft,
+    details: {
+      additions: pullRequest.additions,
+      baseLabel: pullRequest.base.label,
+      changedFiles: pullRequest.changed_files,
+      deletions: pullRequest.deletions,
+      description: pullRequest.body ?? "",
+      headBranch: pullRequest.head.ref,
+      headLabel: pullRequest.head.label,
+      revisionKey: `${parsed.repository}:${pullRequest.base.sha}:${pullRequest.head.sha}`,
+      title: pullRequest.title,
+    },
     hasGitHubAccess: Boolean(token),
     mergeMethods: capabilities?.mergeMethods ?? [],
     reviewThreads: conversation.reviewThreads,
@@ -1135,7 +1178,7 @@ async function buildPullRequestWorkspace(parsed: ReturnType<typeof parseSource>,
 /** Loads the current PR workspace after a client mutation refreshes its canonical GitHub state. */
 export async function getPullRequestWorkspace(source: string[], token?: string): Promise<PullRequestWorkspace> {
   const parsed = pullRequestSource(source);
-  const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+  const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token, true);
   return buildPullRequestWorkspace(parsed, pullRequest, token);
 }
 
@@ -1382,6 +1425,7 @@ export async function createCommitAndPush(
   token: string | undefined,
   files: CommitFileChange[],
   message: string,
+  expectedHead?: string,
 ): Promise<CommitPushResult> {
   const accessToken = requireGitHubToken(token);
   const parsed = parseSource(source);
@@ -1413,6 +1457,10 @@ export async function createCommitAndPush(
     headSha = refData.object.sha;
   } else {
     throw new GitHubError("Direct commits are supported on pull requests and repository branches", 400);
+  }
+
+  if (expectedHead && expectedHead !== headSha) {
+    throw new GitHubError("The branch changed on GitHub. Copy your edits and reload before committing", 409);
   }
 
   const encodedHeadRepo = encodeRepositoryPath(headRepo);
@@ -1796,8 +1844,8 @@ export async function getDiffDocument(source: string[], token?: string, includeP
   }
 
   if (parsed.kind === "pull") {
-    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
-    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token) : undefined;
+    const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token, true);
+    const workspace = includePullRequestWorkspace ? await buildPullRequestWorkspace(parsed, pullRequest, token, true) : undefined;
 
     return {
       additions: pullRequest.additions,
@@ -1856,9 +1904,12 @@ export async function getDiffDocument(source: string[], token?: string, includeP
 }
 
 /** Wraps raw diff content with the response contract shared by every GitHub source. */
-function diffResponse(body: BodyInit): Response {
+function diffResponse(body: BodyInit | null, etag?: string, status = 200): Response {
+  const headers = new Headers({ "Cache-Control": etag ? "private, no-cache" : "no-store", "Content-Type": "text/plain; charset=utf-8" });
+  if (etag) headers.set("ETag", etag);
   return new Response(body, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers,
+    status,
   });
 }
 
@@ -1898,16 +1949,19 @@ async function getRepositoryFiles(parsed: ReturnType<typeof parseSource>, token?
 }
 
 /** Streams the raw GitHub diff so large comparisons are not serialized through React. */
-export async function getDiffResponse(source: string[], token?: string): Promise<Response> {
+export async function getDiffResponse(source: string[], token?: string, etag?: string): Promise<Response> {
   const parsed = parseSource(source);
-  if (parsed.kind === "repository") return Response.json(await getRepositoryFiles(parsed, token));
+  if (parsed.kind === "repository") return Response.json(await getRepositoryFiles(parsed, token), { headers: { "Cache-Control": "no-store" } });
 
+  const headers = githubHeaders("application/vnd.github.diff", token);
+  if (etag) headers.set("If-None-Match", etag);
   const response = await fetch(`${GITHUB_API}${parsed.apiPath}`, {
-    headers: githubHeaders("application/vnd.github.diff", token),
+    headers,
     cache: "no-store",
   });
 
-  if (response.ok && response.body) return diffResponse(response.body);
+  if (response.status === 304 && etag) return diffResponse(null, response.headers.get("etag") ?? etag, 304);
+  if (response.ok && response.body) return diffResponse(response.body, response.headers.get("etag") ?? undefined);
 
   // GitHub's REST media type rejects public diffs above 300 files, while its
   // streaming web endpoint still serves them in full. The same endpoint keeps
@@ -1954,6 +2008,7 @@ export type LoadDiffFilesRequest = {
   changeType: string;
   path: string;
   prevPath?: string;
+  revisionKey?: string;
 };
 
 /** Rejects repository paths that GitHub would treat as traversal or empty. */
@@ -1994,20 +2049,23 @@ async function getPublicPullRequestRevisionPair(parsed: ReturnType<typeof parseS
 }
 
 /** Resolves the before/after revisions Pierre needs to hydrate a patch-parsed diff. */
-async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token?: string): Promise<DiffRevisionPair> {
+async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token?: string, revisionKey?: string): Promise<DiffRevisionPair> {
   if (parsed.kind === "pull") {
     const cacheKey = `pull:${parsed.apiPath}`;
     const cached = token ? undefined : revisionPairCache.get(cacheKey);
-    if (cached && cached.expires > Date.now()) return cached.pair;
+    const parts = revisionKey?.split(":");
+    const matchesRevision = (pair: DiffRevisionPair): boolean => !parts || (pair.fromRef === parts.at(-2) && pair.toRef === parts.at(-1));
+    if (cached && cached.expires > Date.now() && matchesRevision(cached.pair)) return cached.pair;
 
     try {
-      const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token);
+      const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, token, Boolean(revisionKey));
       const headRepository = pullRequest.head.repo?.full_name ?? parsed.repository;
       const pair = {
         encodedHeadRepository: headRepository.split("/").map(encodeURIComponent).join("/"),
         fromRef: pullRequest.base.sha,
         toRef: pullRequest.head.sha,
       };
+      if (!matchesRevision(pair)) throw new GitHubError("The pull request changed; refresh the diff before loading this file", 409);
       if (!token) {
         revisionPairCache.set(cacheKey, { expires: Date.now() + REVISION_PAIR_CACHE_TTL, pair });
         if (revisionPairCache.size > 200) {
@@ -2018,9 +2076,10 @@ async function getDiffRevisionPair(parsed: ReturnType<typeof parseSource>, token
       return pair;
     } catch (error) {
       // A spent anonymous quota should not dead-end expansion while a recent lookup exists.
-      if (!token && isRateLimitError(error) && cached) return cached.pair;
+      if (!token && isRateLimitError(error) && cached && matchesRevision(cached.pair)) return cached.pair;
       if (!token && isRateLimitError(error)) {
         const pair = await getPublicPullRequestRevisionPair(parsed);
+        if (!matchesRevision(pair)) throw new GitHubError("The pull request changed; refresh the diff before loading this file", 409);
         revisionPairCache.set(cacheKey, { expires: Date.now() + REVISION_PAIR_CACHE_TTL, pair });
         return pair;
       }
@@ -2116,7 +2175,7 @@ export async function getLoadedDiffFiles(source: string[], token: string | undef
   const parsed = parseSource(source);
   const path = requireRepositoryFilePath(request.path, "path");
   const prevPath = request.prevPath ? requireRepositoryFilePath(request.prevPath, "prevPath") : undefined;
-  const { encodedHeadRepository, fromRef, toRef } = await getDiffRevisionPair(parsed, token);
+  const { encodedHeadRepository, fromRef, toRef } = await getDiffRevisionPair(parsed, token, request.revisionKey);
   const changeType = request.changeType.trim();
 
   if (changeType === "rename-pure") {
@@ -2193,7 +2252,7 @@ async function getPullRequestCallDiffFiles(
   const fileLimit = token ? CALL_DIFF_FILE_LIMIT : CALL_DIFF_ANONYMOUS_FILE_LIMIT;
 
   for (let page = 1; page <= 30; page += 1) {
-    const batch = await githubRequest<PullRequestFile[]>(`${apiPath}/files?per_page=100&page=${page}`, token);
+    const batch = await githubRequest<PullRequestFile[]>(`${apiPath}/files?per_page=100&page=${page}`, token, true);
     for (const file of batch) {
       if (!isCallDiffSourcePath(file.filename) && !isCallDiffSourcePath(file.previous_filename ?? "")) {
         ignoredFiles += 1;
@@ -2240,7 +2299,7 @@ export async function getCallDiffSource(source: string[], token?: string): Promi
 
   if (parsed.kind === "pull") {
     // Begin each eligible source snapshot as soon as its page identifies it, while later pages keep loading.
-    const pullRequestPromise = githubRequest<PullRequest>(parsed.apiPath, token);
+    const pullRequestPromise = githubRequest<PullRequest>(parsed.apiPath, token, true);
     const candidatesPromise = getPullRequestCallDiffFiles(parsed.apiPath, token, (file) => {
       const snapshot = pullRequestPromise.then((pullRequest) =>
         getCallDiffFileSnapshot(parsed.encodedRepository, file, pullRequest.base.sha, pullRequest.head.sha, token),

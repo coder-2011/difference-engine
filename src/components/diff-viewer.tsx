@@ -17,6 +17,7 @@ import { getDiffWorkerPool } from "@/lib/diff-worker-pool";
 import { CallDiffViewer, type CallDiffSelection } from "./call-diff-viewer";
 import { ChatMark } from "./chat-mark";
 import { PR_WORKSPACE_REFRESH_EVENT } from "./pull-request-workspace";
+import { usePullRequestLive } from "./pull-request-live";
 import { RepositoryCompare } from "./repository-compare";
 import { RepositorySearch } from "./repository-search";
 import type { PullRequestReviewThread, RepositoryFile } from "@/types/github";
@@ -256,22 +257,30 @@ export function DiffViewer({
   openAIConnected,
   pullRequestState,
   repositoryRef,
-  revisionKey,
-  reviewThreads = EMPTY_REVIEW_THREADS,
-  source,
+  revisionKey: initialRevisionKey,
+  reviewThreads: initialReviewThreads = EMPTY_REVIEW_THREADS,
+  source: sourceProp,
 }: DiffViewerProps) {
+  const liveWorkspace = usePullRequestLive()?.workspace;
+  const [revisionKey, setRevisionKey] = useState(initialRevisionKey);
+  const initialRevisionRef = useRef(initialRevisionKey);
+  const reviewThreads = liveWorkspace?.reviewThreads ?? initialReviewThreads;
+  const latestRevisionKey = liveWorkspace?.details?.revisionKey ?? initialRevisionKey;
+  const sourceKey = sourceProp.join("\0");
+  const source = useMemo(() => sourceKey.split("\0"), [sourceKey]);
   const repository = defaultBranch !== undefined;
-  const isMerged = pullRequestState === "merged";
-  const isClosed = pullRequestState === "closed";
+  const isMerged = (liveWorkspace?.state ?? pullRequestState) === "merged";
+  const isClosed = (liveWorkspace?.state ?? pullRequestState) === "closed";
   const isCommit = source[2] === "commit";
   const isCompare = source[2] === "compare";
   const isReadOnly = isMerged || isClosed || isCommit || isCompare;
   const callDiffAvailable = source[2] === "compare" || source[2] === "pull";
-  const sourceKey = source.join("\0");
   const revisionParts = revisionKey.split(":");
   const revision = revisionParts.at(-1);
   const baseRevision = revisionParts.length > 2 ? revisionParts.at(-2) : undefined;
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[]>();
+  const [initialDiffComplete, setInitialDiffComplete] = useState(false);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
   const [repositoryFiles, setRepositoryFiles] = useState<RepositoryFile[]>();
   const [error, setError] = useState("");
   const [split, setSplit] = useState(false);
@@ -369,6 +378,11 @@ export function DiffViewer({
       setEditedFileCount(0);
       return;
     }
+    if (latestRevisionKey !== revisionKey) {
+      setCommitStatus("error");
+      setCommitError("GitHub changed; copy edits and reload");
+      return;
+    }
     if (!githubConnected) {
       setCommitStatus("error");
       setCommitError("Sign in needed");
@@ -390,7 +404,7 @@ export function DiffViewer({
     const path = source.map(encodeURIComponent).join("/");
     try {
       const response = await fetch(`/api/commit/${path}`, {
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ expectedHead: revisionKey.split(":").at(-1), files }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -429,18 +443,28 @@ export function DiffViewer({
       committingRef.current = false;
       setCommitting(false);
     }
-  }, [githubConnected, isReadOnly, parsedFiles, repository, repositoryFiles, source, syncEditedFile]);
+  }, [githubConnected, isReadOnly, latestRevisionKey, parsedFiles, repository, repositoryFiles, revisionKey, source, syncEditedFile]);
 
   /** Toggles Pierre edit mode. Item `edit`/`version` drive the native multi-line editor. */
   const toggleEditMode = useCallback(() => {
-    if (isReadOnly) return;
+    if (isReadOnly && !editMode) return;
+    if (!editMode) {
+      for (const file of repositoryFiles ?? EMPTY_REPOSITORY_FILES) {
+        if (!editBaselinesRef.current.has(file.name)) editBaselinesRef.current.set(file.name, file.contents);
+      }
+      for (const file of parsedFiles ?? EMPTY_FILES) {
+        if (file.type === "new" && !editBaselinesRef.current.has(file.name)) {
+          editBaselinesRef.current.set(file.name, contentsFromDiffLines(file.additionLines));
+        }
+      }
+    }
     setEditMode((mode) => {
       if (mode && document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
       return !mode;
     });
-  }, [isReadOnly]);
+  }, [editMode, isReadOnly, parsedFiles, repositoryFiles]);
 
   useEffect(() => {
     let lastKey = "";
@@ -622,6 +646,7 @@ export function DiffViewer({
 
     /** Receives parsed files without blocking the main browser thread. */
     function handleMessage(event: MessageEvent<{ complete?: boolean; error?: string; files?: FileDiffMetadata[]; repositoryFiles?: RepositoryFile[] }>): void {
+      if (disposed) return;
       if (event.data.error) {
         setError(event.data.error);
       } else if (repository) {
@@ -630,6 +655,7 @@ export function DiffViewer({
         setRepositoryFiles(files);
       } else {
         appendParsedFiles(event.data.files ?? [], event.data.complete ?? false);
+        if (event.data.complete) setInitialDiffComplete(true);
       }
     }
 
@@ -640,7 +666,7 @@ export function DiffViewer({
 
     /** Transfers a hovered response stream when possible, then falls back to the worker's normal fetch. */
     function startParser(stream?: ReadableStream<Uint8Array>): void {
-      const request = { cacheKey: revisionKey, repository, url: `/api/diff/${path}` };
+      const request = { cacheKey: initialRevisionRef.current, repository, url: `/api/diff/${path}` };
       if (!stream) {
         worker.postMessage(request);
         return;
@@ -673,7 +699,44 @@ export function DiffViewer({
       disposed = true;
       worker.terminate();
     };
-  }, [filePath, repository, revisionKey, source]);
+  }, [filePath, repository, source]);
+
+  useEffect(() => {
+    if (repository || !parsedFiles || !initialDiffComplete || latestRevisionKey === revisionKey || editMode || editedFileCount > 0 || committing) return;
+    const worker = new Worker(new URL("../workers/parse-diff.worker.ts", import.meta.url));
+    const files: FileDiffMetadata[] = [];
+    let disposed = false;
+    let retry = 0;
+
+    function retryRefresh(): void {
+      if (!disposed && !retry) retry = window.setTimeout(() => setRefreshAttempt((attempt) => attempt + 1), 5_000);
+    }
+
+    /** Installs the complete new patch together with its revision, preserving chats and drafts. */
+    function handleRefresh(event: MessageEvent<{ complete?: boolean; error?: string; files?: FileDiffMetadata[] }>): void {
+      if (disposed) return;
+      if (event.data.error) {
+        retryRefresh();
+        return;
+      }
+      if (event.data.files) files.push(...event.data.files);
+      if (!event.data.complete) return;
+      editBaselinesRef.current.clear();
+      setParsedFiles(files);
+      setRevisionKey(latestRevisionKey);
+      setLoadedCallFlowSource(reviewView === "call-flow" ? sourceKey : undefined);
+      setHasExpandedContext(false);
+    }
+
+    worker.addEventListener("message", handleRefresh);
+    worker.addEventListener("error", retryRefresh);
+    worker.postMessage({ cacheKey: latestRevisionKey, repository: false, url: `/api/diff/${source.map(encodeURIComponent).join("/")}` });
+    return () => {
+      disposed = true;
+      window.clearTimeout(retry);
+      worker.terminate();
+    };
+  }, [committing, editMode, editedFileCount, initialDiffComplete, latestRevisionKey, parsedFiles, refreshAttempt, repository, reviewView, revisionKey, source, sourceKey]);
 
   const diffFiles = parsedFiles ?? EMPTY_FILES;
   const codeFiles = repositoryFiles ?? EMPTY_REPOSITORY_FILES;
@@ -873,7 +936,7 @@ export function DiffViewer({
 
   // CodeView already retains per-item editors. persistState would restore the shared list scrollTop per file.
   const editorOptions = useMemo<EditorOptions<EditorType, undefined, undefined>>(() => ({}), []);
-  const canEdit = editMode && !isReadOnly;
+  const canEdit = editMode && (!isReadOnly || editedFileCount > 0);
   const loadedDiffFilesRef = useRef(new Map<string, Promise<FileDiffLoadedFiles>>());
 
   /** Hydrates GitHub patch diffs with full old/new file contents so Pierre can attach its editor. */
@@ -883,7 +946,7 @@ export function DiffViewer({
     if (cached) return cached;
 
     const path = source.map(encodeURIComponent).join("/");
-    const params = new URLSearchParams({ path: fileDiff.name, type: fileDiff.type });
+    const params = new URLSearchParams({ path: fileDiff.name, revision: revisionKey, type: fileDiff.type });
     if (fileDiff.prevName) params.set("prevPath", fileDiff.prevName);
 
     const request = fetch(`/api/diff-files/${path}?${params}`).then(async (response): Promise<FileDiffLoadedFiles> => {
@@ -893,7 +956,9 @@ export function DiffViewer({
         throw new Error(body?.error ?? `Could not load ${fileDiff.name} for editing`);
       }
       // SAFETY: The same-origin diff-files route returns Pierre's loaded old/new file pair.
-      return response.json() as Promise<FileDiffLoadedFiles>;
+      const loaded = await response.json() as FileDiffLoadedFiles;
+      if (!editBaselinesRef.current.has(fileDiff.name)) editBaselinesRef.current.set(fileDiff.name, loaded.newFile.contents);
+      return loaded;
     });
     loadedDiffFilesRef.current.set(cacheKey, request);
     request.catch(() => loadedDiffFilesRef.current.delete(cacheKey));
@@ -1033,7 +1098,7 @@ export function DiffViewer({
     },
     unsafeCSS: DIFF_VIEWER_CSS,
   }), [diffTheme, editMode, inlineCommentMarkersByFile, isReadOnly, loadDiffFiles, repository, resumeChatFromMarker, split]);
-  const displayedFileCount = Math.max(changedFiles ?? 0, files.length);
+  const displayedFileCount = Math.max(liveWorkspace?.details?.changedFiles ?? changedFiles ?? 0, files.length);
   const askEnabled = githubConnected && openAIConnected;
   const showingCallDiff = callDiffAvailable && reviewView === "call-flow";
   const workspaceClass = `diff-workspace${callDiffAvailable ? " has-review-tabs" : ""}`;
@@ -1061,7 +1126,7 @@ export function DiffViewer({
           <ChatMark />
           <span>Ask Diffs</span>
         </button>
-        {!showingCallDiff && !isReadOnly && (
+        {!showingCallDiff && (!isReadOnly || editMode) && (
           <button
             aria-label={`Toggle Edit mode (Command-Shift-E)${editMode ? " - Currently Editing" : ""}`}
             className={`sidebar-bottom-action${editMode ? " active" : ""}`}
@@ -1080,7 +1145,7 @@ export function DiffViewer({
   const callFlowPanel = callFlowLoaded && (
     <div aria-labelledby="call-flow-review-tab" className={`call-flow-body ${sidebarOpen ? "" : "sidebar-closed"}`} hidden={!showingCallDiff} id="call-flow-review" role="tabpanel">
       {showingCallDiff && fileSidebar}
-      <CallDiffViewer key={sourceKey} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} sidebarOpen={sidebarOpen} source={source} />
+      <CallDiffViewer key={`${sourceKey}:${revisionKey}`} onSelect={openAIConnected ? selectCallFlowNode : undefined} onToggleSidebar={() => setSidebarOpen((open) => !open)} revisionKey={revisionKey} sidebarOpen={sidebarOpen} source={source} />
     </div>
   );
 
@@ -1118,8 +1183,10 @@ export function DiffViewer({
       <div className="viewer-toolbar">
         <div className="change-stats">
           <span><FileText size={13} /> {displayedFileCount} files</span>
-          {additions !== undefined && <span className="additions">+{additions.toLocaleString()}</span>}
-          {deletions !== undefined && <span className="deletions">−{deletions.toLocaleString()}</span>}
+          {(liveWorkspace?.details?.additions ?? additions) !== undefined && <span className="additions">+{(liveWorkspace?.details?.additions ?? additions)?.toLocaleString()}</span>}
+          {(liveWorkspace?.details?.deletions ?? deletions) !== undefined && <span className="deletions">−{(liveWorkspace?.details?.deletions ?? deletions)?.toLocaleString()}</span>}
+          {latestRevisionKey !== revisionKey && <span>{editedFileCount > 0 ? "GitHub has newer changes. Copy your edits, then reload to update." : editMode || committing ? "GitHub has newer changes. Exit edit mode to load them." : "Updating changes from GitHub…"}</span>}
+          {isReadOnly && editMode && editedFileCount > 0 && <span>This PR is closed. Copy your edits before leaving edit mode.</span>}
         </div>
         <div className="viewer-actions">
           {repository && repositoryRef && defaultBranch && (
@@ -1136,10 +1203,10 @@ export function DiffViewer({
               <button
                 aria-busy={committing}
                 aria-label="Commit and push changes to GitHub (⌘D / c+d)"
-                className={`commit-action${editedFileCount > 0 && !committing && commitStatus === "" ? " ready" : ""}${committing ? " committing" : ""}${commitStatus === "committed" ? " committed" : ""}${commitStatus === "error" ? " error" : ""}`}
-                disabled={committing || editedFileCount === 0}
+                className={`commit-action${editedFileCount > 0 && latestRevisionKey === revisionKey && !committing && commitStatus === "" ? " ready" : ""}${committing ? " committing" : ""}${commitStatus === "committed" ? " committed" : ""}${commitStatus === "error" ? " error" : ""}`}
+                disabled={committing || editedFileCount === 0 || latestRevisionKey !== revisionKey}
                 onClick={() => void commitChanges()}
-                title={committing ? "Committing changes…" : editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : !githubConnected ? "Sign in with GitHub to commit and push" : "Commit and push changes (⌘D)"}
+                title={committing ? "Committing changes…" : editedFileCount === 0 ? "Edit code to commit changes (⌘D / c+d)" : latestRevisionKey !== revisionKey ? "GitHub changed; copy your edits and reload" : !githubConnected ? "Sign in with GitHub to commit and push" : "Commit and push changes (⌘D)"}
                 type="button"
               >
                 {committing ? <LoaderCircle className="spinner" size={13} /> : commitStatus === "committed" ? <Check size={13} /> : <GitCommitHorizontal size={13} />}
@@ -1184,7 +1251,7 @@ export function DiffViewer({
           <WorkerPoolContext.Provider value={workerPool}>
             <EditProvider createEditor={createDiffEditor}>
               <CodeView
-                key={`${sourceKey}:${expandedContextVersion}`}
+                key={`${sourceKey}:${revisionKey}:${expandedContextVersion}`}
                 ref={viewerRef}
                 editorOptions={editorOptions}
                 getEditStateKey={getEditStateKey}
