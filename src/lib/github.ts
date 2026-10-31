@@ -819,6 +819,14 @@ export async function verifyPullRequestAccess(source: string[], token?: string):
   await response.body?.cancel();
 }
 
+/** Reads current PR revisions without using a stale cached response. */
+export async function getPullRequestRevision(source: string[], token?: string): Promise<string> {
+  const parsed = pullRequestSource(source);
+  const response = await githubResponse(parsed.apiPath, token);
+  const pullRequest = await response.json() as PullRequest;
+  return `${parsed.repository}:${pullRequest.base.sha}:${pullRequest.head.sha}`;
+}
+
 /** Maps GitHub's raw issue-comment response into the small client-side conversation shape. */
 function summarizeComment(comment: IssueComment): PullRequestComment {
   return {

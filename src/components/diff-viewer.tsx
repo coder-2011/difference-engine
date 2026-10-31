@@ -266,6 +266,7 @@ export function DiffViewer({
   const initialRevisionRef = useRef(initialRevisionKey);
   const reviewThreads = liveWorkspace?.reviewThreads ?? initialReviewThreads;
   const latestRevisionKey = liveWorkspace?.details?.revisionKey ?? initialRevisionKey;
+  const latestRevisionRef = useRef(latestRevisionKey);
   const sourceKey = sourceProp.join("\0");
   const source = useMemo(() => sourceKey.split("\0"), [sourceKey]);
   const repository = defaultBranch !== undefined;
@@ -315,6 +316,10 @@ export function DiffViewer({
   const workspaceRef = useRef<HTMLElement>(null);
   const reviewViewRef = useRef(reviewView);
   const callFlowLoaded = loadedCallFlowSource === sourceKey;
+
+  useEffect(() => {
+    latestRevisionRef.current = latestRevisionKey;
+  }, [latestRevisionKey]);
 
   useEffect(() => {
     editedFilesRef.current.clear();
@@ -684,12 +689,17 @@ export function DiffViewer({
     worker.addEventListener("error", handleError);
     const preloadedDiff = repository ? null : takePreloadedDiff(source);
     if (preloadedDiff) {
-      void preloadedDiff.then((stream) => {
+      void preloadedDiff.then((preload) => {
         if (disposed) {
-          void stream?.cancel().catch(() => {});
+          void preload?.stream.cancel().catch(() => {});
           return;
         }
-        startParser(stream ?? undefined);
+        if (preload && (preload.revision !== initialRevisionRef.current || preload.revision !== latestRevisionRef.current)) {
+          void preload.stream.cancel().catch(() => {});
+          startParser();
+          return;
+        }
+        startParser(preload?.stream);
       });
     } else {
       startParser();

@@ -1,7 +1,9 @@
+export type PreloadedDiff = { stream: ReadableStream<Uint8Array>; revision: string };
+
 type DiffPreload = {
   controller: AbortController;
   endpoint: string;
-  stream: Promise<ReadableStream<Uint8Array> | null>;
+  stream: Promise<PreloadedDiff | null>;
   timer: number;
 };
 
@@ -24,6 +26,7 @@ function discardPreload(preload: DiffPreload): void {
   window.clearTimeout(preload.timer);
   if (activePreload === preload) activePreload = undefined;
   preload.controller.abort();
+  void preload.stream.then((result) => result?.stream.cancel()).catch(() => {});
 }
 
 /** Starts a single bounded diff request that can be transferred to the parsing worker after navigation. */
@@ -33,9 +36,10 @@ export function preloadPullRequestDiff(viewerPath: string): void {
   if (activePreload) discardPreload(activePreload);
 
   const controller = new AbortController();
-  const stream = fetch(endpoint, { signal: controller.signal })
+  const stream = fetch(`${endpoint}?preload=1`, { signal: controller.signal })
     .then((response) => {
-      if (response.ok && response.body) return response.body;
+      const revision = response.headers.get("x-diff-revision");
+      if (!controller.signal.aborted && response.ok && response.body && revision) return { stream: response.body, revision };
       void response.body?.cancel().catch(() => {});
       return null;
     })
@@ -57,11 +61,15 @@ export function cancelPullRequestDiffPreload(viewerPath: string): void {
 }
 
 /** Gives the destination worker the one matching hovered response and clears its short-lived cache slot. */
-export function takePreloadedDiff(source: string[]): Promise<ReadableStream<Uint8Array> | null> | null {
+export function takePreloadedDiff(source: string[]): Promise<PreloadedDiff | null> | null {
   const preload = activePreload;
   if (!preload || preload.endpoint !== sourceDiffEndpoint(source)) return null;
 
-  window.clearTimeout(preload.timer);
   activePreload = undefined;
-  return preload.stream;
+  return preload.stream.then((result) => {
+    window.clearTimeout(preload.timer);
+    if (!preload.controller.signal.aborted) return result;
+    void result?.stream.cancel().catch(() => {});
+    return null;
+  });
 }
