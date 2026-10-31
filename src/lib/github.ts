@@ -467,31 +467,26 @@ async function refreshAnonymousRequest(path: string, cached?: AnonymousRequestCa
   }
 }
 
-/** Reuses public pages until expiry; a forced request starts after its triggering event. */
+/** Reuses public pages until expiry; a forced request always starts a new revalidation. */
 async function anonymousJson<T>(path: string, revalidate = false): Promise<{ body: T; link?: string }> {
   // Anonymous quota is shared and tiny, so public responses are reused briefly and served
   // stale when GitHub starts rejecting requests.
   const cached = getAnonymousRequestCacheEntry(path);
   if (!revalidate && cached && cached.expires > Date.now()) {
-    // SAFETY: This cache stores the response type supplied by callers for this fixed GitHub path.
     return { body: cached.body as T, link: cached.link };
   }
 
   const inFlight = anonymousRequestInFlight.get(path);
   if (!revalidate && inFlight) {
     const entry = await inFlight;
-    // SAFETY: In-flight requests use the same fixed GitHub path and response type.
     return { body: entry.body as T, link: entry.link };
   }
 
-  // Only the newest request for a path may publish its result to the shared cache.
   const tracked = Boolean(inFlight) || anonymousRequestInFlight.size < ANONYMOUS_CACHE_LIMIT;
   const request = refreshAnonymousRequest(path, cached);
   if (!tracked) {
-    // No result can be published for this request, so do not retain the pre-event page.
     if (revalidate) anonymousRequestCache.delete(path);
     const entry = await request;
-    // SAFETY: The response is from the requested fixed GitHub path.
     return { body: entry.body as T, link: entry.link };
   }
   anonymousRequestInFlight.set(path, request);
@@ -502,7 +497,6 @@ async function anonymousJson<T>(path: string, revalidate = false): Promise<{ bod
       if (JSON.stringify(entry.body).length <= GITHUB_CACHE_MAX_BODY) setAnonymousRequestCacheEntry(path, entry);
       else anonymousRequestCache.delete(path);
     }
-    // SAFETY: The response is from the requested fixed GitHub path.
     return { body: entry.body as T, link: entry.link };
   } finally {
     if (anonymousRequestInFlight.get(path) === request) anonymousRequestInFlight.delete(path);
