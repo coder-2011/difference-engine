@@ -13,12 +13,12 @@ const routeModule = ts.transpileModule(routeSource, { compilerOptions: { module:
 
 function loadGitHub() {
   const exports = {};
-  const module = { exports };
+  const loaded = { exports };
   const localRequire = (name) => name === "@/lib/json" ? json
     : name === "@/lib/call-diff-files" ? {}
       : require(name);
-  new Function("exports", "require", "module", githubModule)(exports, localRequire, module);
-  return module.exports;
+  new Function("exports", "require", "module", githubModule)(exports, localRequire, loaded);
+  return loaded.exports;
 }
 
 function mockGitHub(t) {
@@ -58,7 +58,7 @@ function mockGitHub(t) {
 
 function loadRoute(actions) {
   const exports = {};
-  const module = { exports };
+  const loaded = { exports };
   const modules = {
     "next/server": { NextResponse: { json: Response.json } },
     "@/lib/github": { GitHubError: class extends Error {}, performPullRequestAction: async (_source, _token, action) => { actions.push(action); return {}; } },
@@ -66,8 +66,8 @@ function loadRoute(actions) {
     "@/lib/openai-auth": { isSameOrigin: () => true },
     "@/lib/session": { getGitHubAccessToken: async () => "token" },
   };
-  new Function("exports", "require", "module", routeModule)(exports, (name) => modules[name], module);
-  return module.exports;
+  new Function("exports", "require", "module", routeModule)(exports, (name) => modules[name], loaded);
+  return loaded.exports;
 }
 
 for (const [action, key, current, replacement] of [
