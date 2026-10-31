@@ -57,5 +57,5 @@ test("a changed title saves when the remote value is unchanged", () => {
   const app = fixture();
   app.edit().props.children[0].props.onChange({ target: { value: "Local" } });
   app.render().props.onSubmit({ preventDefault() {} });
-  assert.deepEqual(app.requests, [{ action: "edit-title", title: "Local" }]);
+  assert.deepEqual(app.requests, [{ action: "edit-title", expected: "Original", title: "Local" }]);
 });

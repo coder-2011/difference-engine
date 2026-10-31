@@ -45,7 +45,7 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
   /** Renames the current pull request head branch after GitHub accepts the new name. */
   async function saveBranch(): Promise<void> {
     const nextBranch = draft?.value.trim() ?? "";
-    if (!nextBranch || pending) return;
+    if (!draft || !nextBranch || pending) return;
     if (status === "unchanged") {
       cancelEditing();
       return;
@@ -58,7 +58,7 @@ export function PullRequestBranch({ initialBranch, initialLabel, source }: PullR
     try {
       const path = source.map(encodeURIComponent).join("/");
       const response = await fetch(`/api/pull-request/${path}`, {
-        body: JSON.stringify({ action: "rename-branch", name: nextBranch }),
+        body: JSON.stringify({ action: "rename-branch", expected: draft.base, name: nextBranch }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });

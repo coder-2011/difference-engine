@@ -1276,6 +1276,9 @@ export async function performPullRequestAction(source: string[], token: string |
     if (!name || name.length > 255) throw new GitHubError("Branch names must be between 1 and 255 characters", 400);
 
     const pullRequest = await githubRequest<PullRequest>(parsed.apiPath, accessToken);
+    if (pullRequest.head.ref !== action.expected) {
+      throw new GitHubError("The branch changed on GitHub. Copy your draft, then reload before editing.", 409);
+    }
     const headRepository = pullRequest.head.repo?.full_name;
     if (!headRepository) throw new GitHubError("GitHub could not locate the pull request branch", 422);
 
@@ -1295,12 +1298,18 @@ export async function performPullRequestAction(source: string[], token: string |
     if (!capabilities?.viewerCanUpdate) {
       throw new GitHubError("GitHub does not allow this pull request title to be edited", 403);
     }
+    if (pullRequest.title !== action.expected) {
+      throw new GitHubError("The title changed on GitHub. Copy your draft, then reload before editing.", 409);
+    }
     await githubMutation(parsed.apiPath, accessToken, "PATCH", { title });
   }
 
   if (action.action === "edit-body") {
     if (!capabilities?.viewerCanUpdate) {
       throw new GitHubError("GitHub does not allow this pull request body to be edited", 403);
+    }
+    if ((pullRequest.body ?? "") !== action.expected) {
+      throw new GitHubError("The description changed on GitHub. Copy your draft, then reload before editing.", 409);
     }
     await githubMutation(parsed.apiPath, accessToken, "PATCH", { body: action.body });
   }

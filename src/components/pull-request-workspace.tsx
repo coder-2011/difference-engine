@@ -502,7 +502,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
     if (bodyDraft === undefined || draftStatus(bodyDraft, body) !== "save" || pendingAction) return;
 
     const savedBody = bodyDraft.value;
-    if (!await runAction({ action: "edit-body", body: savedBody })) return;
+    if (!await runAction({ action: "edit-body", body: savedBody, expected: bodyDraft.base })) return;
 
     setBody(savedBody);
     setBodyDraft(undefined);
@@ -532,7 +532,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
         <section className="pr-description">
           <div className="pr-description-heading">
             <span>Pull request description</span>
-            {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => setBodyDraft({ base: body, value: body })} type="button"><Pencil size={13} /> Edit body</button>}
+            {workspace.canEditBody && <button className="edit-pr-button" disabled={Boolean(pendingAction)} onClick={() => { setMessage(undefined); setBodyDraft({ base: body, value: body }); }} type="button"><Pencil size={13} /> Edit body</button>}
           </div>
           {workspace.hasMergeConflicts && <p className="pr-merge-conflict" role="status">Merge conflicts prevent merging.</p>}
           {visibleBody && <div className="markdown-body"><GitHubMarkdown>{visibleBody}</GitHubMarkdown></div>}
@@ -553,6 +553,7 @@ export function PullRequestWorkspace({ description: initialBody, source, workspa
               </div>
             </header>
             {draftStatus(bodyDraft, body) === "conflict" && <p className="pr-body-editor-conflict" role="alert">Description changed on GitHub. Copy your draft, then cancel and reopen.</p>}
+            {message?.error && <p className="pr-body-editor-conflict" role="alert">{message.text}</p>}
             <div className="pr-body-editor-panes">
               <label className="pr-body-editor-pane">
                 <span>Markdown</span>

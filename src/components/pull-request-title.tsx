@@ -43,7 +43,7 @@ export function PullRequestTitle({ editable = true, initialTitle, source }: Pull
   /** Persists one non-empty title and exits edit mode after GitHub confirms it. */
   async function saveTitle(): Promise<void> {
     const nextTitle = draft?.value.trim() ?? "";
-    if (!nextTitle || pending) return;
+    if (!draft || !nextTitle || pending) return;
     if (status === "unchanged") {
       cancelEditing();
       return;
@@ -56,7 +56,7 @@ export function PullRequestTitle({ editable = true, initialTitle, source }: Pull
     try {
       const path = source.map(encodeURIComponent).join("/");
       const response = await fetch(`/api/pull-request/${path}`, {
-        body: JSON.stringify({ action: "edit-title", title: nextTitle }),
+        body: JSON.stringify({ action: "edit-title", expected: draft.base, title: nextTitle }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });

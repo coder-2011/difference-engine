@@ -151,10 +151,10 @@ export type PullRequestAction =
   | { action: "reply"; body: string; commentId: number }
   | { action: "close" }
   | { action: "reopen" }
-  | { action: "edit-body"; body: string }
-  | { action: "edit-title"; title: string }
+  | { action: "edit-body"; body: string; expected: string }
+  | { action: "edit-title"; expected: string; title: string }
   | { action: "merge"; method: PullRequestMergeMethod }
-  | { action: "rename-branch"; name: string }
+  | { action: "rename-branch"; expected: string; name: string }
   | { action: "ready" }
   | { action: "review"; body: string; event: PullRequestReviewEvent }
   | { action: "resolve-thread"; threadId: string }

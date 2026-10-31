@@ -25,16 +25,16 @@ function parsePullRequestAction(value: JsonValue): PullRequestAction | null {
 
   if (value.action === "reopen") return { action: "reopen" };
 
-  if (value.action === "edit-title" && isString(value.title)) {
-    return { action: "edit-title", title: value.title };
+  if (value.action === "edit-title" && isString(value.title) && isString(value.expected)) {
+    return { action: "edit-title", expected: value.expected, title: value.title };
   }
 
-  if (value.action === "rename-branch" && isString(value.name)) {
-    return { action: "rename-branch", name: value.name };
+  if (value.action === "rename-branch" && isString(value.name) && isString(value.expected)) {
+    return { action: "rename-branch", expected: value.expected, name: value.name };
   }
 
-  if (value.action === "edit-body" && isString(value.body)) {
-    return { action: "edit-body", body: value.body };
+  if (value.action === "edit-body" && isString(value.body) && isString(value.expected)) {
+    return { action: "edit-body", body: value.body, expected: value.expected };
   }
 
   if (value.action === "ready") return { action: "ready" };
@@ -87,7 +87,12 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   ]);
   const action = parsePullRequestAction(body);
 
-  if (!action) return NextResponse.json({ error: "Invalid pull request action" }, { status: 400 });
+  if (!action) {
+    if (isRecord(body) && (body.action === "edit-title" || body.action === "edit-body" || body.action === "rename-branch") && !isString(body.expected)) {
+      return NextResponse.json({ error: "Copy your draft, then reload the page before saving." }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Invalid pull request action" }, { status: 400 });
+  }
 
   try {
     return NextResponse.json(await performPullRequestAction(source, accessToken, action));
